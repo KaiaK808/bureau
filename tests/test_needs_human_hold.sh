@@ -293,10 +293,16 @@ arm "$LEASE" 27; expect "rebase lease rejected, Linear unusable" 27 yes
 grep -q '^alert_telegram	EXP-300	rebase	27' "$SANDBOX/calls.log" && fail "a 27 alerted as a label failure"
 arm "$LEASE" 1; grep -q '^alert_telegram	EXP-300	rebase	19	' "$SANDBOX/calls.log" || fail "the lease arm's alert does not name 19"
 
-MERGE=$(cut "$(cat "$SCRIPTS/merge-pipeline.sh")" 'Merge call failed\.' '^  exit 18$')
-case "$MERGE" in *needs[-_]human*) ;; *) fail "the merge failure arm is not where it was" ;; esac
-arm "$MERGE" 1;  expect "merge failure, label failed" 18 yes
-arm "$MERGE" 27; expect "merge failure, Linear unusable" 27 yes
+# A failed merge call whose outcome is not confirmed is held for reconciliation: exit 25.
+MERGE_GATE_EXIT=$(cut "$(cat "$SCRIPTS/merge-pipeline.sh")" '^merge_gate_exit[(][)] [{]$' '^}$')
+MERGE_HOLD=$(cut "$(cat "$SCRIPTS/merge-pipeline.sh")" '^merge_result_hold[(][)] [{]$' '^}$')
+case "$MERGE_HOLD" in *needs[-_]human*) ;; *) fail "the merge result hold is not where it was" ;; esac
+MERGE="merge_gate_mark() { :; }
+$MERGE_GATE_EXIT
+$MERGE_HOLD
+merge_result_hold 'The merge outcome could not be confirmed.'"
+arm "$MERGE" 1;  expect "merge outcome unconfirmed, label failed" 25 yes
+arm "$MERGE" 27; expect "merge outcome unconfirmed, Linear unusable" 27 yes
 OLD_MERGE='  add_issue_label "$ISSUE" "needs-human" \
     || echo "  WARN: failed to add needs-human label to $ISSUE; will retry on next tick" >&2
   exit 18'

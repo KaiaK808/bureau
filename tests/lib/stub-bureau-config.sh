@@ -154,8 +154,10 @@ get_issue_branch_and_comments() {
   fi
   local branch="${BUREAU_STUB_BRANCH:-test-branch}"
   jq -n --arg b "$branch" --arg c "${BUREAU_STUB_REVIEW_COMMENT:-}" \
-    '{branch:$b, comments:(if $c == "" then [] else [{body:$c}] end)}'
+    '{branch:$b, comments_complete:true, comments:(if $c == "" then [] else [{body:$c,createdAt:"2026-10-01T00:00:00Z"}] end)}'
 }
+
+_bureau_post_comment() { post_comment "$@"; }
 
 get_issue_branch() {
   _record "get_issue_branch" "$1"
@@ -235,10 +237,15 @@ log_escalation() {
 }
 
 # Use the production parser extracted by the harness; do not mirror it.
-source "$(dirname "$0")/parse-result.sh"
+source "$_BUREAU_SCRIPTS_DIR/parse-result.sh"
 
 # Ownership is exercised separately against the production runtime.
 bureau_stage_enter() { :; }
+post_implementation_hold() {
+  local key="${4:-${BUREAU_STAGE_ATTEMPT_ID:-${BUREAU_RUN_ID:-}}}"
+  [ -n "$key" ] || key=$(python3 -I -B -c 'import uuid; print(uuid.uuid4().hex)')
+  _harness_post_implementation_hold "$1" "$2" "$3" "$key"
+}
 
 run_stage_for() {
   shift

@@ -49,6 +49,9 @@ elif 'mutation' in query:
         items[key]['comments']['nodes'].append({'body': variables['body'], 'createdAt':'2026-09-09T01:00:00Z'}); result = {'commentCreate': {'success':True}}
     else: raise AssertionError(query)
     path.write_text(json.dumps(items))
+elif 'comments(first:100' in query:
+    item = items[variables['id']] if variables['id'] in items else next(item for item in items.values() if item['id'] == variables['id'])
+    result = {'issue': {'branchName': item.get('branchName', ''), 'comments': {**item['comments'], 'pageInfo': {'hasNextPage': False, 'endCursor': None}}}}
 else:
     number = re.search(r'number: \{ eq: (\d+)', query)
     state = re.search(r'state: \{ id: \{ eq: "([^"]+)"', query)

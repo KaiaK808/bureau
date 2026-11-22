@@ -92,8 +92,13 @@ for route in complete partial draft; do
         assert_eq 0 "$LAST_RC" "$name recovered"
         assert_match "PR: $EXPECTED_URL" "$LAST_STDOUT" "$name URL"
         attempts=2
-        # Halt paths also read the number for their existing escalation log.
+        # Halt paths also read the number for their existing escalation log;
+        # a decision hold additionally resolves the PR for its required mirror.
         if [ "$route" != complete ] && [ "$verb" = list ]; then attempts=3; fi
+        if [ "$route" = draft ] && [ "$verb" = list ]; then attempts=4; fi
+        if [ "$route" = draft ]; then
+          assert_eq 1 "$(count_calls comment)" "$name required hold mirror posted once"
+        fi
         assert_eq "$attempts" "$(cat "$SANDBOX/.pr-retry-count")" "$name attempts"
         assert_eq 2 "$(cat "$SANDBOX/.pr-retry-waits")" "$name backoff"
         if [ "$route" = complete ]; then

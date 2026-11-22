@@ -109,7 +109,10 @@ Flag tasks as `needs-human` if they involve ANY of:
 Everything else gets `ai-implementable`. When in doubt, mark `needs-human`.
 
 After creating all sub-issues, post a summary comment on the parent issue
-listing all created sub-issues with their identifiers and labels.
+listing all created sub-issues with their identifiers and labels. Route this and
+every other issue comment through the shared `post_comment` helper in
+`scripts/bureau-config.sh`, including summaries outside `finish`; its reserved
+answer/hold marker guard must apply to app output too.
 
 ### 7. Push branch and update Linear
 

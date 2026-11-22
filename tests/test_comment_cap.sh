@@ -244,7 +244,7 @@ review = (scripts/'code-review-pipeline.sh').read_text()
 helpers = 'BUREAU_COMMENT_MAX_BYTES=60000\n' + function('bureau_cap_comment', config)
 helpers += '\n' + function('bureau_cap_comment', config).replace('bureau_cap_comment()', 'real_cap()')
 helpers += '\n' + '\n'.join(function(name, review) for name in ('cap_review_comment', 'post_review_comment'))
-helpers += '\n' + function('post_comment', config)
+helpers += '\n' + function('post_comment', config) + '\n' + function('_bureau_post_comment', config)
 (scratch/'review-helpers.sh').write_text(helpers)
 body = 'Review fallback sentinel.\n' + 'A' * 62000 + '\nOriginal body ends here.'
 (scratch/'fallback-body').write_text(body)

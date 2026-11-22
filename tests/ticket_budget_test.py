@@ -187,6 +187,16 @@ class AdapterFixture(unittest.TestCase):
         self.bin = self.root/'bin'; self.bin.mkdir()
         for name in ('codex','claude'):
             path=self.bin/name; path.write_text(FAKE.replace('#!/usr/bin/env python3','#!'+sys.executable)); path.chmod(0o755)
+        # Runtime admission now reads the complete comment connection before ownership.
+        curl = self.bin / 'curl'
+        curl.write_text('''#!/usr/bin/env python3
+import json, sys
+payload = json.loads(sys.argv[sys.argv.index('-d') + 1])
+assert 'comments(first:100' in payload['query'], 'unexpected Linear request'
+print(json.dumps({'data': {'issue': {'branchName': 'main', 'comments': {
+    'nodes': [], 'pageInfo': {'hasNextPage': False, 'endCursor': None}}}}}))
+''')
+        curl.chmod(0o755)
         subprocess.run(['git','init','-q','-b','main',str(self.repo)],check=True)
         git_maintenance.disable(self.repo)
         subprocess.run(['git','-C',str(self.repo),'-c','user.name=fixture','-c','user.email=test@example.invalid',

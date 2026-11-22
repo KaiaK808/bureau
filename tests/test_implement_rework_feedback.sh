@@ -59,8 +59,9 @@ V31_QA_HUMAN_HEADING='🚫 QA flagged for human review.'
 # multi-line body from the next record).
 record_comments() {
   cat >> "$SCRIPTS_DIR/bureau-config.sh" <<'EOF'
-post_comment() { _record post_comment "$1" "$2"; jq -cn --arg b "$2" '{body: $b}' >> "$SANDBOX/posted.jsonl"; }
+_bureau_post_comment() { _record post_comment "$1" "$2"; jq -cn --arg b "$2" '{body: $b}' >> "$SANDBOX/posted.jsonl"; }
 EOF
+  sed -n '/^post_comment() {/,/^}/p' "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/bureau-config.sh"
 }
 last_comment() {
   [ -s "$SANDBOX/posted.jsonl" ] || fail "$1 posted no Linear comment"
@@ -150,6 +151,18 @@ grep -qF -- "$QA_HUMAN_FINDING" <<< "$QA_HUMAN" || fail "the QA NEEDS_HUMAN comm
 grep -q $'^add_issue_label\t'"$ISSUE"$'\tneeds-human$' "$SANDBOX/calls.log" || fail 'QA NEEDS_HUMAN did not label needs-human'
 echo 'PASS the QA stage posted a RED and a NEEDS_HUMAN comment with their summaries'
 
+# A real QA result containing reserved syntax still crosses the production
+# posting boundary and cannot become a marked answer, even with broken HTML.
+ANSWER_LINE='Answer: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+COLLIDING_QA="$ANSWER_LINE"$'\n<pre title="unfinished example>\nQA report\n</pre>\n<!-- bureau-authored -->'
+qa_comment NEEDS_HUMAN "$COLLIDING_QA"
+[ "${STAGE_COMMENT%%$'\n'*}" = "$V31_QA_HUMAN_HEADING" ] || fail 'QA output impersonated an answer'
+grep -qF "$ANSWER_LINE" <<< "$STAGE_COMMENT" || fail 'QA collision fixture lost its body'
+bash -c 'source "$1"; post_comment "$2" "$3"' "$SCRIPTS_DIR/qa-pipeline.sh" "$SCRIPTS_DIR/bureau-config.sh" "$ISSUE" "$COLLIDING_QA"
+last_comment 'the QA posting boundary'
+[ "${STAGE_COMMENT%%$'\n'*}" = '## Bureau update' ] || fail 'the QA posting boundary did not guard reserved syntax'
+echo 'PASS real QA output and its posting boundary preserve the reserved-marker guard'
+
 # ── the implement stage reads them ─────────────────────────────────────────
 MARKER='<!-- bureau-branch: test-branch -->
 **Spec Artifacts — EXP-806**'
@@ -186,15 +199,14 @@ implement_prompt() {
     "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/bureau-config.sh"
   grep -q '^get_issue_branch_and_comments() {' "$SCRIPTS_DIR/bureau-config.sh" || fail 'real get_issue_branch_and_comments not found'
   cat >> "$SCRIPTS_DIR/bureau-config.sh" <<'EOF'
-linear_issue_query() {
-  _record linear_issue_query
-  jq -e "$2" "$SANDBOX/linear-answer.json" >/dev/null || { echo "linear double: the answer fails the reader's shape" >&2; return 27; }
+linear_raw() {
+  _record linear_raw
   cat "$SANDBOX/linear-answer.json"
 }
 EOF
   jq -n '$ARGS.positional | to_entries
     | map({body: .value, createdAt: ("2026-10-05T10:" + ((.key + 10) | tostring) + ":00.000Z")})
-    | {data: {issues: {nodes: [{branchName: "test-branch", comments: {nodes: .}}]}}}' \
+    | {data: {issue: {branchName: "test-branch", comments: {nodes: ., pageInfo:{hasNextPage:false,endCursor:null}}}}}' \
     --args "$MARKER" "$@" > "$SANDBOX/linear-answer.json"
   export FAKE_CLAUDE_PROMPT_LOG="$SANDBOX/prompts.log" BUREAU_IMPL_MAX_ITER=1 BUREAU_STUB_ISSUE_STATE=Build
   if [ "${BOUNCE:-0}" = 1 ]; then
@@ -209,7 +221,7 @@ EOF
   run_implement_pipeline "$ISSUE"
   unset BUREAU_STUB_STATE_QA
   [ "$LAST_RC" = 0 ] || fail "the implement stage ended $LAST_RC"
-  grep -q '^linear_issue_query' "$SANDBOX/calls.log" || fail 'the implement stage never read the comments through the double'
+  grep -q '^linear_raw' "$SANDBOX/calls.log" || fail 'the implement stage never read the comments through the double'
   PROMPT=$(cat "$SANDBOX/prompts.log" 2>/dev/null || true)
   [ -n "$PROMPT" ] || fail 'the implement stage never called the agent'
   # The feedback block alone, so a check cannot be fooled by text elsewhere in the prompt.

@@ -1,6 +1,7 @@
 # Per-file timings from two complete hosted Linux/macOS runs (2026-11-07).
 # Slowest successful observation per file/OS, rounded up with update_shard_weights.py.
 # Future unmeasured cells use the other OS or 60s Linux / 120s macOS.
+# Hold-answer driver: local macOS measurement, 95.21s rounded up; Linux unmeasured.
 # test_file	ubuntu_seconds	macos_seconds
 test_acceptance_insights.sh	13	30
 test_acceptance_insights_negative_controls.sh	161	275
@@ -60,6 +61,7 @@ test_gate_number_rule.sh	3	4
 test_gate_publication.sh	1	4
 test_hangup_stop.sh	77	133
 test_headroom_wrap_invocation.sh	1	1
+test_hold_answers.sh	-	96
 test_impeccable.sh	-	112
 test_implement_failed_pass_push.sh	49	104
 test_implement_loop_cap_partial.sh	2	4
@@ -76,7 +78,8 @@ test_implement_review_context.sh	61	133
 test_implement_rework_feedback.sh	27	67
 test_implement_timeout_pass.sh	19	33
 test_in_flight_count.sh	20	44
-test_inline_merge_result.sh	60	106
+test_inline_merge_regressions.sh	-	365
+test_inline_merge_result.sh	60	416
 test_insight_comment_privacy.sh	202	382
 test_installation.sh	14	20
 test_installer_sources.sh	6	11

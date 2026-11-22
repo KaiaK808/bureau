@@ -977,6 +977,7 @@ else
     NOW_HEAD=$(pr_head_sha "$PR_NUMBER") || NOW_HEAD=""
     GATE_HEAD=""   # the new head has not been judged: no mark, the next poll takes it
     if [ -n "$NOW_HEAD" ] && [ "$NOW_HEAD" != "$MERGE_HEAD" ]; then
+      echo "  The PR head moved from $MERGE_HEAD to $NOW_HEAD during the merge — nothing was merged."
       merge_gate_exit not-yet "merge_head: the PR head moved from $MERGE_HEAD to $NOW_HEAD after the gate checked it; GitHub refused --match-head-commit; nothing was merged"
     fi
     merge_gate_exit not-yet "merge_head: GitHub refused --match-head-commit $MERGE_HEAD because the PR head changed; nothing was merged"

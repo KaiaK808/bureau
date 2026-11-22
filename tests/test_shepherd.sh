@@ -22,6 +22,7 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")" && cd .. && pwd)"
 REAL_SHEPHERD="$REPO_ROOT/templates/scripts/shepherd.sh"
 SANDBOX_ROOT=$(mktemp -d -t bureau-test.shepherd.XXXXXXXX)
+export GIT_CEILING_DIRECTORIES="$SANDBOX_ROOT"
 trap 'rm -rf "$SANDBOX_ROOT"' EXIT
 
 # ── Build a fresh sandbox for one scenario ──────────────────────────
@@ -63,6 +64,7 @@ EOF
   # is a single file ($SANDBOX/state.txt) holding the current UUID.
   cat > "$sb/scripts/bureau-config.sh" <<'STUB_EOF'
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bureau-env.sh"
+bureau_implementation_context() { printf '%s' '{"branch":"test-branch","hold_id":null,"text":""}'; }
 #!/bin/bash
 # STUB bureau-config.sh for shepherd test. Defines every helper shepherd
 # touches. The "Linear state machine" is a single file at $STATE_FILE.
@@ -539,6 +541,7 @@ _use_real_linear_reads() {
     -e '/^_bureau_linear_fetch() {/,/^}/p'    -e '/^linear_query() {/,/^}/p' \
     -e '/^bureau_issue_snapshot() {/,/^}/p'   -e '/^get_issue_state() {/,/^}/p' \
     -e '/^get_issue_detail() {/,/^}/p'        -e '/^get_issue_branch() {/,/^}/p' \
+    -e '/^get_issue_branch_and_comments() {/,/^}/p' -e '/^linear_raw() {/,/^}/p' \
     -e '/^_bureau_curl_config() {/,/^}/p' \
     -e '/^_bureau_linear_request_limits() {/,/^}/p' -e '/^linear_issue_query() {/,/^}/p' \
     -e '/^_BUREAU_LINEAR_STATUS_MARK=/p'      -e '/^_BUREAU_SHAPE_/p' \
@@ -558,11 +561,11 @@ REC_EOF
   mkdir -p "$sb/bin" "$sb/forms" "$sb/tmp"
   # One body serves the state, label and branch reads, so it carries every list they ask
   # for (the branch read asks for the comments; real Linear always returns what was asked).
-  local node='"id":"U1","identifier":"EXP-7","title":"T","description":"D","project":null,"branchName":"","comments":{"nodes":[]}'
+  local node='"id":"U1","identifier":"EXP-7","title":"T","description":"D","project":null,"branchName":"","comments":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}'
   # A free ticket still carries a harmless label, so "some label" never passes for "a held label".
-  printf '{"data":{"issues":{"nodes":[{%s,"state":{"id":"s5","name":"Build"},"labels":{"nodes":[{"name":"lane-2"}]}}]}}}' "$node" > "$sb/forms/build"
-  printf '{"data":{"issues":{"nodes":[{%s,"state":{"id":"s5","name":"Build"},"labels":{"nodes":[{"name":"lane-2"},{"name":"needs-human"}]}}]}}}' "$node" > "$sb/forms/held"
-  printf '{"data":{"issues":{"nodes":[{%s,"state":{"id":"s8","name":"Done"},"labels":{"nodes":[]}}]}}}' "$node" > "$sb/forms/done"
+  printf '{"data":{"issues":{"nodes":[{%s,"state":{"id":"s5","name":"Build"},"labels":{"nodes":[{"name":"lane-2"}]}}]}}}' "$node" | jq '.data.issue = .data.issues.nodes[0]' > "$sb/forms/build"
+  printf '{"data":{"issues":{"nodes":[{%s,"state":{"id":"s5","name":"Build"},"labels":{"nodes":[{"name":"lane-2"},{"name":"needs-human"}]}}]}}}' "$node" | jq '.data.issue = .data.issues.nodes[0]' > "$sb/forms/held"
+  printf '{"data":{"issues":{"nodes":[{%s,"state":{"id":"s8","name":"Done"},"labels":{"nodes":[]}}]}}}' "$node" | jq '.data.issue = .data.issues.nodes[0]' > "$sb/forms/done"
   printf '%s' '<html>CANARY-ANSWER 502 Bad Gateway</html>' > "$sb/forms/html"
   cat > "$sb/bin/curl" <<CURL_EOF
 #!/bin/bash
@@ -615,6 +618,9 @@ _run_reads() {
   local forms=()
   while [ $# -gt 0 ] && [ "$1" != -- ]; do forms+=("$1"); shift; done
   [ "${1:-}" = -- ] && shift
+  # The new read-only route check precedes the runtime; retain the original
+  # failure sequence for the pre-claim label check and supervised loop reads.
+  case " $* " in *' --dry-run '*) ;; *) forms=(build "${forms[@]}") ;; esac
   printf '%s\n' "${forms[@]}" > "$sb/queue"
   set +e
   PATH="$sb/bin:$PATH" BUREAU_LINEAR_RETRIES=0 TMPDIR="$sb/tmp" run_shepherd "$sb" "$@"
@@ -667,7 +673,7 @@ test_label_read_unusable_halts() {
   _use_real_linear_reads "$sb" || return 1
   _run_reads "$sb" build build html -- EXP-7
   assert_eq "$READS_RC" 27 "shepherd exit when its label read gives up on Linear" || return 1
-  assert_eq "$(tr '\n' ' ' < "$sb/curl.log")" "build build html " "the hold check, one state read, then one label read" || return 1
+  assert_eq "$(tr '\n' ' ' < "$sb/curl.log")" "build build build html " "the route check, hold check, state read, then label read" || return 1
   [ ! -s "$sb/invocations.log" ] || { echo "FAIL: the shepherd walked on past an unread label list"; return 1; }
   grep -q 'reading the labels gave up because Linear stayed unusable.*not-json.*single=1$' "$sb/labels.log.comments" \
     || { echo "FAIL: the halt comment does not name the read and the fault class"; cat "$sb/labels.log.comments"; return 1; }
@@ -698,7 +704,7 @@ test_human_label_when_linear_answers() {
   _run_reads "$sb2" build build build build done -- EXP-7
   assert_eq "$READS_RC" 0 "shepherd exit on a free ticket that reaches Done" || return 1
   assert_eq "$(tr '\n' ' ' < "$sb2/invocations.log")" "implement-pipeline.sh " "a free ticket runs its stage once" || return 1
-  assert_eq "$(tr '\n' ' ' < "$sb2/curl.log")" "build build build build done " "the hold check, then one state, label and branch read per iteration" || return 1
+  assert_eq "$(tr '\n' ' ' < "$sb2/curl.log")" "build build build build build done " "route and hold checks, then state, label and branch reads" || return 1
   return 0
 }
 
@@ -773,6 +779,14 @@ test_read_failure_other_code() {
     name=${case_%%|*}; what=${case_##*|}; helper=${case_#*|}; helper=${helper%|*}
     local sb; sb=$(make_sandbox "bad_$name")
     _run_bad_read "$sb" "$helper"
+    if [ "$what" = state ]; then
+      assert_eq "$READS_RC" 24 "$name: incomplete startup route" || return 1
+      [ ! -s "$sb/invocations.log" ] && [ ! -e "$sb/labels.log" ] \
+        && [ ! -e "$sb/labels.log.comments" ] && [ ! -e "$sb/labels.log.alerts" ] \
+        || { echo "FAIL: $name: the failed startup route claimed or wrote"; return 1; }
+      _no_fault_files "$sb" || return 1
+      continue
+    fi
     assert_eq "$READS_RC" 1 "$name: shepherd exit when the $what read fails" || return 1
     [ ! -s "$sb/invocations.log" ] || { echo "FAIL: $name: a stage ran on an unread $what"; return 1; }
     [ ! -s "$sb/sleeps.log" ] || { echo "FAIL: $name: the shepherd waited instead of halting"; return 1; }
@@ -822,6 +836,10 @@ test_branch_read_unusable_halts() {
 # $2 = INT (to the group) or TERM (to the runtime); the rest are shepherd arguments.
 _run_signal() {
   local sb="$1" sig="$2"; shift 2
+  if [ -f "$sb/queue" ]; then
+    { printf 'build\n'; cat "$sb/queue"; } > "$sb/route-queue"
+    mv "$sb/route-queue" "$sb/queue"
+  fi
   set +e
   python3 - "$sb" "$sig" "$@" <<'PY_EOF'
 import os, signal, subprocess, sys, time
@@ -1227,7 +1245,7 @@ test_signal_during_wait_and_stage() {
   assert_eq "$READS_RC" 130 "SIGTERM during the wait: exit" || { cat "$sb/shepherd.err"; return 1; }
   grep -q "interrupted by SIGTERM — cancelled" "$sb/shepherd.err" \
     || { echo "FAIL: SIGTERM during the wait: not ended as cancelled"; cat "$sb/shepherd.err"; return 1; }
-  assert_eq "$(wc -l < "$sb/curl.log" | tr -d ' ')" 2 "SIGTERM during the wait: reads (the hold check and one state read, none after the signal)" || return 1
+  assert_eq "$(wc -l < "$sb/curl.log" | tr -d ' ')" 3 "SIGTERM during the wait: route, hold and state reads, none after the signal" || return 1
   _nothing_written "$sb" "SIGTERM during the wait" || return 1
   grep -q "^-EXP-18"$'\t'"shepherd-focused"$'\t'"single=1" "$sb/labels.log" \
     || { echo "FAIL: SIGTERM during the wait: not released, or not with a single attempt"; cat "$sb/labels.log"; return 1; }
@@ -1271,7 +1289,7 @@ STAGE_EOF
   fi
   [ "$(cat "$sb/signal-to-exit")" -lt 10 ] \
     || { echo "FAIL: SIGTERM to the shepherd during the wait: it waited out the minute"; return 1; }
-  assert_eq "$(wc -l < "$sb/curl.log" | tr -d ' ')" 2 "SIGTERM to the shepherd during the wait: reads (the hold check and one state read, none after the signal)" || return 1
+  assert_eq "$(wc -l < "$sb/curl.log" | tr -d ' ')" 3 "SIGTERM to the shepherd during the wait: route, hold and state reads, none after the signal" || return 1
   _nothing_written "$sb" "SIGTERM to the shepherd during the wait" || return 1
   grep -q "^-EXP-18"$'\t'"shepherd-focused"$'\t'"single=1" "$sb/labels.log" \
     || { echo "FAIL: SIGTERM to the shepherd during the wait: not released with a single attempt"; cat "$sb/labels.log"; return 1; }
@@ -1459,7 +1477,7 @@ STALE_EOF
   echo s1 > "$sb/state.txt"
   set +e; PATH="$sb/bin:$PATH" run_shepherd "$sb" EXP-19; rc=$?; set -e
   assert_eq "$rc" 0 "fresh reads: exit" || return 1
-  assert_eq "$(wc -l < "$sb/labels.log.reads" | tr -d ' ')" 6 "fresh reads: one read per state (Triage … Done)" || return 1
+  assert_eq "$(wc -l < "$sb/labels.log.reads" | tr -d ' ')" 7 "fresh reads: route check then one read per state (Triage … Done)" || return 1
   [ ! -e "$sb/sleeps.log" ] || { echo "FAIL: fresh reads: the shepherd waited"; cat "$sb/sleeps.log"; return 1; }
 
   # A real Spec costs nothing extra: spec review sends the ticket back to Spec once,
@@ -1506,7 +1524,7 @@ test_no_state_is_bounded() {
   _run_reads "$sb" build nostate -- EXP-20
   assert_eq "$READS_RC" 1 "no state: exit" || { cat "$sb/shepherd.err"; return 1; }
   assert_eq "$(tr '\n' ' ' < "$sb/sleeps.log" | sed 's/ $//')" "60 60 60 60" "no state: four waits of the default 60 s" || return 1
-  assert_eq "$(wc -l < "$sb/curl.log" | tr -d ' ')" 6 "no state: reads (the hold check, then five state reads)" || return 1
+  assert_eq "$(wc -l < "$sb/curl.log" | tr -d ' ')" 7 "no state: route and hold checks, then five state reads" || return 1
   grep -q "^+EXP-20"$'\t'"needs-human" "$sb/labels.log" || { echo "FAIL: no state: no needs-human"; return 1; }
   grep -q "without a state" "$sb/labels.log.comments" 2>/dev/null || { echo "FAIL: no state: no halt comment"; return 1; }
   grep -qx "shepherd halt (no state in 5 answers)" "$sb/labels.log.alerts" 2>/dev/null \

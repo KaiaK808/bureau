@@ -854,6 +854,13 @@ HOOK
   fi
 }
 
+# The regression cases run from their own driver, test_inline_merge_regressions.sh, so
+# neither file carries the cost of both.
+if [ "${1:-}" != regressions ]; then
+  echo 'OK test_inline_merge_result'
+  exit 0
+fi
+
 for regression in ${2:-fetch deleted fork delayed handoff-held handoff-held-late handoff-unconfirmed reconcile-target reconcile-unreadable reconcile-inline-target reconcile-inline-unreadable verdict target uncertain unreadable release-failure publisher-policy publisher-forgery publisher-jit publisher-edited-block publisher-publication}; do
   case "$regression" in
     fetch|deleted) cleanup_retry_case "$regression" ;;

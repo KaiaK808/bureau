@@ -48,7 +48,8 @@ cat > "$SB/bin/curl" <<'PY'
 #!/usr/bin/env python3
 import json, os, re, sys
 args = sys.argv[1:]
-query = json.loads(args[args.index('-d') + 1])['query']
+payload = json.loads(args[args.index('-d') + 1])
+query = payload['query']
 tickets = json.load(open(os.path.join(os.environ['TICK_SB'], 'tickets.json')))
 names = {'s5': 'Build', 's6': 'Build Review', 's8': 'Merge', 's7': 'Done'}
 def node(ident, state):
@@ -61,6 +62,12 @@ state = re.search(r'state: \{ id: \{ eq: "([^"]+)"', query)
 now = {i: s.split('>')[0] for i, s in tickets.items()}
 if 'viewer' in query:
     data = {'viewer': {'id': 'viewer'}}
+elif 'mutation' not in query and 'issue(id:' in query:
+    ident = payload['variables']['id']
+    if ident not in now:
+        sys.exit(9)
+    data = {'issue': {'branchName': 'b-' + ident,
+                      'comments': {'nodes': [], 'pageInfo': {'hasNextPage': False, 'endCursor': None}}}}
 elif 'mutation' not in query and number:
     data = {'issues': {'nodes': [node(i, s) for i, s in now.items() if i == 'VFY-' + number.group(1)]}}
 elif 'mutation' not in query and state:

@@ -50,7 +50,7 @@ write_config
 
 # --- stubs ------------------------------------------------------------------------
 mkdir -p "$SB/bin" "$SB/forms"
-HEALTHY='{"data":{"viewer":{"id":"V1"},"issues":{"nodes":[{"id":"UUID-1","identifier":"EXP-1","title":"T","description":"D","branchName":"feat/x","state":{"id":"s5","name":"Build"},"labels":{"nodes":[]},"comments":{"nodes":[]},"inverseRelations":{"nodes":[]},"priority":1,"createdAt":"2026-09-01T00:00:00Z"}]},"issueLabels":{"nodes":[{"id":"L1","team":{"key":"EXP"}}]},"commentCreate":{"success":true},"issueUpdate":{"success":true},"issueAddLabel":{"success":true},"issueRemoveLabel":{"success":true}}}'
+HEALTHY='{"data":{"viewer":{"id":"V1"},"issue":{"branchName":"feat/x","comments":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}},"issues":{"nodes":[{"id":"UUID-1","identifier":"EXP-1","title":"T","description":"D","branchName":"feat/x","state":{"id":"s5","name":"Build"},"labels":{"nodes":[]},"comments":{"nodes":[]},"inverseRelations":{"nodes":[]},"priority":1,"createdAt":"2026-09-01T00:00:00Z"}]},"issueLabels":{"nodes":[{"id":"L1","team":{"key":"EXP"}}]},"commentCreate":{"success":true},"issueUpdate":{"success":true},"issueAddLabel":{"success":true},"issueRemoveLabel":{"success":true}}}'
 printf '%s' "$HEALTHY"                                                  > "$SB/forms/healthy"
 printf '%s' '{"data":{"issues":{"nodes":[]}}}'                          > "$SB/forms/nothing"
 printf '%s' '{"errors":[{"message":"CANARY-ANSWER boom"}],"data":null}' > "$SB/forms/errors"
@@ -69,7 +69,7 @@ printf '%s' '{"data":{"issue":null}}'                                   > "$SB/f
 printf '{"data":{"viewer":{"id":"V1"}}}\000'                           > "$SB/forms/nul"
 printf '{"data":{"viewer":{"id":"V\000CANARY-ANSWER"}}}'               > "$SB/forms/nulinside"
 NODE='"id":"UUID-1","identifier":"EXP-1","title":"T","description":"D","project":null,"branchName":"","state":{"id":"s5","name":"Build"}'
-printf '{"data":{"issues":{"nodes":[{%s,"labels":{"nodes":[]},"comments":{"nodes":[]}}]}}}' "$NODE" > "$SB/forms/bare"
+printf '{"data":{"issue":{"branchName":"","comments":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}},"issues":{"nodes":[{%s,"labels":{"nodes":[]},"comments":{"nodes":[]}}]}}}' "$NODE" > "$SB/forms/bare"
 printf '{"data":{"issues":{"nodes":[{%s,"labels":null,"comments":{"nodes":[]}}]}}}'         "$NODE" > "$SB/forms/labelsnull"
 printf '{"data":{"issues":{"nodes":[{%s,"labels":{"nodes":[]}}]}}}'                          "$NODE" > "$SB/forms/nocomments"
 printf '{"data":{"issues":{"nodes":[{"id":"UUID-1","identifier":"EXP-1","labels":{"nodes":[]},"comments":{"nodes":[]}}]}}}' > "$SB/forms/nostate"
@@ -163,6 +163,14 @@ expect 0 1 "" "usable but empty"
 [ -z "$OUT" ] || fail "an empty result is not empty"
 echo "PASS healthy is untouched, outages are bridged 10/30/60, a persistent fault stops with 27, an empty result is not retried"
 
+# The paginated readers keep the same retry ladder as every other Linear read.
+for reader in get_issue_branch get_issue_comments get_issue_branch_and_comments; do
+  queue errors healthy
+  helper "$reader EXP-1"
+  expect 0 2 "10" "$reader recovers from GraphQL errors"
+done
+echo "PASS paginated readers retry transient GraphQL errors"
+
 # --- settings --------------------------------------------------------------------------
 queue errors
 BUREAU_LINEAR_RETRIES=0 helper "$FETCH";            expect 27 1 "" "RETRIES=0"
@@ -199,11 +207,14 @@ for call in '_resolve_issue_uuid EXP-1' 'get_issue_state EXP-1' 'get_issue_detai
             'post_comment EXP-1 hello' 'move_issue EXP-1 s6' \
             'add_issue_label EXP-1 needs-human' 'remove_issue_label EXP-1 needs-human'; do
   BUREAU_LINEAR_RETRIES=0 helper "$call"
-  [ "$RC" = 27 ] || fail "'$call' returned $RC, wanted 27"
+  expected=27
+  # Complete implementation-history reads deliberately map transport failures to 24.
+  [ "$call" != 'get_issue_branch_and_comments EXP-1' ] || expected=24
+  [ "$RC" = "$expected" ] || fail "'$call' returned $RC, wanted $expected"
   [ "$CALLS" = 1 ] || fail "'$call' fetched $CALLS times after the first read failed"
   case "$(cat "$SB/curl.log")" in *mutation*) fail "'$call' sent a mutation after a failed read" ;; esac
 done
-echo "PASS every Linear caller hands 27 on, and no mutator sends anything after its read failed"
+echo "PASS readers preserve transport exits (combined history maps to 24); no mutation follows a failed read"
 
 queue healthy
 helper 'move_issue EXP-1 s6 && add_issue_label EXP-1 needs-human && post_comment EXP-1 hi && get_issue_state EXP-1'
@@ -284,13 +295,22 @@ queue nothing
 helper 'printf "[%s]" "$(get_issue_state EXP-9)"; get_issue_detail EXP-9 | jq -c .identifier'
 [ "$RC" = 0 ] && [ "$OUT" = "[]null" ] || fail "a ticket that does not exist is no longer a usable empty answer: $OUT"
 for pair in 'labelsnull:get_issue_detail EXP-1' 'nostate:get_issue_state EXP-1' 'nostate:bureau_issue_snapshot EXP-1' \
-            'labelsnull:bureau_issue_snapshot EXP-1' 'nocomments:get_issue_branch EXP-1' \
-            'nocomments:get_issue_branch_and_comments EXP-1' 'nocomments:get_issue_comments EXP-1' \
+            'labelsnull:bureau_issue_snapshot EXP-1' \
             'dataempty:get_issue_state EXP-1' 'dataempty:get_issue_detail EXP-1'; do
   queue "${pair%%:*}"
   BUREAU_LINEAR_RETRIES=1 helper "${pair#*:}"
   [ "$RC" = 27 ] && [ "$CALLS" = 2 ] && [ -z "$OUT" ] || fail "'${pair#*:}' on ${pair%%:*}: exit $RC after $CALLS fetches, output '$OUT'"
 done
+# A successful GraphQL response with incomplete history is an admission failure,
+# distinct from an unusable transport. No retry can certify this connection.
+queue nocomments
+for reader in get_issue_branch get_issue_comments get_issue_branch_and_comments; do
+  BUREAU_LINEAR_RETRIES=1 helper "$reader EXP-1"
+  expect 24 1 "" "$reader rejects incomplete history"
+  [ -z "$OUT" ] || fail "$reader printed incomplete history"
+done
+echo "PASS incomplete comment history fails with 24 without producing a branch or comments"
+
 echo "PASS a reader whose list is missing retries and gives up with 27; no labels, no branch marker and no such ticket stay usable answers"
 
 # curl's own exit code decides even for a caller without pipefail (tr sits in the pipe).
@@ -334,6 +354,7 @@ cat > "$SB/exactbin/curl" <<EOF
 prev=""; p=""
 for a in "\$@"; do [ "\$prev" = -d ] && p="\$a"; prev="\$a"; done
 case "\$p" in
+  *'comments(first:100'*) b='{"data":{"issue":{"branchName":"exp-1-x","comments":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' ;;
   *'nodes { branchName comments'*) b='{"data":{"issues":{"nodes":[{"branchName":"exp-1-x","comments":{"nodes":[]}}]}}}' ;;
   *'nodes { comments'*)            b='{"data":{"issues":{"nodes":[{"comments":{"nodes":[]}}]}}}' ;;
   *'nodes { identifier title description project'*)

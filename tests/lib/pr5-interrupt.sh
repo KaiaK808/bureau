@@ -74,6 +74,7 @@ fi
 query=\$(printf '%s' "\$payload" | jq -r '.query // ""' 2>/dev/null || true)
 num=\$(printf '%s' "\$query" | sed -n 's/.*number: { eq: \([0-9][0-9]*\) }.*/\1/p')
 id=\$(printf '%s' "\$payload" | jq -r '.variables.id // ""' 2>/dev/null || true)
+case "\$id" in EXP-*) num="\${id#EXP-}" ;; U*) num="\${id#U}" ;; esac
 lfile() { local f="\$sb/labels/\$1.json"; [ -f "\$f" ] || printf '["lane-2"]' > "\$f"; printf '%s' "\$f"; }
 case "\$query" in
   *commentCreate*)
@@ -105,6 +106,8 @@ case "\$query" in
     b=\$(jq -nc --slurpfile l "\$(lfile "\$num")" --arg n "\$num" '{data:{issues:{nodes:[{identifier:("EXP-" + \$n),title:"T",description:"D",project:null,labels:{nodes:(\$l[0] | map({name: .}))}}]}}}') ;;
   *'nodes { id identifier title description state'*)
     b=\$(jq -nc --slurpfile l "\$(lfile "\$num")" --arg n "\$num" --arg s "\$(cat "\$sb/state")" '{data:{issues:{nodes:[{id:("U" + \$n),identifier:("EXP-" + \$n),title:"T",description:"D",state:{id:\$s,name:"?"},labels:{nodes:(\$l[0] | map({name: .}))}}]}}}') ;;
+  *'comments(first:100'*)
+    b=\$(jq -sc --arg n "\$num" '{data:{issue:{branchName:("exp-" + \$n + "-x"),comments:{nodes:[.[] | select(.issue == \$n) | {body, createdAt: "2026-09-30T00:00:00Z"}],pageInfo:{hasNextPage:false,endCursor:null}}}}}' "\$sb/comments.jsonl") ;;
   *'nodes { branchName'*|*'nodes { comments'*)
     b=\$(jq -sc --arg n "\$num" '{data:{issues:{nodes:[{branchName:("exp-" + \$n + "-x"),comments:{nodes:[.[] | select(.issue == \$n) | {body, createdAt: "2026-09-30T00:00:00Z"}]}}]}}}' "\$sb/comments.jsonl") ;;
   *'nodes { id } }'*) b=\$(jq -nc --arg n "\$num" '{data:{issues:{nodes:[{id:("U" + \$n)}]}}}') ;;

@@ -15,16 +15,15 @@ case "$FNS" in
   *) echo "FAIL: could not cut the marker readers out of $SRC" >&2; exit 1 ;;
 esac
 eval "$FNS"
-_BUREAU_SHAPE_ISSUE_COMMENTS=comments
-# linear_issue_query stub: prints $ANSWER.
-linear_issue_query() { printf '%s' "$ANSWER"; }
+# linear_raw stub: prints the complete paginated issue answer.
+linear_raw() { printf '%s' "$ANSWER"; }
 
 fail=0
 check() {  # <label> <expected> <actual> <rc>
   if [ "$2" = "$3" ] && [ "$4" = 0 ]; then echo "PASS $1"; else echo "FAIL $1: expected '$2' rc 0, got '$3' rc $4" >&2; fail=1; fi
 }
 answer() {  # <comments JSON array> → a Linear answer with branchName fallback-branch
-  printf '{"data":{"issues":{"nodes":[{"branchName":"someone/exp-7-fallback-branch","comments":{"nodes":%s}}]}}}' "$1"
+  printf '{"data":{"issue":{"branchName":"someone/exp-7-fallback-branch","comments":{"nodes":%s,"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' "$1"
 }
 MARKER='{"body":"<!-- bureau-branch: 004-own-feature -->\n**Spec Artifacts**","createdAt":"2026-01-02T00:00:00Z"}'
 EMPTY='{"body":"","createdAt":"2026-01-04T00:00:00Z"}'

@@ -226,17 +226,17 @@ class LessonsTests(unittest.TestCase):
     def test_absent_lessons_keeps_base_prompt_bytes(self):
         out, err = self.context(tasks=None)
         self.assertEqual((out, err), ('', ''))
-        # Frozen complete prompt bytes without lessons (refreshed when the implement briefs gained the sibling-site sweep).
-        cases = (('implement-pipeline.sh', 'IMPL_SYSTEM', 3794,
-                  'f691480752f73a7b51c9c35b6bb4a262f7bb5d4deb3b8d75a7d78d08eb3a3428'),
-                 ('implement-pipeline.sh', 'PROMPT', 3774,
-                  '91e7edd937f8e4f0b129596d093f18f6c07e5bc675e68ee5420dd801851b9cd8'),
+        # Frozen complete prompt bytes without lessons (refreshed for the marked-answer context slot).
+        cases = (('implement-pipeline.sh', 'IMPL_SYSTEM', 3795,
+                  '1fc2e0a8026e9881fd37fcb399103a99c295b032af87f04ea826be82254dfaf7'),
+                 ('implement-pipeline.sh', 'PROMPT', 3775,
+                  '372535777e698474f29f7eb59b5becf9b3717f02fcb1781d481a89c3cdedabf9'),
                  ('qa-pipeline.sh', 'QA_RESULT', 1485,
                   '7714cd52d30505c96e37667b2df43e76900eb13bf9e23aaaa37747d1175fc543'))
         variables = ('ISSUE ISSUE_TITLE BRANCH SPEC_CONTEXT PROJECT_CONTEXT DESIGN_CONTEXT REVIEW_CONTEXT '
                      'ISSUE_DESC TASKS_FILE NEGATIVE_CONSTRAINTS TIMEOUT_NOTE TEST_CMD TEST_LOG_TAIL '
                      'QA_PROMPT_INTENT NEGATIVE_CONSTRAINTS_BODY SCRIPT_REPO QA_GATE_CONTEXT').split()
-        env = {**os.environ, **{name: 'fixture-' + name for name in variables}, 'LESSONS_CONTEXT': out}
+        env = {**os.environ, **{name: 'fixture-' + name for name in variables}, 'LESSONS_CONTEXT': out, 'IMPLEMENT_ANSWERS': ''}
         for name, symbol, size, digest in cases:
             with self.subTest(symbol=symbol):
                 source = (SCRIPTS / name).read_text()

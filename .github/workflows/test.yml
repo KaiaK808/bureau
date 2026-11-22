@@ -29,7 +29,7 @@ jobs:
       fail-fast: false
       matrix:
         # PR macOS: 56 entries, 5,159 weighted test seconds / 60 + 2 jobs * 2m setup
-        # = 89.98 runner-minutes (two ~45m jobs). Other events keep all 6 shards.
+        # = 89.98 runner-minutes (two ~45m jobs). Other events run all 7 macOS shards.
         include: >-
           ${{ fromJSON(github.event_name == 'pull_request' && '[
             { "os": "ubuntu-latest", "mode": "full", "shard": 1, "total": 4 },
@@ -43,12 +43,13 @@ jobs:
             { "os": "ubuntu-latest", "mode": "full", "shard": 2, "total": 4 },
             { "os": "ubuntu-latest", "mode": "full", "shard": 3, "total": 4 },
             { "os": "ubuntu-latest", "mode": "full", "shard": 4, "total": 4 },
-            { "os": "macos-latest", "mode": "full", "shard": 1, "total": 6 },
-            { "os": "macos-latest", "mode": "full", "shard": 2, "total": 6 },
-            { "os": "macos-latest", "mode": "full", "shard": 3, "total": 6 },
-            { "os": "macos-latest", "mode": "full", "shard": 4, "total": 6 },
-            { "os": "macos-latest", "mode": "full", "shard": 5, "total": 6 },
-            { "os": "macos-latest", "mode": "full", "shard": 6, "total": 6 }
+            { "os": "macos-latest", "mode": "full", "shard": 1, "total": 7 },
+            { "os": "macos-latest", "mode": "full", "shard": 2, "total": 7 },
+            { "os": "macos-latest", "mode": "full", "shard": 3, "total": 7 },
+            { "os": "macos-latest", "mode": "full", "shard": 4, "total": 7 },
+            { "os": "macos-latest", "mode": "full", "shard": 5, "total": 7 },
+            { "os": "macos-latest", "mode": "full", "shard": 6, "total": 7 },
+            { "os": "macos-latest", "mode": "full", "shard": 7, "total": 7 }
           ]') }}
     runs-on: ${{ matrix.os }}
     env:

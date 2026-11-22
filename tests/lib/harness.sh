@@ -109,6 +109,7 @@ PY
     -e '/^_bureau_gh_pr_retry() {/,/^}/p' -e '/^bureau_open_pr_number() {/,/^}/p' \
     -e '/^bureau_guard_branch_reset() {/,/^}/p' \
     -e '/^check_squash_range() {/,/^}/p' -e '/^comment_on_branch_pr() {/,/^}/p' \
+    -e '/^bureau_implementation_context() {/,/^}/p' \
     -e '/^restore_worktree_deps() {/,/^}/p' \
     -e '/^apply_build_failure() {/,/^}/p' -e '/^decide_review_verdict() {/,/^}/p' \
     -e '/^review_convergence() {/,/^}/p' -e '/^review_counts() {/,/^}/p' -e '/^bureau_review_evidence() {/,/^}/p' \
@@ -117,6 +118,10 @@ PY
     -e '/^spec_admission_gate() {/,/^}/p' \
     -e '/^# ── Spec directory of a branch/,/^# ── End of spec directory of a branch/p' \
     "$REPO_ROOT/templates/scripts/bureau-config.sh" > "$SCRIPTS_DIR/real-helpers.sh" || return
+  # Keep the real hold publisher; the lightweight stage stub supplies its key
+  # without inventing an evidence attempt that the real provider never began.
+  sed -n '/^post_implementation_hold() {/,/^}/p' "$REPO_ROOT/templates/scripts/bureau-config.sh" \
+    | sed 's/^post_implementation_hold() {/_harness_post_implementation_hold() {/' >> "$SCRIPTS_DIR/real-helpers.sh" || return
   grep -q '^bureau_spec_dir_for_branch() {' "$SCRIPTS_DIR/real-helpers.sh" || { echo "harness: spec-dir matcher not found in bureau-config.sh" >&2; return 1; }
   sed -n '/^# File overlap admission\./,/^# Evidence is observational/{ /^# Evidence is observational/d; p; }' \
     "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/real-helpers.sh" || return
@@ -124,7 +129,7 @@ PY
   # A needs-human label that cannot be written is held locally; the hold helpers run for real
   # on top of the stub's add_issue_label and alert_telegram.
   sed -n '/^# ── needs-human hold/,/^# ── End of needs-human hold/p' "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/real-helpers.sh" || return
-  sed -n -e '/^bureau_evidence() {/,/^}/p' -e '/^bureau_record_gate() {/,/^}/p' \
+  sed -n -e '/^bureau_ticket_reason() {/,/^}/p' -e '/^bureau_outcome_signal() {/,/^}/p' -e '/^bureau_evidence() {/,/^}/p' -e '/^bureau_record_gate() {/,/^}/p' \
     -e '/^bureau_run_gate() {/,/^}/p' -e '/^bureau_ticket_policy() {/,/^}/p' \
     -e '/^bureau_archive_evidence() {/,/^}/p' -e '/^bureau_observe_waits() {/,/^}/p' -e '/^bureau_record_pr_url() {/,/^}/p' \
     -e '/^bureau_record_branch_pr() {/,/^}/p' -e '/^bureau_acceptance_brief() {/,/^}/p' \
