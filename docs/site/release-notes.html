@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="3c5ebe6162056a3afa6e8a18079ab6731c2ef77c9015b04adcf49d6c616d311f">
+<meta name="bureau-source-sha256" content="dd694d759979249e5f361061d165bd82dc2b1940ea3ad4be69602b07a26b24a7">
 <title>release-notes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -18,10 +18,16 @@
 <main class="bhb-main"><h1
 id="bureau-v390--semgrep-and-trivy-evidence-python-bytecode-fix">Bureau
 v3.9.0 — Semgrep and Trivy evidence, Python bytecode fix</h1>
-<p><strong>Release preparation · 2026-11-20 · source tag
-<code>v3.9.0</code>.</strong> v3.9.0 is a minor release on <a
-href="release-notes-v3.8.0.html">v3.8.0</a>. Tagging and GitHub Release
-publication remain separate maintainer operations.</p>
+<p><strong>Published release · 2026-11-21 · source tag
+<code>v3.9.0</code>.</strong> The <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.9.0">GitHub
+Release</a>, "Bureau v3.9.0 — Semgrep and Trivy evidence, Python
+bytecode fix", is published as latest. Annotated tag <code>v3.9.0</code>
+(tag object <code>f6a0d79</code>) points at merge commit
+<code>96f47ce</code> of <a
+href="https://github.com/KaiaK808/bureau/pull/162">#162</a>, merged on
+2026-11-20. v3.9.0 is a minor release on <a
+href="release-notes-v3.8.0.html">v3.8.0</a>.</p>
 <p>The release includes <a
 href="https://github.com/KaiaK808/bureau/pull/158">#158</a>, <a
 href="https://github.com/KaiaK808/bureau/pull/159">#159</a>, <a
@@ -232,12 +238,12 @@ merge ends with <code>2</code> (not yet decided) and retries; decided
 blockers keep <code>25</code>. No configuration key changes.</p>
 <h2 id="upgrade-an-existing-installation">Upgrade an existing
 installation</h2>
-<p><strong>From v3.8.0, once v3.9.0 is published.</strong> Stop every
-shepherd, queue loop, dispatcher and supervisor. Preserve unfinished
-work, local commits, customized assets, instructions, the Spec Kit
-constitution and shared runtime records. Compare installed script drift
-and reconcile local incident fixes before replacing assets. Select the
-published <code>v3.9.0</code> tag and refresh discovery. Save the <a
+<p><strong>From v3.8.0.</strong> Stop every shepherd, queue loop,
+dispatcher and supervisor. Preserve unfinished work, local commits,
+customized assets, instructions, the Spec Kit constitution and shared
+runtime records. Compare installed script drift and reconcile local
+incident fixes before replacing assets. Select the published
+<code>v3.9.0</code> tag and refresh discovery. Save the <a
 href="migration.html#before-changing-an-adopting-repository">pre-upgrade
 inventory and private backup</a>, including
 <code>.bureau-install.json</code> and <code>.gitignore</code> in the
@@ -366,8 +372,9 @@ points, review evidence, provider gates, filesystem-specific directory
 cases and a tracked Latin-1 shell POST, without a model or network. See
 the <a href="../../CHANGELOG.md#390---2026-11-20">fragment validation in
 the changelog</a>.</p>
-<p>The release branch's own validation remains to be run by the
-maintainer:</p>
+<p>The release review, both gate suites, the release CI and the final
+candidate/tag tree comparison are recorded below. No manual live
+injection sample or adopter qualification is recorded.</p>
 <table>
 <thead>
 <tr>
@@ -378,34 +385,67 @@ maintainer:</p>
 <tbody>
 <tr>
 <td>Independent release review</td>
-<td>TBD</td>
+<td>Codex, read-only, five rounds. Rounds 1 to 3 requested documentation
+changes (9, 11 and 9 findings), each fixed. Round 2 also found two Trivy
+parsing defects in merged scanner code; they are listed as known
+limitations below. A maintainer-approved fourth round, limited to the
+round 3 fixes, found two P3s, fixed by hand in <code>d8eaf20</code>. A
+fifth review, limited to the added commit-status read entry, requested
+two wording corrections (the exit <code>2</code> statement now keeps
+decided blockers at <code>25</code>; the PR list gained <a
+href="https://github.com/KaiaK808/bureau/pull/163">#163</a>), fixed by
+hand in <code>764fd9a</code> without a further round.</td>
 </tr>
 <tr>
 <td>macOS gate suite and tested ref</td>
-<td>TBD</td>
+<td><code>764fd9a</code>, two shards: 196 of 196 on the first pass, no
+reruns (2026-11-20). An earlier run on the superseded candidate
+<code>d8eaf20</code> timed out once in
+<code>test_semgrep_pipeline.sh</code> at the 600-second floor under host
+load.</td>
 </tr>
 <tr>
 <td>Remote gate suite and tested ref</td>
-<td>TBD</td>
+<td><code>openclaw-01</code>, exactly <code>764fd9a</code>, two shards:
+196 of 196 on the first pass, no reruns (2026-11-20).</td>
 </tr>
 <tr>
 <td>Release CI jobs, runs and results</td>
-<td>TBD</td>
+<td>All <code>test</code> workflow runs passed on the first attempt,
+with no reruns. <a
+href="https://github.com/KaiaK808/bureau/pull/162">#162</a> at
+<code>764fd9a</code>: pull-request <a
+href="https://github.com/KaiaK808/bureau/actions/runs/44734275670">run
+44734275670</a> and release-branch push <a
+href="https://github.com/KaiaK808/bureau/actions/runs/44734267517">run
+44734267517</a>. Main at <code>96f47ce</code>: <a
+href="https://github.com/KaiaK808/bureau/actions/runs/44758796565">run
+44758796565</a>. Tag <code>v3.9.0</code> at <code>96f47ce</code>: <a
+href="https://github.com/KaiaK808/bureau/actions/runs/44776516076">run
+44776516076</a>. Earlier candidate <code>d8eaf20</code>: pull-request <a
+href="https://github.com/KaiaK808/bureau/actions/runs/44475835038">run
+44475835038</a> and push <a
+href="https://github.com/KaiaK808/bureau/actions/runs/44475801193">run
+44475801193</a>, both green.</td>
 </tr>
 <tr>
 <td>Final candidate/tag tested-tree comparison</td>
-<td>TBD</td>
+<td><code>python3 scripts/release_verify.py 764fd9a v3.9.0</code>
+passed: <code>templates/</code>, <code>tests/</code> and
+<code>scripts/</code> are tree-identical between the tested candidate
+and the tag. Candidate <code>764fd9a</code> and the tag's commit
+<code>96f47ce</code> have the identical tree
+(<code>ae6310256d09</code>).</td>
 </tr>
 <tr>
 <td>Manual live injection sample and adopter qualification</td>
-<td>TBD</td>
+<td>No result recorded for v3.9.0.</td>
 </tr>
 </tbody>
 </table>
-<p>Before publication, record the exact tested refs and results and run
-<a href="releases.html#verify-the-tested-release-trees">release tree
-verification</a>. The manual live injection sample remains a separate
-release-checklist item.</p>
+<p>See <a href="releases.html#verify-the-tested-release-trees">release
+tree verification</a> for the comparison procedure. The manual live
+injection sample remains a separate release-checklist item.</p>
 <h2 id="known-limitations">Known limitations</h2>
 <ul>
 <li>Real-engine validation of Semgrep's private-copy boundary, Linux
@@ -429,9 +469,8 @@ comment, so Trivy can receive altered configuration text.</li>
 other indented body lines, so unsupported syntax in those lines can pass
 without a Bureau coverage warning.</li>
 <li>The writer of the historical adopter cache remains unknown.</li>
-<li>The release branch's own macOS and remote suites, CI, tested refs
-and final tree comparisons remain <code>TBD</code> until the maintainer
-runs them.</li>
+<li>No manual live injection sample or adopter qualification is recorded
+for v3.9.0.</li>
 </ul></main>
 </div>
 </body>

@@ -55,7 +55,7 @@ operating-system sandbox, which this release does not have. Doctor warns
 when the resolved real path is inside the main checkout (including
 subdirectories) or when the file is readable by group or others; it
 never executes or prints the file's contents. See <a
-href="../migration.md#move-the-secrets-file-outside-the-checkout">move an
+href="migration.html#move-the-secrets-file-outside-the-checkout">move an
 existing installation</a>.</p>
 <p>For one run, use a per-stage key that <code>.env</code> does not
 define, or change or comment out the corresponding line in
@@ -75,7 +75,7 @@ preserves existing fields, adds
 model selection, and saves a private exact backup.
 <code>bureau-doctor.py</code> validates shape/version and reports
 effective settings without contacting providers. See <a
-href="../migration.md">migration and rollback</a>.</p>
+href="migration.html">migration and rollback</a>.</p>
 <p>Doctor also validates <code>agents.review_adr_context</code> as a
 boolean, <code>agents.review_adr_budget_bytes</code> as an integer from
 0 to 1048576, and <code>repo.adr_dir</code> as a plain
@@ -1007,7 +1007,7 @@ repository-controlled commands. Remove
 configurations. Runtime and doctor reject this key, including with
 <code>null</code> or while Trivy is disabled. A follow-up will design an
 isolated, source-bound image build. See the <a
-href="../migration.md#from-v380">v3.9.0 upgrade steps</a>.</p>
+href="migration.html#from-v380">v3.9.0 upgrade steps</a>.</p>
 <p>The shared receipt store writes immutable <code>report.json</code>,
 <code>projection.json</code> and <code>receipt.json</code> attempts
 under
@@ -1356,7 +1356,7 @@ sub-issues are), without
 <code>needs-human</code>/<code>blocked</code>/<code>wip</code>. Merge
 follows <code>max_concurrent_include_merge</code>; Build Review always
 counts, including an approved <code>--no-merge</code> stop there. See <a
-href="../recipes.md#single-flight-pipeline">recipes</a></td>
+href="recipes.html#single-flight-pipeline">recipes</a></td>
 </tr>
 <tr>
 <td><code>agents.file_overlap_gate</code></td>
@@ -1374,7 +1374,7 @@ then retry at normal priority next poll. Includes generated docs and
 changelogs; state holders use existing <code>linear.projects</code>,
 while reservations and PRs retain their footprints across projects.
 Absent/false preserves legacy advisory crosscheck extraction and
-matching. See <a href="../stage-protocol.md#file-overlap-admission">file
+matching. See <a href="stage-protocol.html#file-overlap-admission">file
 admission</a> for migration, durable reservations and compatibility
 limits. Continuous dispatch requires the explicit boolean
 <code>true</code>, including one lane and dry-run; otherwise startup
@@ -1413,7 +1413,7 @@ reports an error. Holds regardless of <code>agents.merge</code>,
 <code>agents.rebase</code> and the shepherd's forced stages. Any value
 but exactly <code>auto</code> or <code>manual</code> falls closed to
 <code>manual</code> with a warning. See <a
-href="../recipes.md#merge-by-hand">recipes</a></td>
+href="recipes.html#merge-by-hand">recipes</a></td>
 </tr>
 <tr>
 <td><code>agents.merge_strategy</code></td>
@@ -1441,7 +1441,7 @@ a later push, not a barrier to deliberate bypass: PR workflows can write
 the same status and agents using an allowed person's login can approve
 themselves. Bureau's pipelines never invoke the writer. An unforgeable
 form needs a separate Bureau identity and is a later change. See <a
-href="../recipes.md#require-a-persons-approval-of-the-exact-commit">recipe</a></td>
+href="recipes.html#require-a-persons-approval-of-the-exact-commit">recipe</a></td>
 </tr>
 <tr>
 <td><code>agents.merge_require_green_ci</code></td>
@@ -1612,7 +1612,7 @@ another provider</td>
 <td>Generic per-stage override; ignored for Codex under v1 model
 compatibility. Under v2 semantics it belongs to the stage's selected
 runner. Provider and environment settings also participate in
-resolution; see <a href="../provider-runtime.md">exact precedence</a>. Set
+resolution; see <a href="provider-runtime.html">exact precedence</a>. Set
 through the compatibility-aware Models group in
 <code>/bureau-init --update</code></td>
 </tr>
@@ -1702,7 +1702,7 @@ inherited <code>CLAUDE_CONFIG_DIR</code> or <code>~/.claude</code>.
 Codex ignores it. <code>--describe</code> reports it as
 <code>config_dir</code>; doctor names the directory per Claude stage and
 warns when Claude is not logged in there. See <a
-href="../provider-runtime.md#claude-configuration-directory">provider
+href="provider-runtime.html#claude-configuration-directory">provider
 runtime</a></td>
 </tr>
 <tr>
@@ -1787,7 +1787,7 @@ provider usage signal</td>
 </tr>
 </tbody>
 </table>
-<p>Read <a href="../provider-runtime.md">provider runtime</a> for exact
+<p>Read <a href="provider-runtime.html">provider runtime</a> for exact
 model precedence, sandbox capabilities and structured results. Code
 review/research default to read-only; spec-review/implementation/QA can
 write within the permitted workspace. The executor runs actual
@@ -2004,7 +2004,7 @@ installed drift, resync all scripts together including
 <code>bureau-ticket.py</code>, and restart drivers before enabling.
 Tests use fake providers/services, real Git and per-guard negative
 controls; live adopter/provider qualification remains outstanding. See
-the <a href="../stage-protocol.md#ticket-budget-and-progress-stops">stop
+the <a href="stage-protocol.html#ticket-budget-and-progress-stops">stop
 protocol</a>.</p>
 <h3 id="advisory-lesson-budgets">Advisory lesson budgets</h3>
 <p><code>agents.lessons_budget_bytes</code> is an optional object with
@@ -2024,7 +2024,7 @@ marker if no entry fits. A budget too small for the complete wrapper and
 marker omits overflowing context with a warning. These are byte limits,
 not token estimates.</p>
 <p>Curate <code>LESSONS.md</code> using the <a
-href="../stage-protocol.md#bounded-advisory-lessons">entry format and
+href="stage-protocol.html#bounded-advisory-lessons">entry format and
 selection rules</a>. Existing free-form files remain one untagged
 general lesson set, now subject to the same budget. Upgrade by resyncing
 the complete scripts scope, including <code>bureau-lessons.py</code> and
@@ -2699,7 +2699,7 @@ after the reset. Commands run outside the provider sandbox under
 <code>repo.untrusted_env</code>, with a fixed 1,800-second limit per
 command. Checks must leave the tracked tree/index unchanged and create
 no nonignored untracked files; ignored test caches are permitted. See <a
-href="../stage-protocol.md#deterministic-conflict-resolution">the
+href="stage-protocol.html#deterministic-conflict-resolution">the
 transaction contract</a> for rollback and ownership limits.</p>
 <h4 id="node-repositories">Node repositories</h4>
 <p><code>restore_worktree_deps</code> detects the lockfile beside
@@ -2765,7 +2765,7 @@ supported. Other dependency layouts need a separately reviewed setup;
 live package-manager/cache qualification is still an operator check.</p>
 <p>For documentation work without a JavaScript manifest, configure a
 real trusted <code>repo.test_command</code> as in the <a
-href="../recipes.md#documentation-only-tickets">documentation-only
+href="recipes.html#documentation-only-tickets">documentation-only
 recipe</a>. Test commands remain repository-wide; ticket/model text
 cannot select an override. Configure before prepare; see <a
 href="troubleshooting.html#configuration-changed-since-prepare">configuration-change
@@ -3186,7 +3186,7 @@ direct-worker paths; branch lookup has no comment-count limit. An
 otherwise eligible disabled-implementation <code>--respect-config</code>
 hand-off still returns <code>20</code>. No configuration keys or
 defaults change. See the <a
-href="../migration.md#implementation-decision-holds">coordinated
+href="migration.html#implementation-decision-holds">coordinated
 upgrade</a>.</p>
 <table>
 <thead>
@@ -3304,7 +3304,7 @@ on.</p>
 (<code>.bureau.json</code> <code>agents.*</code>)</h3>
 <p>Three opt-in toggles change background implementation control flow,
 prompt compression and response style. All default off. See <a
-href="../token-efficiency.md">token efficiency</a> for the historical
+href="token-efficiency.html">token efficiency</a> for the historical
 rationale; provider support and actual measurements must be checked for
 the adopting repository.</p>
 <p>Provider calls read these settings at invocation time. Change them
@@ -3655,7 +3655,7 @@ collection). That advisory file is the explicit free-text exception to
 metadata-only evidence; it is never applied automatically. Both share
 the existing global evidence budget. Resync scripts and interfaces
 together, then restart drivers; see the <a
-href="../stage-protocol.md#acceptance-briefs-at-human-merge-boundaries">acceptance
+href="stage-protocol.html#acceptance-briefs-at-human-merge-boundaries">acceptance
 and insights protocol</a> for privacy, retention and delivery
 limits.</p>
 <h3 id="risk-tier">Risk tier</h3>
@@ -3776,7 +3776,7 @@ private permissions, atomic capacity checks and per-ledger
 provenance, status, severity and filtered repository-relative path;
 applied/declined are advisory self-reports, not proof of a fix. Resync
 scripts and interfaces together and restart drivers; no backfill occurs.
-See <a href="../stage-protocol.md#failure-learning-records">failure
+See <a href="stage-protocol.html#failure-learning-records">failure
 learning records</a>.</p>
 <p>Evidence is automatic and needs no <code>.bureau.json</code> key or
 configuration-version change.
@@ -3809,7 +3809,7 @@ sweep, all are attempted within N sweeps with writable cursors; the
 refused-write fallback has the same bound in a retained dispatcher or
 independent ticks at the configured cadence (default 30 minutes). Other
 restart/cadence patterns have no cross-process fallback bound; see <a
-href="../stage-protocol.md#versioned-background-evidence">stage
+href="stage-protocol.html#versioned-background-evidence">stage
 protocol</a>. Exact end times require Linear completion history or PR
 <code>mergedAt</code>; other resolutions retain null event times.</p>
 <p>Resync all scripts together and restart drivers. A pre-fix PR 3 store
@@ -3825,7 +3825,7 @@ first-observed ends yield an upper bound.
 <code>status --run RUN_ID</code> also reads background manifests. Resync
 scripts as a set, including <code>bureau-evidence.py</code>, then
 restart background drivers; no historical backfill. See <a
-href="../stage-protocol.md#versioned-background-evidence">stage
+href="stage-protocol.html#versioned-background-evidence">stage
 protocol</a> for the record schemas and wait lifecycle.</p>
 <h3 id="supervisor-1">Supervisor</h3>
 <table>
@@ -3860,7 +3860,7 @@ JSON, default JSON, then Claude. Model precedence is provider-specific
 stage environment, generic stage environment, stage JSON, provider JSON,
 generic default JSON only for its owning default runner, provider
 environment default, and the legacy Claude environment default. See <a
-href="../provider-runtime.md">provider runtime</a>.</p>
+href="provider-runtime.html">provider runtime</a>.</p>
 <p><code>BUREAU_REASONING_STAGE</code>,
 <code>BUREAU_SANDBOX_STAGE</code>, <code>BUREAU_STAGE_TIMEOUT</code> and
 <code>BUREAU_CLAUDE_CONFIG_DIR</code> override the corresponding
@@ -3886,7 +3886,7 @@ zero. <code>bureau-status.sh --cost</code> displays
 <ul>
 <li><a href="exit-codes.html">Exit codes &amp; alerts</a> — what each
 pipeline failure code means and how Telegram throttling works</li>
-<li><a href="../recipes.md">Recipes</a> — common config patterns
+<li><a href="recipes.html">Recipes</a> — common config patterns
 (single-flight, mixed models, dry-run)</li>
 <li><a href="troubleshooting.html">Troubleshooting</a> — when things
 break</li>

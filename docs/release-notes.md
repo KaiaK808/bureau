@@ -1,6 +1,6 @@
 # Bureau v3.9.0 — Semgrep and Trivy evidence, Python bytecode fix
 
-**Release preparation · 2026-11-20 · source tag `v3.9.0`.** v3.9.0 is a minor release on [v3.8.0](release-notes-v3.8.0.md). Tagging and GitHub Release publication remain separate maintainer operations.
+**Published release · 2026-11-21 · source tag `v3.9.0`.** The [GitHub Release](https://github.com/KaiaK808/bureau/releases/tag/v3.9.0), "Bureau v3.9.0 — Semgrep and Trivy evidence, Python bytecode fix", is published as latest. Annotated tag `v3.9.0` (tag object `f6a0d79`) points at merge commit `96f47ce` of [#162](https://github.com/KaiaK808/bureau/pull/162), merged on 2026-11-20. v3.9.0 is a minor release on [v3.8.0](release-notes-v3.8.0.md).
 
 The release includes [#158](https://github.com/KaiaK808/bureau/pull/158), [#159](https://github.com/KaiaK808/bureau/pull/159), [#160](https://github.com/KaiaK808/bureau/pull/160), [#161](https://github.com/KaiaK808/bureau/pull/161) and [#163](https://github.com/KaiaK808/bureau/pull/163) in first-parent merge order. All changes are merged. The [changelog](../CHANGELOG.md#390---2026-11-20) collects the five release fragments.
 
@@ -65,7 +65,7 @@ The CI merge gate no longer passes when the commit-status read fails, where it c
 
 ## Upgrade an existing installation
 
-**From v3.8.0, once v3.9.0 is published.** Stop every shepherd, queue loop, dispatcher and supervisor. Preserve unfinished work, local commits, customized assets, instructions, the Spec Kit constitution and shared runtime records. Compare installed script drift and reconcile local incident fixes before replacing assets. Select the published `v3.9.0` tag and refresh discovery. Save the [pre-upgrade inventory and private backup](migration.md#before-changing-an-adopting-repository), including `.bureau-install.json` and `.gitignore` in the backup. Use the [v3.9.0 scripts-only preview and apply commands](migration.md#from-v380) in every adopting repository with its existing target selection. Resolve conflicts before applying. `--update` edits configuration only.
+**From v3.8.0.** Stop every shepherd, queue loop, dispatcher and supervisor. Preserve unfinished work, local commits, customized assets, instructions, the Spec Kit constitution and shared runtime records. Compare installed script drift and reconcile local incident fixes before replacing assets. Select the published `v3.9.0` tag and refresh discovery. Save the [pre-upgrade inventory and private backup](migration.md#before-changing-an-adopting-repository), including `.bureau-install.json` and `.gitignore` in the backup. Use the [v3.9.0 scripts-only preview and apply commands](migration.md#from-v380) in every adopting repository with its existing target selection. Resolve conflicts before applying. `--update` edits configuration only.
 
 To set up Semgrep for background review, create a standard-library venv with the supported CPython and install Semgrep CE **1.183.0** from the shipped wheel-only hash lock. Set `BUREAU_SEMGREP_VENV` or use the shared-state fallback. Qualify network isolation on the deployment host, then enable `review.semgrep.enabled` with `review.semgrep.mode` set to `advisory`. See [Semgrep installation](configuration.md#reviewsemgrep).
 
@@ -102,18 +102,18 @@ The merge gate fix has CI helper and merge-stage tests, including fail-before co
 
 Offline Trivy tests used a fake binary to cover the scanner boundary, cache, coverage and parser controls, QA placement, the disabled baseline and merge races. The bytecode fix used local fixtures for stage entry points, review evidence, provider gates, filesystem-specific directory cases and a tracked Latin-1 shell POST, without a model or network. See the [fragment validation in the changelog](../CHANGELOG.md#390---2026-11-20).
 
-The release branch's own validation remains to be run by the maintainer:
+The release review, both gate suites, the release CI and the final candidate/tag tree comparison are recorded below. No manual live injection sample or adopter qualification is recorded.
 
 | Release check | Result / reference |
 |---|---|
-| Independent release review | TBD |
-| macOS gate suite and tested ref | TBD |
-| Remote gate suite and tested ref | TBD |
-| Release CI jobs, runs and results | TBD |
-| Final candidate/tag tested-tree comparison | TBD |
-| Manual live injection sample and adopter qualification | TBD |
+| Independent release review | Codex, read-only, five rounds. Rounds 1 to 3 requested documentation changes (9, 11 and 9 findings), each fixed. Round 2 also found two Trivy parsing defects in merged scanner code; they are listed as known limitations below. A maintainer-approved fourth round, limited to the round 3 fixes, found two P3s, fixed by hand in `d8eaf20`. A fifth review, limited to the added commit-status read entry, requested two wording corrections (the exit `2` statement now keeps decided blockers at `25`; the PR list gained [#163](https://github.com/KaiaK808/bureau/pull/163)), fixed by hand in `764fd9a` without a further round. |
+| macOS gate suite and tested ref | `764fd9a`, two shards: 196 of 196 on the first pass, no reruns (2026-11-20). An earlier run on the superseded candidate `d8eaf20` timed out once in `test_semgrep_pipeline.sh` at the 600-second floor under host load. |
+| Remote gate suite and tested ref | `openclaw-01`, exactly `764fd9a`, two shards: 196 of 196 on the first pass, no reruns (2026-11-20). |
+| Release CI jobs, runs and results | All `test` workflow runs passed on the first attempt, with no reruns. [#162](https://github.com/KaiaK808/bureau/pull/162) at `764fd9a`: pull-request [run 44734275670](https://github.com/KaiaK808/bureau/actions/runs/44734275670) and release-branch push [run 44734267517](https://github.com/KaiaK808/bureau/actions/runs/44734267517). Main at `96f47ce`: [run 44758796565](https://github.com/KaiaK808/bureau/actions/runs/44758796565). Tag `v3.9.0` at `96f47ce`: [run 44776516076](https://github.com/KaiaK808/bureau/actions/runs/44776516076). Earlier candidate `d8eaf20`: pull-request [run 44475835038](https://github.com/KaiaK808/bureau/actions/runs/44475835038) and push [run 44475801193](https://github.com/KaiaK808/bureau/actions/runs/44475801193), both green. |
+| Final candidate/tag tested-tree comparison | `python3 scripts/release_verify.py 764fd9a v3.9.0` passed: `templates/`, `tests/` and `scripts/` are tree-identical between the tested candidate and the tag. Candidate `764fd9a` and the tag's commit `96f47ce` have the identical tree (`ae6310256d09`). |
+| Manual live injection sample and adopter qualification | No result recorded for v3.9.0. |
 
-Before publication, record the exact tested refs and results and run [release tree verification](releases.md#verify-the-tested-release-trees). The manual live injection sample remains a separate release-checklist item.
+See [release tree verification](releases.md#verify-the-tested-release-trees) for the comparison procedure. The manual live injection sample remains a separate release-checklist item.
 
 ## Known limitations
 
@@ -123,4 +123,4 @@ Before publication, record the exact tested refs and results and run [release tr
 - Inline-ignore stripping can truncate an IaC line at `//` inside a quoted string before a trailing `trivy:ignore:` comment, so Trivy can receive altered configuration text.
 - Bureau's Yarn consistency parser rejects indented comments and skips other indented body lines, so unsupported syntax in those lines can pass without a Bureau coverage warning.
 - The writer of the historical adopter cache remains unknown.
-- The release branch's own macOS and remote suites, CI, tested refs and final tree comparisons remain `TBD` until the maintainer runs them.
+- No manual live injection sample or adopter qualification is recorded for v3.9.0.

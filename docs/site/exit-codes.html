@@ -415,7 +415,7 @@ not start as though the first had completed.</p>
 treatment as capacity waiting (<code>28</code>), including the shepherd
 exception and bounded tick JSON described below. Reservations and the
 migration rules are documented in <a
-href="../stage-protocol.md#file-overlap-admission">file admission</a>.</p>
+href="stage-protocol.html#file-overlap-admission">file admission</a>.</p>
 <p>Exit codes outside this table (e.g. <code>1</code>) classify as
 <code>error-1</code> — usually a bug in the pipeline script or an
 unhandled bash error.</p>
@@ -616,7 +616,7 @@ cancelled/duplicate 26, other inactive state 25), and
 <code>stalled</code> (25). Successful completion, handoffs, waits,
 infrastructure failures and cancellation 130 have no invented stop
 reason. See the <a
-href="../stage-protocol.md#ticket-budget-and-progress-stops">stage
+href="stage-protocol.html#ticket-budget-and-progress-stops">stage
 protocol</a> for safe-point handling, precedence and persistence. These
 reasons are separate from learning cause classes.</p>
 <h2 id="telegram-alerts">Telegram alerts</h2>
@@ -742,7 +742,7 @@ dispatcher lane outcome or routing. Silence retains 25 with
 <code>timeout_kind: silence</code>; wall-clock timeout retains 124.
 Latched withdrawal 0/25/26 wins over earlier provider failures; quiet
 overlap exit 29 stays distinct and quiet (<code>other</code> cause). See
-<a href="../stage-protocol.md#failure-learning-records">failure learning
+<a href="stage-protocol.html#failure-learning-records">failure learning
 records</a> for the exact mapping, local-only ledgers and retention.
 Resync all scripts including <code>bureau-insights.sh</code> and restart
 drivers; no configuration or backfill.</p></main>
