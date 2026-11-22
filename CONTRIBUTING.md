@@ -27,7 +27,7 @@ Do NOT file public issues for security vulnerabilities — see [SECURITY.md](SEC
 Every pull request runs the complete Linux suite in four shards and the focused
 macOS manifest in two shards. Pushes to `main`, `release/**` branches and `v*`
 tags, the weekly Monday schedule and manual workflow dispatch run the complete
-macOS suite in six shards. Check names distinguish `focused` and `full` runs;
+macOS suite in seven shards. Check names distinguish `focused` and `full` runs;
 every job uploads its timing records, including on failure.
 
 Add a new or changed test to [the macOS manifest](tests/macos-manifest.txt) when
