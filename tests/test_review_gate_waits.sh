@@ -354,7 +354,7 @@ MARKS="$COMMON/bureau/merge-gate-waits.json"
 mark() { jq -c --arg i "$ISSUE" '.[$i] // empty' "$MARKS" 2>/dev/null || true; }
 merge_run() { : > "$SANDBOX/calls.log"; rm -f "$PR2_GH/merge_calls.log"; run_pipeline merge-pipeline.sh "$@" "$ISSUE"; }
 # The review's APPROVE the gate reads.
-jq -n '[{createdAt: "2026-09-29T09:00:00Z", body: "## Code Review v2 — EXP-801\n\n**Verdict**: APPROVE"}]' > "$PR2_GH/comments.json"
+pr2_approval
 HEAD_SHA=$(jq -r .headRefOid "$PR2_GH/pr.json")
 calls=$(gate_wait_calls)
 picks "$ISSUE" 'the merge picker without any mark' merge-pipeline.sh
@@ -384,6 +384,8 @@ age_record 630 "$MARKS"; picks "$ISSUE" 'the second answer, 630 s' merge-pipelin
 push_head 'fix pushed'
 HEAD_SHA=$(jq -r .headRefOid "$PR2_GH/pr.json")
 age_record 1 "$MARKS"; picks "$ISSUE" 'a new head before the next merge run' merge-pipeline.sh
+# Gate-wait accounting resumes only after this pushed head has its own review.
+pr2_approval
 pr2_checks pending
 merge_run
 [ "$LAST_RC" = 2 ] && [ "$(mark | jq -r '"\(.gate_waits) \(.head)"')" = "1 $HEAD_SHA" ] || fail "merge: a new head did not start the count again (rc $LAST_RC, $(mark))"

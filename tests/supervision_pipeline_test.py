@@ -73,13 +73,16 @@ if args[:2] == ['pr', 'list']:
 elif args[:2] == ['pr', 'view']:
     number = int(args[2]); fields = args[args.index('--json')+1]
     metadata = {'state':'OPEN','baseRefName':os.environ.get('PR_BASE_REF','main'),'headRefName':f'{number:03d}-task'}
+    if fields in ('baseRefName,headRefName,headRefOid','state,baseRefName,headRefName,headRefOid'):
+        metadata['headRefOid'] = subprocess.check_output(['git','--git-dir',os.environ['ORIGIN_FIXTURE'],
+            'rev-parse',f'refs/heads/{number:03d}-task'],text=True).strip()
     if os.environ.get('PR_REFS_JSON') is not None: metadata = json.loads(os.environ['PR_REFS_JSON'])
     if fields == 'state':
         if '--jq' in args: print('OPEN')
         else:
             if os.environ.get('FAIL_GH_HEAD') == '1': sys.exit(1)
             print(json.dumps({'state':'OPEN'}))
-    elif fields in ('baseRefName,headRefName','state,baseRefName,mergedAt','state,baseRefName,headRefName','state,mergedAt'):
+    elif fields in ('baseRefName,headRefName','baseRefName,headRefName,headRefOid','state,baseRefName,mergedAt','state,baseRefName,headRefName','state,baseRefName,headRefName,headRefOid','state,mergedAt'):
         if os.environ.get('FAIL_GH_HEAD') == '1': sys.exit(1)
         print(json.dumps({key:metadata[key] for key in fields.split(',') if key in metadata}))
     elif fields == 'url': print(f'https://example.invalid/pull/{number}')

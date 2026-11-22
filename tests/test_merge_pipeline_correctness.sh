@@ -171,8 +171,22 @@ case "${1:-}" in
         fi
         ;;
       view)
+        if [ "$JSON_FIELDS" = state,mergeCommit,baseRefName ]; then
+          if [ -f "$STUB_DIR/merge_in_flight.json" ]; then
+            reads=$(( $(cat "$STUB_DIR/merge_result_reads" 2>/dev/null || echo 0) + 1 ))
+            echo "$reads" > "$STUB_DIR/merge_result_reads"
+            if [ "$reads" -gt 2 ]; then
+              mv "$STUB_DIR/merge_in_flight.json" "$STUB_DIR/pr_view.json"
+            fi
+          fi
+          if [ -s "$STUB_DIR/post_merge_reads_fail" ]; then
+            failures=$(cat "$STUB_DIR/post_merge_reads_fail")
+            if [ "$failures" -gt 0 ]; then echo "$((failures - 1))" > "$STUB_DIR/post_merge_reads_fail"; exit 1; fi
+          fi
+          if [ -f "$STUB_DIR/invalid_merge_commit" ]; then echo '{"state":"MERGED","mergeCommit":{},"baseRefName":"main"}'; exit 0; fi
+        fi
         # The gate's own reads can be made to fail one at a time (v3.0.1).
-        if [ "$JSON_FIELDS" = "state,mergeStateStatus,labels" ] && [ -f "$STUB_DIR/fail_pr_gate_read" ]; then
+        if [ "$JSON_FIELDS" = "state,mergeStateStatus,labels,baseRefName,baseRefOid" ] && [ -f "$STUB_DIR/fail_pr_gate_read" ]; then
           echo "HTTP 502" >&2; exit 1
         fi
         if [ "$JSON_FIELDS" = "comments" ] && [ -f "$STUB_DIR/fail_comments_read" ]; then
@@ -183,17 +197,49 @@ case "${1:-}" in
           echo "HTTP 502" >&2
           exit 1
         fi
-        cat "$STUB_DIR/pr_view.json" | project_and_filter
+        if [ "$JSON_FIELDS" = headRefOid ] && [ -f "$STUB_DIR/refused_head_read" ]; then
+          jq --arg h "$(cat "$STUB_DIR/refused_head_read")" '.headRefOid = $h' "$STUB_DIR/pr_view.json" | project_and_filter
+          exit 0
+        fi
+        if [[ ",$JSON_FIELDS," == *,comments,* ]]; then
+          jq '.comments |= ((. // []) | map({
+            id, author: {login: "fixture", id: "fixture-user", name: ""}, authorAssociation: "NONE",
+            body, createdAt, includesCreatedEdit: (.lastEditedAt != null),
+            isMinimized: false, minimizedReason: "", reactionGroups: [],
+            url: ("https://github.com/test-owner/test-repo/pull/42#issuecomment-" + .id), viewerDidAuthor: true
+          }))' "$STUB_DIR/pr_view.json" | project_and_filter
+        else
+          project_and_filter < "$STUB_DIR/pr_view.json"
+        fi
+        if [ "$JSON_FIELDS" = baseRefName ] && [ -f "$STUB_DIR/retarget_final_base" ]; then
+          jq '.baseRefName = "release"' "$STUB_DIR/pr_view.json" > "$STUB_DIR/pr_view.tmp" && mv "$STUB_DIR/pr_view.tmp" "$STUB_DIR/pr_view.json"
+        fi
         ;;
       merge)
         echo "gh pr merge ${3:-?}" >> "$STUB_DIR/merge_calls.log"
         # Full argv, NUL-separated: the body is multi-line.
         printf '%s\0' "$@" > "$STUB_DIR/merge_argv"
+        if [ -f "$STUB_DIR/merge_call_mode" ]; then
+          mode=$(cat "$STUB_DIR/merge_call_mode")
+          if [ "$mode" = transport ]; then
+            # GitHub accepted A, but neither result read can see its merge yet.
+            jq '.state = "MERGED" | .mergeCommit = {oid: .headRefOid} | .headRefOid = ("c" * 40)' \
+              "$STUB_DIR/pr_view.json" > "$STUB_DIR/merge_in_flight.json"
+          fi
+          jq '.headRefOid = ("c" * 40) | .mergeCommit = null' "$STUB_DIR/pr_view.json" > "$STUB_DIR/pr_view.json.tmp" \
+            && mv "$STUB_DIR/pr_view.json.tmp" "$STUB_DIR/pr_view.json"
+          case "$mode" in
+            transport) echo 'read: connection reset by peer' >&2 ;;
+            refused) echo 'GraphQL: Head branch was modified. Review and try the merge again. (mergePullRequest)' >&2 ;;
+          esac
+          exit 1
+        fi
         # Flip PR state to MERGED so any further view sees the new world.
         if [ -f "$STUB_DIR/pr_view.json" ]; then
-          jq '.state = "MERGED"' "$STUB_DIR/pr_view.json" > "$STUB_DIR/pr_view.json.tmp" \
+          jq '.state = "MERGED" | .mergeCommit = {oid: .headRefOid}' "$STUB_DIR/pr_view.json" > "$STUB_DIR/pr_view.json.tmp" \
             && mv "$STUB_DIR/pr_view.json.tmp" "$STUB_DIR/pr_view.json"
         fi
+        [ ! -f "$STUB_DIR/lost_merge_ack" ] || exit 1
         exit 0
         ;;
       comment)
@@ -212,7 +258,12 @@ case "${1:-}" in
   api)
     path_arg="${2:-}"
     case "$path_arg" in
-      graphql) if [ -f "$STUB_DIR/fail_threads_read" ]; then echo "HTTP 502" >&2; exit 1; fi
+      graphql) if [[ "$*" == *'node(id:$id)'* ]]; then
+                 comment_id=""; for a in "$@"; do case "$a" in id=*) comment_id=${a#id=} ;; esac; done
+                 jq --arg id "$comment_id" '{data:{node:([.comments[] | select(.id == $id) | {body,lastEditedAt}] | first)}}' "$STUB_DIR/pr_view.json" | apply_jq
+                 exit $?
+               fi
+               if [ -f "$STUB_DIR/fail_threads_read" ]; then echo "HTTP 502" >&2; exit 1; fi
                cat "$STUB_DIR/review_threads.json" | apply_jq ;;
       */commits/*/check-runs) cat "$STUB_DIR/check_runs.json" | apply_jq ;;
       */commits/*/status)     cat "$STUB_DIR/status.json"     | apply_jq ;;
@@ -250,11 +301,11 @@ populate_happy_fixtures() {
   "labels":[],
   "url":"https://github.com/test-owner/test-repo/pull/42",
   "headRefName":"feat/test",
-  "headRefOid":"HEAD_SHA",
+  "headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "baseRefName":"main",
-  "baseRefOid":"MAIN_SHA",
+  "baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "comments":[
-    {"createdAt":"2026-05-13T00:00:00Z","body":"## Code Review v2 — EXP-1\n**Verdict**: APPROVE"}
+    {"id":"approval","createdAt":"2026-05-13T00:00:00Z","lastEditedAt":null,"body":"## Code Review v2 — EXP-1\n**Verdict**: APPROVE\n**Reviewed head**: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n**Target**: `main` at `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`"}
   ]
 }
 EOF
@@ -262,7 +313,7 @@ EOF
 {"check_runs":[{"name":"ci","status":"completed","conclusion":"success"}]}
 EOF
   echo '{"statuses":[]}'                                       > "$sd/status.json"
-  echo '{"commit":{"sha":"MAIN_SHA"}}'                         > "$sd/branch_main.json"
+  echo '{"commit":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'                         > "$sd/branch_main.json"
   echo '{"ahead_by":0}'                                        > "$sd/compare.json"
   echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}' > "$sd/review_threads.json"
 }
@@ -298,7 +349,7 @@ test_happy_path() {
 test_stale_base() {
   local sb; sb=$(make_sandbox stale_base)
   populate_happy_fixtures "$sb"
-  echo '{"commit":{"sha":"MAIN_SHA_NEW"}}' > "$sb/stub_data/branch_main.json"
+  echo '{"commit":{"sha":"cccccccccccccccccccccccccccccccccccccccc"}}' > "$sb/stub_data/branch_main.json"
   echo '{"ahead_by":3}'                    > "$sb/stub_data/compare.json"
   run_pipeline "$sb"
 
@@ -453,8 +504,8 @@ test_jit_race() {
   populate_happy_fixtures "$sb"
   # First /branches/main call (initial gate) reports the matching SHA;
   # second call (JIT recheck) reports a different SHA — main moved.
-  echo '{"commit":{"sha":"MAIN_SHA"}}'             > "$sb/stub_data/branch_main_1.json"
-  echo '{"commit":{"sha":"MAIN_SHA_AFTER_RACE"}}'  > "$sb/stub_data/branch_main_2.json"
+  echo '{"commit":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'             > "$sb/stub_data/branch_main_1.json"
+  echo '{"commit":{"sha":"dddddddddddddddddddddddddddddddddddddddd"}}'  > "$sb/stub_data/branch_main_2.json"
   echo '{"ahead_by":1}'                            > "$sb/stub_data/compare.json"
   run_pipeline "$sb"
 
@@ -694,12 +745,12 @@ test_gate_outcome() {
   # A workflow that skips draft pull requests has run, yet contributes no success.
   sb=$(make_sandbox gate_skipped); populate_happy_fixtures "$sb"
   echo '{"check_runs":[{"name":"ci","id":20,"status":"completed","conclusion":"skipped"}]}' > "$sb/stub_data/check_runs.json"
-  run_gate "$sb"; gate_case "$sb" skipped 2 not-yet 'only 0 completed check(s) on HEAD_SHA (require >= 1)' || return 1
+  run_gate "$sb"; gate_case "$sb" skipped 2 not-yet 'only 0 completed check(s) on aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (require >= 1)' || return 1
   grep -q 'no CI started' <<< "$GREP" && { echo 'FAIL gate skipped: claimed no CI started' >&2; return 1; }
   # The stage reports the success count when the configured minimum is higher.
   jq '.agents.merge_min_required_checks = 2' "$sb/.bureau.json" > "$sb/.bureau.json.tmp" && mv "$sb/.bureau.json.tmp" "$sb/.bureau.json"
   echo '{"check_runs":[{"name":"ci","id":20,"status":"completed","conclusion":"success"},{"name":"docs","id":30,"status":"completed","conclusion":"neutral"}]}' > "$sb/stub_data/check_runs.json"
-  run_gate "$sb"; gate_case "$sb" success-count 2 not-yet 'only 1 completed check(s) on HEAD_SHA (require >= 2)' || return 1
+  run_gate "$sb"; gate_case "$sb" success-count 2 not-yet 'only 1 completed check(s) on aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (require >= 2)' || return 1
   # GitHub still computing mergeStateStatus, everything else green: not yet.
   sb=$(make_sandbox gate_unknown); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.mergeStateStatus="UNKNOWN"'
   run_gate "$sb"; gate_case "$sb" unknown 2 not-yet 'UNKNOWN' || return 1
@@ -749,12 +800,12 @@ test_gate_outcome() {
   # A failing check (the failed-CI case): blocked, whatever GitHub's state says.
   sb=$(make_sandbox gate_red); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.mergeStateStatus="UNSTABLE"'
   echo '{"check_runs":[{"name":"build + test","status":"completed","conclusion":"failure"}]}' > "$sb/stub_data/check_runs.json"
-  run_gate "$sb"; gate_case "$sb" red 25 blocked 'failing check(s) on HEAD_SHA: build + test' || return 1
+  run_gate "$sb"; gate_case "$sb" red 25 blocked 'failing check(s) on aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: build + test' || return 1
   # Conflicts, a stale base, no APPROVE: blocked.
   sb=$(make_sandbox gate_dirty); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.mergeStateStatus="DIRTY"'
   run_gate "$sb"; gate_case "$sb" dirty 25 blocked 'DIRTY' || return 1
   sb=$(make_sandbox gate_behind); populate_happy_fixtures "$sb"
-  echo '{"commit":{"sha":"MAIN_SHA_NEW"}}' > "$sb/stub_data/branch_main.json"; echo '{"ahead_by":3}' > "$sb/stub_data/compare.json"
+  echo '{"commit":{"sha":"cccccccccccccccccccccccccccccccccccccccc"}}' > "$sb/stub_data/branch_main.json"; echo '{"ahead_by":3}' > "$sb/stub_data/compare.json"
   run_gate "$sb"; gate_case "$sb" behind 25 blocked 'behind main' || return 1
   sb=$(make_sandbox gate_noverdict); populate_happy_fixtures "$sb"; set_pr_field "$sb" '.comments=[]'
   run_gate "$sb"; gate_case "$sb" no-verdict 25 blocked 'verdict=none' || return 1
@@ -764,8 +815,8 @@ test_gate_outcome() {
   run_gate "$sb"; gate_case "$sb" pending+no-verdict 25 blocked 'still pending' || return 1
   # The just-in-time recheck reports like the initial gate (main moved in between).
   sb=$(make_sandbox gate_jit); populate_happy_fixtures "$sb"
-  echo '{"commit":{"sha":"MAIN_SHA"}}' > "$sb/stub_data/branch_main_1.json"
-  echo '{"commit":{"sha":"MAIN_SHA_AFTER_RACE"}}' > "$sb/stub_data/branch_main_2.json"; echo '{"ahead_by":1}' > "$sb/stub_data/compare.json"
+  echo '{"commit":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}' > "$sb/stub_data/branch_main_1.json"
+  echo '{"commit":{"sha":"dddddddddddddddddddddddddddddddddddddddd"}}' > "$sb/stub_data/branch_main_2.json"; echo '{"ahead_by":1}' > "$sb/stub_data/compare.json"
   run_gate "$sb"; gate_case "$sb" jit 25 blocked 'behind main' || return 1
   grep -q 'Gate regressed' "$sb/pipeline.out" || { echo "FAIL gate jit: the recheck did not run" >&2; return 1; }
   # A merge that goes through: 0, no report.
@@ -810,6 +861,62 @@ NEG_EOF
   return 0
 }
 
+test_gate_conflict_without_base_name() {
+  local sb
+  sb=$(make_sandbox gate_missing_base); populate_happy_fixtures "$sb"
+  set_pr_field "$sb" '.baseRefName = ""'
+  run_gate "$sb"; gate_case "$sb" missing-base 2 not-yet 'base branch could not be read' || return 1
+  set_pr_field "$sb" '.mergeStateStatus = "DIRTY"'
+  run_gate "$sb"; gate_case "$sb" dirty-missing-base 25 blocked 'DIRTY (need CLEAN)' || return 1
+  grep -qxF "pr_read: the PR's base branch could not be read" <<< "$GREP" || return 1
+  ! grep -qE '^(approval_binding|base_current):' <<< "$GREP" || return 1
+  [ ! -s "$sb/stub_data/merge_calls.log" ] || return 1
+
+  # Restore the combined read so the empty base name discards the conflict.
+  python3 - "$sb/scripts/merge-pipeline.sh" <<'PY' || return 1
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+source = path.read_text()
+check = """| jq -er '.state | strings'); then"""
+combined = r"""| jq -er '.state | strings') \
+     || ! _base_ref=$(printf '%s' "$_pr_data" | jq -er '.baseRefName | strings | select(length > 0)'); then"""
+assert source.count(check) == 1
+path.write_text(source.replace(check, combined))
+PY
+  run_gate "$sb"; gate_case "$sb" discarded-conflict-control 2 not-yet 'pr_read: ' || return 1
+  ! grep -q '^merge_state:' <<< "$GREP"
+}
+
+test_gate_edited_approval() (
+  local sb
+  export GIT_CEILING_DIRECTORIES="$(cd "$SANDBOX_ROOT" && pwd -P)"
+  sb=$(make_sandbox gate_edited); populate_happy_fixtures "$sb"
+  cp "$REPO_ROOT/templates/scripts/bureau-ticket.py" "$sb/scripts/" || return 1
+  git -C "$sb" init -q || return 1
+  cd "$sb" || return 1
+  set_pr_field "$sb" '.comments[0].lastEditedAt = "2026-05-13T01:00:00Z"'
+  STUB_DIR="$sb/stub_data" "$sb/bin/gh" pr view 42 --json comments | jq -e '
+    .comments[0] | .includesCreatedEdit and (keys == ["author", "authorAssociation", "body", "createdAt", "id",
+      "includesCreatedEdit", "isMinimized", "minimizedReason", "reactionGroups", "url", "viewerDidAuthor"])' >/dev/null || return 1
+  run_gate "$sb"; gate_case "$sb" edited 20 refreshed 'selected approval comment was edited' || return 1
+  [ ! -s "$sb/stub_data/merge_calls.log" ] || return 1
+  grep -q -- '-f id=approval' "$sb/gh_invocations.log" || return 1
+
+  # Read the edit timestamp from the projection instead of the selected node.
+  python3 - "$sb/scripts/merge-pipeline.sh" <<'PY' || return 1
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+source = path.read_text()
+original = """"$_review_edit" | jq -r '.lastEditedAt'"""
+assert source.count(original) == 1
+path.write_text(source.replace(original, original.replace('$_review_edit', '$_review_comment')))
+PY
+  run_gate "$sb"; gate_case "$sb" projected-edit-control 0 - || return 1
+  [ -s "$sb/stub_data/merge_calls.log" ]
+)
+
 # The gate comment is posted again only when the outcome or a blocker changes: one
 # check more or less still running is no change, pending → failing is, and so is an
 # old-format comment (no "Outcome:" line).
@@ -835,7 +942,7 @@ test_gate_comment_key() {
   # An old-format comment (v3.0.0, no "Outcome:" line) with the same blocker line posts once.
   sb=$(make_sandbox gate_key_old); populate_happy_fixtures "$sb"
   echo '{"check_runs":[{"name":"a","status":"in_progress","conclusion":null}]}' > "$sb/stub_data/check_runs.json"
-  printf '🛑 **Bureau merge gate** — PR #42 is not eligible to merge.\n\n- ci: 1 check(s) still pending on HEAD_SHA\n' > "$sb/stub_data/last_body"; post_back "$sb"
+  printf '🛑 **Bureau merge gate** — PR #42 is not eligible to merge.\n\n- ci: 1 check(s) still pending on aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' > "$sb/stub_data/last_body"; post_back "$sb"
   run_gate "$sb"
   grep -q 'Posted blocker comment' "$sb/pipeline.out" || { echo "FAIL key: an old-format comment did not get the outcome" >&2; return 1; }
   return 0
@@ -904,7 +1011,9 @@ test_gate_dirty_under_shepherd() {
     || { echo "FAIL shepherd dirty: the halt comment lacks the gate report" >&2; cat "$sb/stub_data/comments_posted.log" >&2; return 1; }
   grep -q '+EXP-1 needs-human' "$sb/stub_data/labels.log" || { echo "FAIL shepherd dirty: no needs-human" >&2; return 1; }
   [ ! -s "$sb/stub_data/merge_calls.log" ] || { echo "FAIL shepherd dirty: merged a DIRTY PR" >&2; return 1; }
-  assert_shepherd_merge_outcome "$sb" 25 human_hold || return 1
+  # Full SHA fixtures produce gate evidence; the existing classifier therefore
+  # identifies the red merge gate rather than falling back to a generic hold.
+  assert_shepherd_merge_outcome "$sb" 25 gate_red || return 1
   # The queue (no shepherd) keeps "not yet" for the same PR: the rebase stage takes it.
   run_gate "$sb"; gate_case "$sb" dirty-queue 2 not-yet 'the rebase stage resolves it' || return 1
 
@@ -951,14 +1060,14 @@ print(block('  MERGED_REVIEW="Reused the approval', '\\`\\`\\`"'))
 print(block('REVIEW_COMMENT="## Code Review v2', 'Automated review by Bureau pipeline*"'))
 CUT_EOF
   ) || { echo "FAIL reuse: $cut" >&2; return 1; }
-  body=$(ISSUE=EXP-1 VERDICT=APPROVE BUILD_STATUS=Passed REVIEW_HEAD=HEAD_SHA PR_BASE_REF=main REVIEW_BASE=MAIN_SHA \
+  body=$(ISSUE=EXP-1 VERDICT=APPROVE BUILD_STATUS=Passed REVIEW_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa PR_BASE_REF=main REVIEW_BASE=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
     PR_NUMBER=42 REUSED_AT=2026-09-29T08:00:00Z /bin/bash -euc 'eval "$1"; printf "%s" "$REVIEW_COMMENT"' _ "$cut") \
     || { echo "FAIL reuse: the cut assignments do not run" >&2; return 1; }
   case "$body" in *"**Verdict**: APPROVE"*"Reused the approval recorded 2026-09-29T08:00:00Z"*) ;;
     *) echo "FAIL reuse: could not cut the review comment and the reuse text from code-review-pipeline.sh: $body" >&2; return 1 ;; esac
   for ci in pending green; do
     sb=$(make_sandbox "gate_reuse_$ci"); populate_happy_fixtures "$sb"
-    jq --arg b "$body" '.comments = [{"createdAt":"2026-09-29T08:01:00Z","body":$b}]' "$sb/stub_data/pr_view.json" > "$sb/stub_data/pr_view.json.tmp" \
+    jq --arg b "$body" '.comments = [{"id":"approval","lastEditedAt":null,"createdAt":"2026-09-29T08:01:00Z","body":$b}]' "$sb/stub_data/pr_view.json" > "$sb/stub_data/pr_view.json.tmp" \
       && mv "$sb/stub_data/pr_view.json.tmp" "$sb/stub_data/pr_view.json"
     [ "$ci" = green ] || echo '{"check_runs":[{"name":"ci","status":"in_progress","conclusion":null}]}' > "$sb/stub_data/check_runs.json"
     run_gate "$sb"
@@ -1006,8 +1115,101 @@ test_gate_codes_in_queue_loop() {
 }
 
 # ── Run all ───────────────────────────────────────────────────────
+post_merge_case() {
+  local mode="$1" sb expected=0
+  sb=$(make_sandbox "post_$mode"); populate_happy_fixtures "$sb"
+  case "$mode" in
+    target) touch "$sb/stub_data/retarget_final_base"; expected=25 ;;
+    uncertain) echo 1 > "$sb/stub_data/post_merge_reads_fail" ;;
+    unreadable) echo 2 > "$sb/stub_data/post_merge_reads_fail"; expected=25 ;;
+    malformed) touch "$sb/stub_data/invalid_merge_commit"; expected=25 ;;
+    lost-ack) touch "$sb/stub_data/lost_merge_ack"; echo 1 > "$sb/stub_data/post_merge_reads_fail" ;;
+  esac
+  run_gate "$sb"
+  [ "$GRC" = "$expected" ] || { echo "FAIL post-merge $mode: exit $GRC wanted $expected" >&2; return 1; }
+  [ "$(wc -l < "$sb/stub_data/merge_calls.log" | tr -d ' ')" = 1 ] || return 1
+  if [ "$expected" = 25 ]; then
+    grep -q '^merge_result: ' <<< "$GREP" && grep -q 'ERROR: merge_result:' "$sb/pipeline.err" || return 1
+    grep -q '+EXP-1 needs-human' "$sb/stub_data/labels.log" || return 1
+    grep -q 'No rollback or automatic merge retry' "$sb/stub_data/comments_posted.log" || return 1
+    [ ! -s "$sb/stub_data/state_changes.log" ] || return 1
+    if [ "$mode" = target ]; then
+      grep -q 'differing from approved Target' <<< "$GREP" && grep -q 'release' <<< "$GREP" || return 1
+    fi
+  else
+    grep -q 'move_issue EXP-1 -> s8' "$sb/stub_data/state_changes.log" || return 1
+    [ ! -e "$sb/stub_data/post_merge_reads_fail" ] || [ "$(cat "$sb/stub_data/post_merge_reads_fail")" = 0 ] \
+      || { echo "FAIL post-merge $mode: uncertain result did not get a fresh read" >&2; return 1; }
+  fi
+}
+test_post_merge_target() { post_merge_case target; }
+test_post_merge_uncertain() { post_merge_case uncertain; }
+test_post_merge_unreadable() { post_merge_case unreadable; }
+test_post_merge_malformed() { post_merge_case malformed; }
+test_post_merge_lost_ack() { post_merge_case lost-ack; }
+
+merge_call_result_case() {
+  local mode="$1" sb expected=0
+  sb=$(make_sandbox "merge_call_$mode"); populate_happy_fixtures "$sb"
+  case "$mode" in
+    transport) echo transport > "$sb/stub_data/merge_call_mode"; expected=25 ;;
+    refused|refused-stale-read)
+      echo refused > "$sb/stub_data/merge_call_mode"; expected=2
+      [ "$mode" != refused-stale-read ] || printf '%040d\n' 0 | tr 0 a > "$sb/stub_data/refused_head_read"
+      ;;
+  esac
+  run_gate "$sb"
+  [ "$GRC" = "$expected" ] || { echo "FAIL merge call $mode: exit $GRC wanted $expected" >&2; return 1; }
+  [ "$(wc -l < "$sb/stub_data/merge_calls.log" | tr -d ' ')" = 1 ] || return 1
+  case "$mode" in
+    transport)
+      [ "$(sed -n 1p <<< "$GREP")" = blocked ] && grep -q '^merge_result: ' <<< "$GREP" || return 1
+      grep -q 'ERROR: merge_result:' "$sb/pipeline.err" || return 1
+      grep -q '^+[^ ]* needs-human$' "$sb/stub_data/labels.log" || return 1
+      grep -q 'merge outcome needs human reconciliation.*No rollback or automatic merge retry' "$sb/stub_data/comments_posted.log" || return 1
+      ! grep -qi 'nothing was merged' "$sb/pipeline.out" "$sb/pipeline.err" "$sb/gate.report" "$sb/stub_data/comments_posted.log" || return 1
+      [ ! -s "$sb/stub_data/state_changes.log" ] || return 1
+      [ "$(cat "$sb/stub_data/merge_result_reads")" = 2 ] || return 1
+      jq -e '.state == "OPEN" and .mergeCommit == null and .headRefOid == ("c" * 40)' "$sb/stub_data/pr_view.json" >/dev/null || return 1
+      # The operation completes later, after Bureau has already held the ticket.
+      STUB_DIR="$sb/stub_data" "$sb/bin/gh" pr view 42 --json state,mergeCommit,baseRefName \
+        | jq -e '.state == "MERGED" and .mergeCommit.oid == ("a" * 40) and .baseRefName == "main"' >/dev/null || return 1
+      [ "$(wc -l < "$sb/stub_data/merge_calls.log" | tr -d ' ')" = 1 ] || return 1
+      ;;
+    refused|refused-stale-read)
+      [ "$(sed -n 1p <<< "$GREP")" = not-yet ] && grep -q '^merge_head: ' <<< "$GREP" || return 1
+      [ ! -s "$sb/stub_data/labels.log" ] || ! grep -q 'needs-human' "$sb/stub_data/labels.log" || return 1
+      [ ! -s "$sb/stub_data/comments_posted.log" ] && [ ! -s "$sb/stub_data/state_changes.log" ] || return 1
+      jq -e '.state == "OPEN" and .mergeCommit == null' "$sb/stub_data/pr_view.json" >/dev/null || return 1
+      ;;
+    confirmed)
+      [ -z "$GREP" ] && grep -q '^move_issue [^ ]* -> s8$' "$sb/stub_data/state_changes.log" || return 1
+      [ ! -s "$sb/stub_data/labels.log" ] || ! grep -q 'needs-human' "$sb/stub_data/labels.log" || return 1
+      ;;
+  esac
+}
+test_merge_call_transport_head_move() { merge_call_result_case transport; }
+test_merge_call_head_refusal() { merge_call_result_case refused; }
+test_merge_call_head_refusal_stale_read() { merge_call_result_case refused-stale-read; }
+test_merge_call_confirmed() { merge_call_result_case confirmed; }
+test_merge_message_before_jit() {
+  local sb; sb=$(make_sandbox early_message); populate_happy_fixtures "$sb"
+  run_gate "$sb"
+  [ "$GRC" = 0 ] || return 1
+  python3 - "$sb/gh_invocations.log" <<'PY'
+import sys
+calls = open(sys.argv[1]).read().splitlines()
+message = next(i for i, c in enumerate(calls) if 'title\\,body' in c)
+gates = [i for i, c in enumerate(calls) if 'state\\,mergeStateStatus\\,labels\\,baseRefName\\,baseRefOid' in c]
+assert len(gates) == 2 and gates[0] < message < gates[1], 'message must precede final gate snapshot'
+PY
+}
+
 FAILS=0
-for scenario in test_happy_path test_stale_base test_ci_red test_ci_pending test_jit_race test_ghost_merge test_ghost_merge_bare_branch test_ghost_merge_branch_mismatch test_merge_message_defanged test_merge_message_read_fails test_merge_rebase_stays_plain test_merge_mode_manual test_merge_mode_invalid test_merge_mode_auto_merges test_gate_evidence_failure test_gate_outcome test_gate_comment_key test_gate_dirty_under_shepherd test_gate_after_reused_approval test_gate_codes_in_queue_loop; do
+if [ "$#" = 0 ]; then
+  set -- test_happy_path test_stale_base test_ci_red test_ci_pending test_jit_race test_ghost_merge test_ghost_merge_bare_branch test_ghost_merge_branch_mismatch test_merge_message_defanged test_merge_message_read_fails test_merge_rebase_stays_plain test_merge_mode_manual test_merge_mode_invalid test_merge_mode_auto_merges test_gate_evidence_failure test_gate_outcome test_gate_conflict_without_base_name test_gate_edited_approval test_gate_comment_key test_gate_dirty_under_shepherd test_gate_after_reused_approval test_gate_codes_in_queue_loop test_post_merge_target test_post_merge_uncertain test_post_merge_unreadable test_post_merge_malformed test_post_merge_lost_ack test_merge_call_transport_head_move test_merge_call_head_refusal test_merge_call_head_refusal_stale_read test_merge_call_confirmed test_merge_message_before_jit
+fi
+for scenario in "$@"; do
   if "$scenario"; then
     echo "  ok   $scenario"
   else

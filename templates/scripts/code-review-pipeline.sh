@@ -162,16 +162,29 @@ post_review_comment() {
   fi
 }
 
-# _review_release_worktree: after an APPROVE whose inline merge did not go through, put
-# the disposable worktree back to the reviewed head. The stage then ends with 2 or 25,
-# and bureau-worker.sh keeps a worktree that is ahead of origin (the local validation
-# merge) or dirty (build-check output) as unfinished work and refuses to reset it, so
-# the next run of the gate could not start. Review work is never unpublished: the
-# verdict is on the PR and the ticket.
+# Discard local validation and build output so the worker can release the checkout.
+# A stale approval can follow a force-push. Fetch the PR's own immutable head,
+# never a same-named origin branch or a cached tracking ref. On a failed fetch,
+# discard only this disposable review's output at its pinned base and retry.
 _review_release_worktree() {
   [ "${BUREAU_WORKSPACE_MODE:-}" = disposable ] || return 0
-  git reset --hard --quiet "$REVIEW_HEAD" && git clean -fd --quiet \
-    || echo "  WARN: could not reset the review worktree to $REVIEW_HEAD; the worker may keep it" >&2
+  local target="$REVIEW_HEAD" rc=0
+  if [ "${1:-}" = stale-approval ]; then
+    if ! target=$(gh pr view "$PR_NUMBER" --json headRefOid --jq .headRefOid) \
+       || ! [[ "$target" =~ ^[0-9a-f]{40,64}$ ]] \
+       || ! git fetch --no-tags --quiet origin "+$target:refs/remotes/bureau-pr/$PR_NUMBER"; then
+      echo "  WARN: current PR head unavailable during review cleanup; retrying from the pinned review base" >&2
+      target="$REVIEW_BASE"
+      rc=2
+    fi
+  fi
+  # Detach here too: a fork or deleted branch has no corresponding origin tip
+  # for the worker's ahead check. The PR tracking ref keeps fetched heads remote.
+  if ! git reset --hard --quiet "$target" || ! git clean -fd --quiet || ! git checkout --detach --quiet; then
+    echo "  WARN: could not release the review worktree at $target; the worker may keep it" >&2
+    [ "${1:-}" != stale-approval ] || rc=2
+  fi
+  return "$rc"
 }
 
 precondition_linear
@@ -272,7 +285,7 @@ fi
 
 # Read the target from this PR, not the repository's default branch. Fetch both
 # branch tips explicitly, then use immutable commits throughout the review.
-PR_REFS=$(gh pr view "$PR_NUMBER" --json baseRefName,headRefName) || exit 18
+PR_REFS=$(gh pr view "$PR_NUMBER" --json baseRefName,headRefName,headRefOid) || exit 18
 PR_BASE_REF=$(printf '%s' "$PR_REFS" | jq -er --arg branch "$BRANCH" \
   'select(.headRefName == $branch) | .baseRefName | select(type == "string" and length > 0)') || {
   echo "  ERROR: cannot resolve the matching PR head and base branch."
@@ -282,10 +295,13 @@ if [[ "$PR_BASE_REF" == -* ]] || ! git check-ref-format "refs/heads/$PR_BASE_REF
   echo "  ERROR: PR base is not a safe branch ref."
   exit 18
 fi
+REVIEW_HEAD=$(printf '%s' "$PR_REFS" | jq -er '.headRefOid | strings | select(test("^[0-9a-f]{40,64}$"))') || exit 18
+# GitHub exposes fork commits through the base repository's pull refs. Fetch
+# the advertised object itself, retaining it as a PR ref for worker reset guards.
 git fetch --no-tags origin \
-  "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" \
+  "+$REVIEW_HEAD:refs/remotes/bureau-pr/$PR_NUMBER" \
   "+refs/heads/$PR_BASE_REF:refs/remotes/origin/$PR_BASE_REF" || exit 18
-REVIEW_HEAD=$(git rev-parse --verify "refs/remotes/origin/$BRANCH^{commit}") || exit 18
+git cat-file -e "$REVIEW_HEAD^{commit}" || exit 18
 REVIEW_BASE=$(git rev-parse --verify "refs/remotes/origin/$PR_BASE_REF^{commit}") || exit 18
 REVIEW_DIFF="$REVIEW_BASE...$REVIEW_HEAD"
 # Refuse another checkout's ownership before attaching this registered worker.
@@ -976,20 +992,22 @@ fi
 
 # A provider can take long enough for the PR to be retargeted or either remote
 # branch to advance. Preserve its evidence without publishing a stale verdict.
-CURRENT_PR=$(gh pr view "$PR_NUMBER" --json state,baseRefName,headRefName) || exit 18
+CURRENT_PR=$(gh pr view "$PR_NUMBER" --json state,baseRefName,headRefName,headRefOid) || exit 18
 if ! printf '%s' "$CURRENT_PR" | jq -e --arg head "$BRANCH" --arg base "$PR_BASE_REF" \
   '.state == "OPEN" and .headRefName == $head and .baseRefName == $base' >/dev/null; then
   echo "  ERROR: PR identity or target changed during review; retained review output needs reconciliation."
   exit 18
 fi
-CURRENT_REFS=$(git ls-remote --exit-code origin "refs/heads/$BRANCH" "refs/heads/$PR_BASE_REF") || exit 18
-CURRENT_HEAD=$(printf '%s' "$CURRENT_REFS" | awk -v ref="refs/heads/$BRANCH" '$2 == ref {print $1}')
+CURRENT_REFS=$(git ls-remote --exit-code origin "refs/heads/$PR_BASE_REF") || exit 18
+CURRENT_HEAD=$(printf '%s' "$CURRENT_PR" | jq -er '.headRefOid | strings') || exit 18
 CURRENT_BASE=$(printf '%s' "$CURRENT_REFS" | awk -v ref="refs/heads/$PR_BASE_REF" '$2 == ref {print $1}')
 if [ "$CURRENT_HEAD" != "$REVIEW_HEAD" ] || [ "$CURRENT_BASE" != "$REVIEW_BASE" ]; then
   echo "  ERROR: PR head or base advanced during review; retained review output needs reconciliation."
   exit 18
 fi
 
+# Keep the branch verbatim in the Target line. The merge gate uses the fixed
+# base SHA suffix to delimit it, including when the branch contains backticks.
 REVIEW_COMMENT="## Code Review v2 — $ISSUE
 
 **Verdict**: $VERDICT
@@ -1067,7 +1085,8 @@ $REVIEW_ROUND_MARKER"
       #       (merge_gate_waits); the stage ends with 2 and the shepherd waits as at Merge.
       #   25  the gate is decided against the merge: needs-human, the gate lines on the
       #       ticket, the stage ends with 25.
-      # Any other code passes through (15 no PR, 18 the merge call failed, 20 a stop).
+      #   20  refreshed: the ticket is back in Build Review for a fresh review.
+      # Other exits pass through (15 no PR, 18 the merge call failed, 20 a stop).
       GATE_REPORT="$REVIEW_TMP/merge-gate.report"
       INLINE_RC=0
       BUREAU_INLINE_MERGE=1 BUREAU_MERGE_GATE_REPORT="$GATE_REPORT" \
@@ -1111,6 +1130,13 @@ $REVIEW_ROUND_MARKER" || true
           STAGE_EXIT=2
           ;;
         25:*)
+          # The merge may already have happened. Its post-merge reconciliation
+          # posted the human hold; never describe that as an unmerged PR or save
+          # a reusable approval for another automatic attempt.
+          if grep -q '^merge_result: ' "$GATE_REPORT"; then
+            _review_release_worktree || true
+            exit 25
+          fi
           echo "  APPROVED, but the merge gate is blocked — needs human review"
           # The APPROVE is recorded as well: once a human clears the blocker (re-runs
           # a flaky check) and removes needs-human, the next run reuses it instead of
@@ -1137,6 +1163,15 @@ $REVIEW_ROUND_MARKER"
           STAGE_EXIT=25
           ;;
         *)
+          # A base refresh already left a clean, pushed head. A stale approval
+          # must also hand back a clean worker, after discarding local review output.
+          if [ "$INLINE_RC:$GATE_OUTCOME" = 20:refreshed ] && grep -q '^approval_binding: ' "$GATE_REPORT"; then
+            if ! _review_release_worktree stale-approval; then
+              printf 'not-yet\nreview_cleanup: current PR head unavailable; fresh review retry required\n' > "$GATE_REPORT"
+              if [ -n "${BUREAU_MERGE_GATE_REPORT:-}" ]; then cp "$GATE_REPORT" "$BUREAU_MERGE_GATE_REPORT"; fi
+              exit 2
+            fi
+          fi
           echo "  The inline merge ended with $INLINE_RC${GATE_OUTCOME:+ ($GATE_OUTCOME)}; nothing was merged by this review." >&2
           exit "$INLINE_RC"
           ;;

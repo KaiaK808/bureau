@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="c4bf02ac778881bb47c6512bfa05cae8ddad3bd19c5dd6f6ead4ba9fb093466b">
+<meta name="bureau-source-sha256" content="4e585907f3d0d6297c609baddd3c2837e9adf7b8bd5c7e80fbb7d4b1a1fd39c9">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1063,22 +1063,20 @@ not establish a passing acceptance gate.</li>
 <h2 id="stage-specific-failures">Stage-specific failures</h2>
 <h3 id="merge-gate-refuses-to-merge-a-pr-that-looks-green">Merge gate
 refuses to merge a PR that looks green</h3>
-<p><code>merge-pipeline.sh</code> enforces THREE independent gates:
-<code>pr_ci_is_green</code> (all check-runs completed + success),
-<code>pr_base_is_current</code>
-(<code>baseRefOid == origin/main HEAD</code>), and
-<code>mergeStateStatus == CLEAN</code> (GitHub's own answer). All three
-must pass.</p>
+<p><code>merge-pipeline.sh</code> independently checks CI on the current
+PR head, the current PR base, GitHub's <code>mergeStateStatus</code>,
+the latest Code Review v2 approval and its head/target binding, hold
+labels and unresolved threads. Every gate must pass.</p>
 <p>To diagnose:</p>
-<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">gh</span> pr view <span class="op">&lt;</span>N<span class="op">&gt;</span> --json statusCheckRollup,baseRefOid,mergeStateStatus</span>
-<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> fetch origin <span class="kw">&amp;&amp;</span> <span class="fu">git</span> rev-parse origin/main</span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">gh</span> pr view <span class="op">&lt;</span>N<span class="op">&gt;</span> --json statusCheckRollup,baseRefName,baseRefOid,mergeStateStatus</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> fetch origin <span class="kw">&amp;&amp;</span> <span class="fu">git</span> rev-parse <span class="st">&quot;origin/&lt;baseRefName&gt;&quot;</span></span></code></pre></div>
 <ul>
 <li><strong><code>mergeStateStatus</code> isn't CLEAN</strong>: usually
 <code>BEHIND</code> (need to rebase) or <code>BLOCKED</code> (missing
 review approval)</li>
-<li><strong><code>baseRefOid</code> doesn't match
-<code>origin/main</code></strong>: main has moved since the PR opened.
-Rebase.</li>
+<li><strong><code>baseRefOid</code> differs from the current tip of
+<code>baseRefName</code></strong>. Rebase onto the current base
+branch.</li>
 <li><strong><code>statusCheckRollup</code> has a <code>FAILURE</code> or
 an in-progress check</strong>: wait or fix the failing check</li>
 </ul>
@@ -1086,6 +1084,61 @@ an in-progress check</strong>: wait or fix the failing check</li>
 actual head checks and current base state, and repeats the gates just
 before merging. Background review of a stacked PR uses its actual PR
 base; that does not weaken the separate merge gate.</p>
+<p>For an <strong><code>approval_binding</code></strong> blocker,
+inspect the newest PR comment containing the <code>Code Review v2</code>
+heading, which Bureau selects with
+<code>gh pr view --json comments</code> as before. The new binding
+requires that an unedited <code>APPROVE</code> or
+<code>AUTO_APPROVE</code> comment contain exactly one
+<code>**Reviewed head**: `&lt;40 lowercase hex characters&gt;`</code>
+line and one
+<code>**Target**: `&lt;base branch&gt;` at `&lt;40 lowercase hex characters&gt;`</code>
+line. The reviewed head must equal the commit checked by CI and passed
+to <code>--match-head-commit</code>. The target branch must equal the
+PR's base in each gate pass and in the final read just before the merge.
+The recorded target SHA may differ from today's base SHA, subject to the
+separate base freshness and CI gates.</p>
+<p>Bureau authenticates the newest visible review in complete gate
+snapshots, checks its target immediately before merging, atomically pins
+the head, and checks the target after the merge. The merge message is
+prepared before the final checks; the unconditional final base read is
+followed by the ticket checkpoint immediately before
+<code>gh pr merge</code>. Target validation is observational: GitHub has
+no expected-base option, and a retarget after the final read can still
+change the destination. A post-merge <code>merge_result</code> target
+mismatch logs an error, posts a Linear comment and holds the ticket with
+<code>needs-human</code> and exit <code>25</code>. Inspect the reported
+merge commit, actual base and approved Target before acting; Bureau
+never rolls back or automatically retries that merge. An unreadable or
+incomplete result triggers one fresh read, including after a lost merge
+acknowledgement. If it remains uncertain, the same human hold applies.
+This check detects a wrong destination; it does not make destination
+selection atomic.</p>
+<p>An approval for a previous head or target, a missing or ambiguous
+binding line, or an edited approval returns the ticket to Build Review
+with exit <code>20</code> and a <code>refreshed</code> gate report. The
+gate comment names the differing heads or branches or describes the
+invalid line. If the lookup of prior gate comments fails, the handoff
+still completes and the comment may repeat. Inline review fetches the
+PR's advertised head commit, including for a same-named fork branch.
+Stale cleanup discards disposable review output at a freshly fetched PR
+head, even if the branch and its tracking ref were deleted. A failed
+cleanup fetch returns quiet retry <code>2</code> without
+<code>needs-human</code>, cleans at the pinned review base and never
+uses a cached tracking head. The acceptance brief keeps the reviewed
+head separate from the checkout after cleanup. Shepherd confirms the
+move to Build Review before counting a stale handoff; a delayed Linear
+response cannot spend that allowance twice. A shepherd run that exceeds
+<code>agents.max_review_rounds</code> stale-approval handoffs stops with
+<code>25</code> and <code>needs-human</code> at Build Review. For
+ordinary refusals, a failed verdict, edit-metadata, head or base read
+gives <code>2</code> when there are only undecided blockers. A
+definitive blocker in the same pass, such as a failing CI check or a
+conflict the rebase agent cannot resolve, takes precedence and gives
+<code>25</code> even when the base branch name could not be read. After
+comparing installed drift and resyncing the complete scripts scope, a PR
+approved before the upgrade whose comment lacks the binding lines needs
+one fresh review.</p>
 <p>The stage tells its caller which kind of refusal it was: exit
 <code>2</code> when the gate is not yet decided (a check still running
 or not started, GitHub still computing <code>mergeStateStatus</code>, a

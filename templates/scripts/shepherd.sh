@@ -821,27 +821,54 @@ MERGE_WAIT_SECONDS=$(_shepherd_seconds BUREAU_SHEPHERD_MERGE_WAIT_SECONDS 1800 0
 MERGE_POLL_SECONDS=$(_shepherd_seconds BUREAU_SHEPHERD_MERGE_POLL_SECONDS 60 1 3600)
 MERGE_WAITED=0
 MERGE_WAIT_FOR=""
+STALE_APPROVALS=0
+STALE_HANDOFF_PENDING=0
 
 # _shepherd_no_state_halt — Linear answered MAX_NO_STATE times in a row, without
 # an error and without a state. Nothing tells which stage runs next; the same
 # halt as a state no pipeline knows: needs-human, a comment, an alert, exit 1.
 # _shepherd_merge_blocked <what> — the merge gate decided against the merge, or
 # never became eligible within the wait: label, comment with the gate report,
-# alert, exit 25. Nothing was merged.
+# alert, exit 25. A merge_result report keeps the post-merge reconciliation hold.
 _shepherd_merge_blocked() {
-  local what="$1" report
+  local what="$1" report summary recovery
   report=$(sed -n '2,$p' "$MERGE_GATE_FILE" 2>/dev/null | sed -e '/^$/d' -e 's/^/- /')
+  summary="the merge gate $what. Nothing was merged."
+  recovery="Clear the blocker (or re-run the checks), remove needs-human and re-shepherd."
+  if grep -q '^merge_result: ' "$MERGE_GATE_FILE"; then
+    summary="the merge outcome needs human reconciliation."
+    recovery="Reconcile the PR's merged state, merge commit and target with the published approval before releasing the human hold. No rollback or automatic merge retry will run."
+  fi
   echo "[shepherd] merge gate $what for $ISSUE — labeling needs-human and aborting shepherd" >&2
   alert_telegram "$ISSUE" "$PIPELINE" 25 "shepherd halt (merge gate $what)" 2>/dev/null || true
   add_issue_label "$ISSUE" "needs-human" \
     || echo "[shepherd] WARN: could not add the 'needs-human' label to $ISSUE" >&2
-  post_comment "$ISSUE" "🛑 Shepherd halt at $STATE: the merge gate $what. Nothing was merged.
+  post_comment "$ISSUE" "🛑 Shepherd halt at $STATE: $summary
 
 ${report:-- (the merge stage left no gate report)}
 
-Clear the blocker (or re-run the checks), remove needs-human and re-shepherd." \
+$recovery" \
     || echo "[shepherd] WARN: could not post the halt comment on $ISSUE" >&2
   exit 25
+}
+
+_shepherd_human_guard() {
+  local HUMAN_HOLD HUMAN_LABEL_HIT
+  # The named-ticket dispatch bypasses the picker's human-label exclusion.
+  # Check it during stale-handoff confirmation too, before any further poll.
+  # An unreadable label list halts; it never counts as no hold.
+  HUMAN_HOLD=$(_shepherd_human_label) || _shepherd_read_failed labels $?
+  if [ "${HUMAN_HOLD%% *}" = hold ]; then
+    echo "[shepherd] $(_shepherd_hold_text "$HUMAN_HOLD") @ '$STATE' — halting"
+    post_comment "$ISSUE" "🐑 Shepherd halt at \`$STATE\`: this ticket is held for a human, but its needs-human label could not be written, so the hold is kept locally. Shepherd will not re-run it. The next queue pick writes the label; remove it and re-shepherd when ready." || true
+    exit 25
+  fi
+  HUMAN_LABEL_HIT="${HUMAN_HOLD#label }"
+  if [ -n "$HUMAN_LABEL_HIT" ]; then
+    echo "[shepherd] '$HUMAN_LABEL_HIT' label present on $ISSUE @ '$STATE' — halting"
+    post_comment "$ISSUE" "🐑 Shepherd halt: \`$HUMAN_LABEL_HIT\` label present at \`$STATE\`. The stage that just ran flagged this ticket for human review; shepherd will not re-run it. Remove the label and re-shepherd when ready." || true
+    exit 25
+  fi
 }
 
 _shepherd_no_state_halt() {
@@ -881,6 +908,7 @@ while true; do
   bureau_ticket_checkpoint "$ISSUE"
 
   # Confirm a move before acting on it (see MOVED_TO / MOVED_FROM / MOVED_VIA above).
+  if [ "$STALE_HANDOFF_PENDING" = 1 ]; then _shepherd_human_guard; fi
   CONFIRM_COUNT=0
   while _shepherd_unconfirmed && [ "$CONFIRM_COUNT" -lt "$CONFIRM_TRIES" ]; do
     CONFIRM_COUNT=$((CONFIRM_COUNT + 1))
@@ -888,8 +916,23 @@ while true; do
     _shepherd_sleep "$CONFIRM_SECONDS"
     STATE=$(_shepherd_state) || _shepherd_read_failed state $?
     bureau_ticket_checkpoint "$ISSUE" latched
+    if [ "$STALE_HANDOFF_PENDING" = 1 ]; then _shepherd_human_guard; fi
   done
   bureau_ticket_checkpoint "$ISSUE"
+  if [ "$STALE_HANDOFF_PENDING" = 1 ]; then
+    # Do not spend a handoff or run the same approval again while its move is
+    # still invisible. A single delayed response can settle within this budget;
+    # an unconfirmed move after it waits quietly for the next tick.
+    if _shepherd_unconfirmed; then
+      echo "[shepherd] fresh-review handoff still unconfirmed after $CONFIRM_TRIES polls — retrying next tick"
+      exit 2
+    fi
+    if [ "$STALE_APPROVALS" -ge "$BUREAU_MAX_REVIEW_ROUNDS" ]; then
+      _shepherd_merge_blocked "kept receiving stale approvals after $STALE_APPROVALS fresh-review handoffs"
+    fi
+    STALE_APPROVALS=$((STALE_APPROVALS + 1))
+    STALE_HANDOFF_PENDING=0
+  fi
   MOVED_FROM=""; MOVED_TO=""; MOVED_VIA=""
   # An answer without a state while confirming goes through the check above.
   [ -z "$STATE" ] && continue
@@ -907,31 +950,7 @@ while true; do
 
   case "$STATE" in Cancelled|Canceled|Duplicate) echo "[shepherd] cancelled: $STATE"; exit 26 ;; esac
 
-  # Human-attention guard. The picker (pipeline_pick_next in queue-loop)
-  # excludes needs-human / blocked / wip via pick_issue's exclude_csv,
-  # so autonomous queue-loop stays away from human-flagged tickets.
-  # Shepherd intentionally bypasses the picker
-  # (BUREAU_FORCE_ALL_AGENTS=1) to drive a NAMED ticket, which also
-  # bypasses that exclusion — we have to repeat the check on the
-  # dispatch side or we keep firing pipelines after a stage has
-  # already labelled the ticket "stop, human."
-  #
-  # The existing stuck-detector (STUCK_COUNT >= MAX_STUCK) eventually
-  # catches the loop, but only after one wasted pipeline pass at $
-  # per Opus call. Fail loud and early instead — and a label list that could
-  # not be read halts too, it never counts as "no label".
-  HUMAN_HOLD=$(_shepherd_human_label) || _shepherd_read_failed labels $?
-  if [ "${HUMAN_HOLD%% *}" = hold ]; then
-    echo "[shepherd] $(_shepherd_hold_text "$HUMAN_HOLD") @ '$STATE' — halting"
-    post_comment "$ISSUE" "🐑 Shepherd halt at \`$STATE\`: this ticket is held for a human, but its needs-human label could not be written, so the hold is kept locally. Shepherd will not re-run it. The next queue pick writes the label; remove it and re-shepherd when ready." || true
-    exit 25
-  fi
-  HUMAN_LABEL_HIT="${HUMAN_HOLD#label }"
-  if [ -n "$HUMAN_LABEL_HIT" ]; then
-    echo "[shepherd] '$HUMAN_LABEL_HIT' label present on $ISSUE @ '$STATE' — halting"
-    post_comment "$ISSUE" "🐑 Shepherd halt: \`$HUMAN_LABEL_HIT\` label present at \`$STATE\`. The stage that just ran flagged this ticket for human review; shepherd will not re-run it. Remove the label and re-shepherd when ready." || true
-    exit 25
-  fi
+  _shepherd_human_guard
 
   # --no-merge: halt at Merge boundary
   if [ "$NO_MERGE" = 1 ] && [ "$STATE" = "Merge" ]; then
@@ -1034,11 +1053,20 @@ while true; do
   echo "[shepherd] $PIPELINE exit=$RC ($CLASS)"
   if [ "${BUREAU_DISPATCH_LANE:-0}" = 1 ] && [ "$RC" = 23 ]; then exit 23; fi
 
-  # A merge-forward changed the PR head and routed it to fresh Build Review.
-  # This is a handoff, never merge success and never an approval of that head.
+  # Both refresh paths return to Build Review. Only a merge-forward spends a
+  # base refresh. The review round cap handles requests for changes, so bound
+  # repeated stale approvals in this run too.
   if [ "$RC" = 20 ] && [ "$(head -n 1 "$MERGE_GATE_FILE" 2>/dev/null || true)" = refreshed ]; then
-    BUREAU_LANE_BASE_REFRESHES=$(bureau_number merge.refreshes "${BUREAU_LANE_BASE_REFRESHES:-0}" 2 0 2)
-    export BUREAU_LANE_BASE_REFRESHES=$((BUREAU_LANE_BASE_REFRESHES + 1))
+    # Confirm the move before another dispatch or stale-handoff count. Linear
+    # can replay Merge once after the gate has moved the ticket to Build Review.
+    MOVED_TO="Build Review"
+    MOVED_FROM=""
+    if grep -q '^base_refresh: ' "$MERGE_GATE_FILE"; then
+      BUREAU_LANE_BASE_REFRESHES=$(bureau_number merge.refreshes "${BUREAU_LANE_BASE_REFRESHES:-0}" 2 0 2)
+      export BUREAU_LANE_BASE_REFRESHES=$((BUREAU_LANE_BASE_REFRESHES + 1))
+    elif grep -q '^approval_binding: ' "$MERGE_GATE_FILE"; then
+      STALE_HANDOFF_PENDING=1
+    fi
     LAST_STATE=""; STUCK_COUNT=0
     continue
   fi

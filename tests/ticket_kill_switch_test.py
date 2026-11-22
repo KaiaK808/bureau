@@ -127,8 +127,22 @@ print(json.dumps(dict(result=json.dumps(result) if isinstance(result,dict) else 
 GH = r'''#!/usr/bin/env python3
 import json, os, pathlib, signal, subprocess, sys, time
 root=pathlib.Path(os.environ['PR9_FIXTURE']); a=sys.argv[1:]
+review_body=root/'review-body'
+base_ref=root/'pr-base-ref'
+
+def git_ref(ref):
+    return subprocess.check_output([os.environ['PR9_REAL_GIT'],'-C',str(root/'repo with spaces'),
+                                    'rev-parse',f'origin/{ref}'],text=True).strip()
+
+def review_comment():
+    return dict(id='approval',body=review_body.read_text(),createdAt='2026-10-26T00:00:00Z',
+                includesCreatedEdit=False) if review_body.exists() else None
+
 if a[:2] in (['pr','create'],['pr','comment'],['pr','merge'],['pr','ready']):
     with (root/'events').open('a') as f: f.write(json.dumps(dict(kind='gh-publication',args=a))+'\n')
+if a[:2]==['pr','comment'] and '--body' in a:
+    body=a[a.index('--body')+1]
+    if body.startswith('## Code Review v2'): review_body.write_text(body)
 if a[:2]==['pr','list']:
     if 'number,url' in a: print('{"number":9,"url":"https://github.com/test/repo/pull/9"}')
     elif 'number' in a: print('9')
@@ -136,27 +150,43 @@ if a[:2]==['pr','list']:
 elif a[:2]==['pr','create']: print('https://github.com/test/repo/pull/9')
 elif a[:2]==['pr','view']:
     field=a[a.index('--json')+1] if '--json' in a else ''
-    head=subprocess.check_output([os.environ['PR9_REAL_GIT'],'rev-parse','origin/009-ticket-switch'],text=True).strip()
-    base=subprocess.check_output([os.environ['PR9_REAL_GIT'],'rev-parse','origin/main'],text=True).strip()
-    data=dict(url='https://github.com/test/repo/pull/9',number=9,state='OPEN',headRefName='009-ticket-switch',
-              baseRefName='main',headRefOid=head,baseRefOid=base,isDraft=False,mergeStateStatus='CLEAN',labels=[],comments=[],title='EXP-9 feature',body='feature')
-    if field=='title,body' and json.loads((root/'control').read_text()).get('withdraw_at_merge'):
+    target=base_ref.read_text() if base_ref.exists() else 'main'
+    control=json.loads((root/'control').read_text())
+    comment=review_comment()
+    merged=(root/'merged').exists()
+    data=dict(url='https://github.com/test/repo/pull/9',number=9,state='MERGED' if merged else 'OPEN',headRefName='009-ticket-switch',
+              mergeCommit=dict(oid=git_ref('009-ticket-switch')) if merged else None,
+              baseRefName=target,headRefOid=git_ref('009-ticket-switch'),baseRefOid=git_ref(target),
+              isDraft=False,mergeStateStatus='CLEAN',labels=[],comments=[comment] if comment else [],
+              title='EXP-9 feature',body='feature')
+    if field=='title,body' and control.get('retarget_at_merge'):
+        base_ref.write_text(control['retarget_at_merge'])
+    if field==control.get('withdraw_at_field', 'title,body') and control.get('withdraw_at_merge'):
         (root/'state').write_text('custom-id-backlog')
         with (root/'events').open('a') as f: f.write('{"kind":"withdrawal"}\n')
-    if field=='comments' and json.loads((root/'control').read_text()).get('withdraw_at_acceptance'):
+    if field=='comments' and control.get('withdraw_at_acceptance'):
         (root/'state').write_text('custom-id-backlog')
-    if field=='comments' and json.loads((root/'control').read_text()).get('signal_at_acceptance'):
+    if field=='comments' and control.get('signal_at_acceptance'):
         os.kill(os.getppid(),signal.SIGTERM)
         time.sleep(10)  # bounded() must stop and reap this lookup on interruption.
-    if field=='comments' and '--jq' in a and 'Code Review v2' in a[a.index('--jq')+1]:
-        print('Code Review v2\n**Verdict**: APPROVE'); sys.exit(0)
-    print(data[field] if '--jq' in a and field in data and not isinstance(data[field],(dict,list)) else json.dumps({k:data[k] for k in field.split(',') if k in data}))
+    if field=='comments' and '--jq' in a:
+        sys.exit(subprocess.run(['jq','-r',a[a.index('--jq')+1]],
+                               input=json.dumps(dict(comments=data['comments'])),text=True).returncode)
+    print(data[field] if '--jq' in a and field in data and not isinstance(data[field],(dict,list))
+          else json.dumps({k:data[k] for k in field.split(',') if k in data}))
+elif a[:2]==['pr','merge']:
+    (root/'merged').touch()
 elif a[:2]==['repo','view']: print('test/repo')
 elif a[:1]==['api']:
-    if 'graphql' in a: print('{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}')
+    if 'graphql' in a:
+        if any('node(id:$id)' in arg for arg in a):
+            comment=review_comment()
+            node=dict(body=comment['body'],lastEditedAt=None) if comment and 'id='+comment['id'] in a else None
+            print(json.dumps(dict(data=dict(node=node))))
+        else: print('{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}')
     elif any('/check-runs' in x for x in a): print('{"check_runs":[{"status":"completed","conclusion":"success","name":"fixture-ci"}]}')
     elif any('/status' in x for x in a): print('[]')
-    elif any('/branches/main' in x for x in a): print(subprocess.check_output([os.environ['PR9_REAL_GIT'],'rev-parse','origin/main'],text=True).strip())
+    elif '/branches/' in a[1]: print(git_ref(a[1].split('/branches/',1)[1]))
     else: print('{}')
 else: print('{}')
 '''
@@ -187,7 +217,8 @@ class WithdrawalFixture(unittest.TestCase):
         self.env = {k:v for k,v in os.environ.items() if not k.startswith('BUREAU_')}
         self.env.update(PATH=str(self.bin)+':'+os.environ['PATH'], PR9_FIXTURE=str(self.root),
                         PR9_REAL_GIT=REAL_GIT, BUREAU_IMPL_MAX_ITER='3', BUREAU_LINEAR_RETRIES='0',
-                        BUREAU_ALERT_THROTTLE_FILE=str(self.root/'alerts'), TMUX='', PYTHONDONTWRITEBYTECODE='1')
+                        BUREAU_ALERT_THROTTLE_FILE=str(self.root/'alerts'), TMUX='', PYTHONDONTWRITEBYTECODE='1',
+                        GIT_CEILING_DIRECTORIES=str(self.root))
         for name, body in [('curl',CURL),('claude',PROVIDER),('gh',GH),('git',GIT)]:
             p=self.bin/name; p.write_text(body); p.chmod(0o755)
         for name, content in [('events',''),('pids',''),('labels','["lane-2"]'),('control','{}'),('state',STATES['build'])]:
@@ -615,27 +646,108 @@ preselect_issue() { pipeline_pick_next "$1"; }
                     self.git('-C',str(self.wt),'checkout','--detach','-q')
 
 
-    def test_final_merge_checkpoint_after_green_gates(self):
-        self.state('merge'); self.control(withdraw_at_merge=True)
-        result=self.worker('merge'); self.assertEqual(25,result.returncode,result.stdout+result.stderr)
-        self.assertIn('ALL GATES PASS',result.stdout)
-        self.assertEqual(STATES['backlog'],(self.root/'state').read_text())
-        self.assertFalse([e for e in self.events() if e['kind'] in ('gh-publication','comment','move')],self.events())
-        self.assert_released()
+    def merge_with_withdrawal(self, stage, field='title,body'):
+        (self.root/'merged').unlink(missing_ok=True)
+        if stage == 'merge':
+            head=self.git('rev-parse','origin/'+self.branch)
+            base=self.git('rev-parse','origin/main')
+            (self.root/'review-body').write_text(
+                f'## Code Review v2\n**Verdict**: APPROVE\n**Reviewed head**: `{head}`\n**Target**: `main` at `{base}`')
+            self.state('merge')
+        else:
+            self.config['agents']['merge']=False; self.save_config(); self.state('build_review')
+        self.control(withdraw_at_merge=True,withdraw_at_field=field)
+        return self.worker(stage)
 
-    def test_inline_merge_withdrawal_is_not_a_blocked_gate(self):
-        self.config['agents']['merge']=False; self.save_config()
-        self.state('build_review'); self.control(withdraw_at_merge=True)
-        result=self.worker('code-review'); self.assertEqual(25,result.returncode,result.stdout+result.stderr)
+    def assert_merge_withdrawn(self, stage, result):
+        self.assertEqual(25,result.returncode,result.stdout+result.stderr)
         self.assertIn('ALL GATES PASS',result.stdout)
         self.assertEqual(STATES['backlog'],(self.root/'state').read_text())
-        # The review comment predates withdrawal in gh's title/body read.
         events=self.events(); withdrawal=next(i for i,e in enumerate(events) if e['kind']=='withdrawal')
         self.assertFalse([e for e in events[withdrawal+1:]
                           if e['kind'] in ('comment','move','label','gh-publication')],events)
-        self.assertEqual(1,len([e for e in events[:withdrawal] if e['kind']=='gh-publication']))
+        before=[e['args'][:2] for e in events[:withdrawal] if e['kind']=='gh-publication']
+        # Only inline review publishes an approval before the title/body read.
+        self.assertEqual([] if stage == 'merge' else [['pr','comment']],before)
         self.assertNotIn('merge gate is blocked',result.stdout)
         self.assert_released()
+
+    def test_final_merge_checkpoint_after_green_gates(self):
+        self.assert_merge_withdrawn('merge',self.merge_with_withdrawal('merge'))
+
+    def test_inline_merge_withdrawal_is_not_a_blocked_gate(self):
+        self.assert_merge_withdrawn('code-review',self.merge_with_withdrawal('code-review'))
+
+    def test_withdrawal_during_final_base_read_stops_both_routes(self):
+        for stage in ('merge','code-review'):
+            with self.subTest(stage=stage):
+                (self.root/'events').write_text('')
+                self.wt=self.repo/'.worktrees'/stage
+                self.assert_merge_withdrawn(stage,self.merge_with_withdrawal(stage,'baseRefName'))
+
+    def test_removed_merge_checkpoint_allows_both_routes_to_merge_after_withdrawal(self):
+        merge=self.repo/'scripts/merge-pipeline.sh'
+        source=merge.read_text()
+        checkpoint='  bureau_ticket_checkpoint "$ISSUE"\n  if _merge_output=$(gh pr merge '
+        self.assertEqual(1,source.count(checkpoint))
+        merge.write_text(source.replace(checkpoint,'  if _merge_output=$(gh pr merge '))
+        for stage in ('merge','code-review'):
+            with self.subTest(stage=stage):
+                self.wt=self.repo/'.worktrees'/stage
+                (self.root/'events').write_text('')
+                result=self.merge_with_withdrawal(stage)
+                self.assertIn('ALL GATES PASS',result.stdout)
+                events=self.events()
+                withdrawal=next(i for i,e in enumerate(events) if e['kind']=='withdrawal')
+                self.assertTrue(any(e.get('args',[])[:2] == ['pr','merge'] for e in events[withdrawal+1:]),events)
+                with self.assertRaises(AssertionError):
+                    self.assert_merge_withdrawn(stage,result)
+
+    def review_again_after_stale_approval(self):
+        self.config['agents']['merge']=False
+        self.config['repo']['test_command']='touch untracked-build.txt'
+        self.save_config(); self.state('build_review')
+        self.git('push','-q','origin','main:refs/heads/release')
+        self.control(retarget_at_merge='release')
+        report=self.root/'gate-report'
+        self.env['BUREAU_MERGE_GATE_REPORT']=str(report)
+        first=self.worker('code-review')
+        self.assertEqual(20,first.returncode,first.stdout+first.stderr)
+        self.assertIn('Running build check: touch untracked-build.txt',first.stdout)
+        self.assertEqual('refreshed',report.read_text().splitlines()[0])
+        self.assertIn('approved Target branch main differs from current base branch release',report.read_text())
+        self.assertEqual(STATES['build_review'],(self.root/'state').read_text())
+        handoff_status=self.git('-C',str(self.wt),'status','--porcelain')
+        return handoff_status,self.worker('code-review')
+
+    def assert_fresh_review_after_stale_approval(self, handoff_status, result):
+        self.assertEqual(0,result.returncode,result.stdout+result.stderr)
+        self.assertEqual('',handoff_status)
+        self.assertIn('ALL GATES PASS',result.stdout)
+        self.assertIn('**Target**: `release`', (self.root/'review-body').read_text())
+        self.assertEqual(STATES['done'],(self.root/'state').read_text())
+        self.assertNotIn('needs-human',json.loads((self.root/'labels').read_text()))
+        self.assert_released()
+
+    def test_stale_inline_approval_releases_disposable_build_worktree(self):
+        self.assert_fresh_review_after_stale_approval(*self.review_again_after_stale_approval())
+
+    def test_skipping_inline_stale_cleanup_blocks_the_next_review(self):
+        review=self.repo/'scripts/code-review-pipeline.sh'
+        source=review.read_text()
+        cleanup='''          if [ "$INLINE_RC:$GATE_OUTCOME" = 20:refreshed ] && grep -q '^approval_binding: ' "$GATE_REPORT"; then
+'''
+        self.assertEqual(1,source.count(cleanup))
+        start=source.index(cleanup)
+        end=source.index('          echo "  The inline merge ended with ',start)
+        review.write_text(source[:start]+source[end:])
+        handoff_status,result=self.review_again_after_stale_approval()
+        with self.assertRaises(AssertionError):
+            self.assert_fresh_review_after_stale_approval(handoff_status,result)
+        self.assertEqual('?? untracked-build.txt',handoff_status)
+        self.assertEqual(21,result.returncode,result.stdout+result.stderr)
+        self.assertIn('needs-human',json.loads((self.root/'labels').read_text()))
+        self.assertTrue((self.wt/'untracked-build.txt').is_file())
 
     def codex_fixture(self, before):
         self.config['agents']['runner']='codex'

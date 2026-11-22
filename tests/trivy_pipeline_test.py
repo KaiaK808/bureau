@@ -59,7 +59,7 @@ bureau_trivy() {
         (pathlib.Path(os.environ['PR2_GH'])/'git-fetch-hook').write_text(str(hook))
     elif case.endswith('during-gates'):
         gh=pathlib.Path(os.environ['PR2_GH'])/'bin/gh';old='    if [ -n "$JSON" ]; then'
-        replacement='''+repr('''    if [ "$JSON" = baseRefOid ]; then
+        replacement='''+repr('''    if [ "$JSON" = state,mergeStateStatus,labels,baseRefName,baseRefOid ]; then
       reads=$(( $(cat "$D/base_oid_reads" 2>/dev/null || echo 0) + 1 )); echo "$reads" > "$D/base_oid_reads"
       if [ "$reads" = 2 ]; then HOOK; fi
     fi
@@ -67,12 +67,10 @@ bureau_trivy() {
         assert gh.read_text().count(old)==1
         gh.write_text(gh.read_text().replace(old,replacement.replace('HOOK',shlex.quote(sys.executable)+' -I -B '+shlex.quote(str(hook)))))
     else:
-        gh=pathlib.Path(os.environ['PR2_GH'])/'bin/gh';old='*/branches/*) out < "$D/branch.json" ;;'
-        replacement='''+repr('''*/branches/*)
-        out < "$D/branch.json"
-        reads=$(( $(cat "$D/base_reads" 2>/dev/null || echo 0) + 1 )); echo "$reads" > "$D/base_reads"
-        if [ "$reads" = 2 ]; then HOOK; fi ;;
-''')+r'''
+        gh=pathlib.Path(os.environ['PR2_GH'])/'bin/gh';old='        retarget_after_read base-tip ;;'
+        replacement='''+repr('''        reads=$(( $(cat "$D/base_reads" 2>/dev/null || echo 0) + 1 )); echo "$reads" > "$D/base_reads"
+        if [ "$reads" = 2 ]; then HOOK; fi
+''')+r'''+old
         assert gh.read_text().count(old)==1
         gh.write_text(gh.read_text().replace(old,replacement.replace('HOOK',shlex.quote(sys.executable)+' -I -B '+shlex.quote(str(hook)))))
 if case=='changed':
@@ -83,10 +81,13 @@ if case=='cache-digest':(installed['cache']/'db/trivy.db').write_bytes(b'changed
 if case=='stale':f.make_cache(installed['cache'],age=72)
 head=git('rev-parse','HEAD')
 gh=pathlib.Path(os.environ['PR2_GH'])
-(gh/'comments.json').write_text(json.dumps([dict(body='## Code Review v2\n**Verdict**: APPROVE',createdAt='2026-01-01T00:00:00Z')]))
+(gh/'comments.json').write_text(json.dumps([dict(id='approval',lastEditedAt=None,body=f'## Code Review v2\n**Verdict**: APPROVE\n**Reviewed head**: `{head}`\n**Target**: `main` at `{base}`',createdAt='2026-01-01T00:00:00Z')]))
 pr=gh/'pr.json';data=json.loads(pr.read_text());data.update(headRefOid=head,baseRefOid=base);pr.write_text(json.dumps(data))
 if case=='head-before-scan-hold':
-    data['headRefOid']=initial_head;pr.write_text(json.dumps(data));(gh/'move_head_after_reads').write_text('1 '+head)
+    data['headRefOid']=initial_head;pr.write_text(json.dumps(data))
+    comments=gh/'comments.json';rows=json.loads(comments.read_text())
+    rows[0]['body']=rows[0]['body'].replace(f'**Reviewed head**: `{head}`',f'**Reviewed head**: `{initial_head}`');comments.write_text(json.dumps(rows))
+    (gh/'move_head_after_reads').write_text('1 '+head)
 if case=='negative-merge-guard':
     p=repo/'scripts/merge-pipeline.sh';text=p.read_text();text=text.replace('if [ "$(bureau_get \'.qa | type == "object" and has("trivy")\')" = true ]; then','if false; then');p.write_text(text)
 '''
@@ -126,23 +127,29 @@ class MergeTests(unittest.TestCase):
                     value=json.loads(result.read_text());results.append(value)
                     concurrent=name.endswith(('during-scan','after-gates','during-final-fetch','during-gates'))
                     expected='0' if name in ('exact','off','disabled','advisory','negative-merge-guard') else '2' if concurrent and not name.startswith('ci-') else '25'
+                    if name=='retarget-after-gates': expected='20'
                     self.assertEqual(value['code'],expected,value['stdout']+'\n'+value['stderr']+'\n'+value['hook_log'])
                     self.assertEqual(value['merged'],expected=='0',value)
                     if concurrent:
                         self.assertTrue(value['hook_ran'],value)
                         self.assertEqual(len(value['receipts']),1)
                         self.assertNotIn('needs-human',value['calls'])
-                        self.assertIn('Gate regressed',value['stdout'])
-                        self.assertEqual(value['mark']['head'],value['scanned']['head'])
+                        if expected=='20':
+                            self.assertIn('approved Target branch main differs from current base branch release',value['stdout'])
+                            self.assertIsNone(value['mark'])
+                        else:
+                            self.assertIn('Gate regressed',value['stdout'])
+                            self.assertEqual(value['mark']['head'],value['scanned']['head'])
                         if name in ('base-during-gates','base-after-gates'):
                             self.assertIn('PR base commit changed',value['stdout'])
                             self.assertNotIn('base_up_to_date: FAIL',value['stdout'])
                     elif name=='exact':
                         self.assertEqual(len(value['receipts']),1,'unchanged QA receipt must be reused')
                         logged=value['gh_calls'].splitlines();last=max(i for i,row in enumerate(logged) if row.startswith('gh\tapi\t') and '/branches/' in row)
-                        self.assertEqual(len(logged[last+1:]),2)
+                        self.assertEqual(len(logged[last+1:]),3)
                         self.assertTrue(logged[last+1].startswith('gh\tapi\tgraphql\t'))
-                        self.assertIn('baseRefName baseRef{target{oid}}',logged[last+1]);self.assertIn('--match-head-commit',logged[-1])
+                        self.assertIn('baseRefName baseRef{target{oid}}',logged[last+1]);self.assertIn('--match-head-commit',logged[last+2])
+                        self.assertEqual(logged[last+3],'gh\tpr\tview\t99\t--json\tstate,mergeCommit,baseRefName')
                         fetches=[row for row in value['git_calls'].splitlines() if '\tfetch\t--no-tags\torigin\t' in row];self.assertEqual(len(fetches),2)
                     elif name in ('changed','unavailable','isolation','cache-digest','stale'):
                         self.assertEqual(len(value['receipts']),2)
@@ -163,10 +170,9 @@ class MergeTests(unittest.TestCase):
     def test_final_gates_follow_fetch_single_base_read_and_checkpoint(self):
         self.cases(('retarget-after-gates','ci-during-final-fetch','base-during-final-fetch','retarget-during-final-fetch'))
         source=(ROOT/'templates/scripts/merge-pipeline.sh').read_text()
-        for line in source.splitlines():
-            if line.strip().startswith('gh pr merge '):
-                previous=source[:source.index(line)].rstrip().splitlines()[-1]
-                self.assertEqual(previous.strip(),'bureau_ticket_checkpoint "$ISSUE"')
+        merge=source.split('\n_merge_pr() {\n',1)[1].split('\n}',1)[0]
+        self.assertLess(merge.index('baseRefName baseRef{target{oid}}'),merge.index('  bureau_ticket_checkpoint "$ISSUE"\n'))
+        self.assertIn('  bureau_ticket_checkpoint "$ISSUE"\n  if _merge_output=$(gh pr merge ',merge)
 
     def test_base_commit_advancing_with_green_final_gates_retries(self):
         self.cases(('base-during-gates','base-after-gates'))

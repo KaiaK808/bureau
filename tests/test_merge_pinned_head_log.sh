@@ -33,7 +33,7 @@ new_sandbox() {
   export BUREAU_NO_MERGE=0 BUREAU_STOP_REQUESTED=0
   export BUREAU_STUB_STATE_MERGE=state-merge BUREAU_STUB_AGENT_ENABLED=merge
   pr2_gate_setup
-  jq -n '[{createdAt: "2026-09-29T09:00:00Z", body: "## Code Review v2 — EXP-803\n\n**Verdict**: APPROVE"}]' > "$PR2_GH/comments.json"
+  pr2_approval
   HEAD_SHA=$(jq -r .headRefOid "$PR2_GH/pr.json")
   [ "${#HEAD_SHA}" = 40 ] || fail "no PR head in the double"
 }

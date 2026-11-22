@@ -82,7 +82,7 @@ with tempfile.TemporaryDirectory(prefix='bureau-test-shards. ') as directory:
     print(f'PASS unset selector executes all {len(expected)} files')
 
     # Prove the selected list reaches the execution loop, rather than only --list.
-    for runner_os, total in (('Linux', 4), ('macOS', 6)):
+    for runner_os, total in (('Linux', 4), ('macOS', 7)):
         for index in range(1, total + 1):
             files = shard_files(index, total, runner_os)
             result = run_harness(f'{index}/{total}', runner_os, listing=False)
@@ -98,7 +98,7 @@ with tempfile.TemporaryDirectory(prefix='bureau-test-shards. ') as directory:
             continue
         name, ubuntu, macos = line.split()
         costs[name] = tuple(None if value == '-' else int(value) for value in (ubuntu, macos))
-    for runner_os, total in (('Linux', 4), ('macOS', 6)):
+    for runner_os, total in (('Linux', 4), ('macOS', 7)):
         estimates = {}
         for name in expected:
             ubuntu, macos = costs.get(name, (None, None))
@@ -196,9 +196,9 @@ with tempfile.TemporaryDirectory(prefix='bureau-test-shards. ') as directory:
             "'tests/macos-manifest.txt' || '' }}") in workflow
     for event in ('pull_request', 'push', 'schedule', 'workflow_dispatch'):
         rows = pr_matrix if event == 'pull_request' else full_matrix
-        assert len(rows) == (6 if event == 'pull_request' else 10), rows
+        assert len(rows) == (6 if event == 'pull_request' else 11), rows
         for os_name, total, mode in (('ubuntu-latest', 4, 'full'),
-                                     ('macos-latest', 2 if event == 'pull_request' else 6,
+                                     ('macos-latest', 2 if event == 'pull_request' else 7,
                                       'focused' if event == 'pull_request' else 'full')):
             selected_rows = [row for row in rows if row['os'] == os_name]
             assert sorted(row['shard'] for row in selected_rows) == list(range(1, total + 1)), rows

@@ -101,7 +101,8 @@ with (root/'service.guard').open('a') as lock:
         head=git('rev-parse','refs/heads/'+p['branch']); base=git('rev-parse','refs/heads/main')
         return dict(number=p['number'],url='https://github.com/test/repo/pull/'+str(p['number']),state=p.get('state','OPEN'),
                     mergeStateStatus=p.get('merge_state','CLEAN'),labels=[],headRefName=p['branch'],headRefOid=head,
-                    baseRefName='main',baseRefOid=git('merge-base',head,base),isDraft=False,title=p['issue']+' feature',body='Local fixture',comments=p.get('comments',[]))
+                    baseRefName='main',baseRefOid=git('merge-base',head,base),isDraft=False,title=p['issue']+' feature',body='Local fixture',comments=p.get('comments',[]),
+                    mergeCommit=dict(oid=p['merge_commit']) if p.get('state')=='MERGED' and p.get('merge_commit') else None)
     if args[:2]==['repo','view']: print('test/repo')
     elif args[:2]==['pr','list']:
         branch=args[args.index('--head')+1] if '--head' in args else None
@@ -119,25 +120,36 @@ with (root/'service.guard').open('a') as lock:
         print('https://github.com/test/repo/pull/'+str(num))
     elif args[:2]==['pr','view']:
         p=pr_for(); value=pr_value(p); field=args[args.index('--json')+1]
+        if 'comments' in field.split(','):
+            value['comments']=[dict(id=c['id'], author=dict(login='fixture',id='fixture-user',name=''),
+                authorAssociation='NONE', body=c['body'], createdAt=c['createdAt'],
+                includesCreatedEdit=c['lastEditedAt'] is not None, isMinimized=False, minimizedReason='',
+                reactionGroups=[], url=value['url']+'#issuecomment-'+c['id'], viewerDidAuthor=True)
+                for c in value['comments']]
         if '--jq' in args:
             query=args[args.index('--jq')+1]
             if field=='comments':
-                key='Code Review v2' if 'Code Review v2' in query else 'Bureau merge gate'
-                bodies=[c['body'] for c in value['comments'] if key in c['body']]
-                print(bodies[-1] if bodies else '')
+                subprocess.run(['jq','-r',query],input=json.dumps(dict(comments=value['comments'])),text=True,check=True)
             else: print(value.get(field,''))
         else: print(json.dumps({k:value[k] for k in field.split(',') if k in value}))
         if data.get('withdraw_on_base_read') and field=='state,headRefOid,headRefName,baseRefName':
             row=next(i for i in rows if i['identifier']==p['issue']); row['state']=dict(id='id-backlog',name='Build',type='started'); save()
     elif args[:2]==['pr','comment']:
         p=pr_for(); body_file=args[args.index('--body-file')+1] if '--body-file' in args else None
-        body=(sys.stdin.read() if body_file=='-' else Path(body_file).read_text()) if body_file is not None else args[args.index('--body')+1]; p.setdefault('comments',[]).append(dict(body=body,createdAt='2026-10-26T00:00:00Z')); save()
+        body=(sys.stdin.read() if body_file=='-' else Path(body_file).read_text()) if body_file is not None else args[args.index('--body')+1]
+        p.setdefault('comments',[]).append(dict(id='comment-'+str(p['number'])+'-'+str(len(p['comments'])),
+                                              body=body,lastEditedAt=None,createdAt='2026-10-26T00:00:00Z')); save()
         event('pr-comment',issue=p['issue'],body=body)
     elif args[:2]==['pr','merge']:
-        p=pr_for(); p['state']='MERGED'; save(); event('merge',issue=p['issue'])
+        p=pr_for(); p['state']='MERGED'; p['merge_commit']=git('rev-parse','refs/heads/'+p['branch']); save(); event('merge',issue=p['issue'])
     elif args[:1]==['api']:
         endpoint=next((a for a in args if a.startswith('repos/')),'')
-        if 'graphql' in args: print('{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}')
+        if 'graphql' in args:
+            if any('node(id:$id)' in a for a in args):
+                cid=next(a[3:] for a in args if a.startswith('id='))
+                node=next((dict(body=c['body'],lastEditedAt=c['lastEditedAt']) for p in prs for c in p['comments'] if c.get('id')==cid),None)
+                print(json.dumps(dict(data=dict(node=node))))
+            else: print('{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}')
         elif '/pulls?state=open' in endpoint:
             found=[]
             for p in prs:
@@ -947,11 +959,15 @@ signal.signal(signal.SIGTERM,exited)
     def stale_pr(self, merge_agent=True):
         self.config['agents'].update(code_review=True,merge=merge_agent); self.save_config()
         issue,branch=self.ticket(1,state='merge' if merge_agent else 'build_review')
-        review='Code Review v2\n**Verdict**: APPROVE'
-        self.change(lambda d:d['prs'].append(dict(number=1,branch=branch,issue=issue,comments=[dict(body=review,createdAt='2026-10-26T00:00:00Z')])))
+        self.change(lambda d:d['prs'].append(dict(number=1,branch=branch,issue=issue,comments=[self.approval_comment(branch)])))
         self.change(lambda d:d['issues'][0]['comments']['nodes'].append(dict(body='✅ Code review **APPROVED**.\n<!-- bureau-review-round: round=1 verdict=APPROVE -->',createdAt='2026-10-26T00:00:00Z')))
         (self.repo/'pkg/b.py').write_text('sibling merge\n'); self.commit('sibling lands'); self.g('push','-q','origin','main')
         return issue,branch
+
+    def approval_comment(self, branch):
+        head=self.g('rev-parse','origin/'+branch); base=self.g('rev-parse','origin/main')
+        return dict(id='approval',lastEditedAt=None,createdAt='2026-10-26T00:00:00Z',
+                    body=f'## Code Review v2\n**Verdict**: APPROVE\n**Reviewed head**: `{head}`\n**Target**: `main` at `{base}`')
 
     def test_stale_base_merge_forward_requires_fresh_review(self):
         issue,branch=self.stale_pr()
@@ -978,7 +994,22 @@ signal.signal(signal.SIGTERM,exited)
                            env={**self.env,'BUREAU_DISPATCH_LANE':'1','BUREAU_HELD_BY_SHEPHERD':'1','BUREAU_INLINE_MERGE':'1','BUREAU_MERGE_GATE_REPORT':str(report)},timeout=70)
         self.assertEqual(result.returncode,20,result.stdout+result.stderr)
         self.assertEqual(report.read_text().splitlines()[0],'refreshed')
+        self.assertTrue(report.read_text().splitlines()[1].startswith('base_refresh: '))
         self.assertFalse(self.events('merge')); self.assertEqual(self.events('move')[-1]['state'],'build_review')
+
+    def test_edited_approval_requires_fresh_review(self):
+        issue,branch=self.ticket(1,state='merge')
+        comment=self.approval_comment(branch)
+        comment['lastEditedAt']='2026-10-26T01:00:00Z'
+        self.change(lambda d:d['prs'].append(dict(number=1,branch=branch,issue=issue,comments=[comment])))
+        report=self.root/'edited.report'
+        result=self.invoke(['bash',str(self.repo/'scripts/bureau-worker.sh'),issue,'merge-pipeline.sh',str(self.root/'edited'),branch],
+                           env={**self.env,'BUREAU_MERGE_GATE_REPORT':str(report)},timeout=70)
+        self.assertEqual(result.returncode,20,result.stdout+result.stderr)
+        self.assertEqual(report.read_text().splitlines()[0],'refreshed')
+        self.assertIn('approval_binding: selected approval comment was edited',report.read_text())
+        self.assertFalse(self.events('merge'))
+        self.assertEqual([v['state'] for v in self.events('move')],['build_review'])
 
     def test_dirty_merge_lane_refreshes_through_existing_transaction(self):
         issue,branch=self.stale_pr()
@@ -1000,7 +1031,7 @@ signal.signal(signal.SIGTERM,exited)
     def test_persisted_merge_wait_yields_and_refills_with_disjoint_work(self):
         issue,branch=self.ticket(1,state='merge'); self.ticket(2,hold=True)
         self.change(lambda d:d.update(pending_ci=True))
-        self.change(lambda d:d['prs'].append(dict(number=1,branch=branch,issue=issue,comments=[dict(body='Code Review v2\n**Verdict**: APPROVE',createdAt='2026-10-26T00:00:00Z')])))
+        self.change(lambda d:d['prs'].append(dict(number=1,branch=branch,issue=issue,comments=[self.approval_comment(branch)])))
         child=self.start(); self.wait_for(lambda:self.skipped(issue,2) and any(v['issue']=='TST-2' for v in self.started()))
         waits=json.loads((self.common/'merge-gate-waits.json').read_text()); self.assertIn(issue,waits)
         self.assertFalse(any(v['name']=='needs-human' for v in self.events('label')))

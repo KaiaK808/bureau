@@ -2490,27 +2490,25 @@ _pr_head_commit_age() {
   printf '%s' "$(( now - when ))"
 }
 
-# pr_base_is_current <pr-number>
+# pr_base_is_current <pr-number> <base-ref> <base-oid>
 # Returns 0 iff the PR's base ref OID equals the current HEAD of its base
 # branch on origin. Returns 1 with a stderr diagnostic and the "behind by N"
 # count if not. Catches the stale-base race that mergeStateStatus's async
-# cache misses.
+# cache misses. Use the same PR snapshot as the approval binding check.
 pr_base_is_current() {
-  local pr="$1"
-  local owner_repo base_ref base_pr_sha base_head_sha behind
+  local pr="$1" base_ref="$2" base_pr_sha="$3"
+  local owner_repo base_head_sha behind
   owner_repo=$(_bureau_gh_owner_repo)
   [ -z "$owner_repo" ] && { echo "base: cannot resolve owner/repo" >&2; return 1; }
-  base_ref=$(gh pr view "$pr" --json baseRefName --jq .baseRefName 2>/dev/null || echo "")
-  base_pr_sha=$(gh pr view "$pr" --json baseRefOid --jq .baseRefOid 2>/dev/null || echo "")
-  [ -z "$base_ref" ] || [ -z "$base_pr_sha" ] && {
+  if [ -z "$base_ref" ] || [ -z "$base_pr_sha" ]; then
     echo "base: cannot resolve baseRefName/baseRefOid for #$pr" >&2
     return 1
-  }
-  base_head_sha=$(gh api "repos/$owner_repo/branches/$base_ref" --jq .commit.sha 2>/dev/null || echo "")
-  [ -z "$base_head_sha" ] && {
+  fi
+  if ! base_head_sha=$(gh api "repos/$owner_repo/branches/$base_ref" --jq .commit.sha 2>/dev/null) \
+     || [ -z "$base_head_sha" ] || [ "$base_head_sha" = null ]; then
     echo "base: cannot resolve $base_ref HEAD on origin" >&2
     return 1
-  }
+  fi
   if [ "$base_pr_sha" = "$base_head_sha" ]; then
     return 0
   fi

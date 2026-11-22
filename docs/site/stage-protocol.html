@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="99d9da5829463bee7f0a8ef2c5cf7da43e2e171fb20b96994598515eb59dde58">
+<meta name="bureau-source-sha256" content="51eb6d2854be567222ff1e79d763b9625a875c7d96ca72028f20810204127b16">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -106,13 +106,16 @@ journal data carries no signalling authority.</p>
 forward the fetched, pinned PR target through
 <code>merge_origin_main_or_abort</code> and the existing conflict
 transaction. Strict withdrawal checkpoints guard the normal push and
-return to Build Review. Gate-report
-<code>refreshed</code>/<code>base_refresh</code> metadata plus exit 20
-makes shepherd continue to fresh review, including inline merge; a
-refresh grants neither merge success nor approval/gate reuse for the
-changed head. At most two refreshes run per lane; total review-round
-limits survive resumptions. Security/review/hold/thread blockers take
-precedence. Strict CI/base/JIT merge gates remain unchanged.</p>
+return to Build Review. Exit 20 with a <code>refreshed</code> report
+makes shepherd continue to fresh review, including inline merge. A
+<code>base_refresh</code> line accounts for one of two merge-forwards
+allowed per lane. An <code>approval_binding</code> line accounts for a
+stale-approval handoff under the separate
+<code>agents.max_review_rounds</code> limit per shepherd run. A stale
+approval beyond that limit leads to exit 25 with
+<code>needs-human</code> at Build Review. Security, review, hold and
+thread blockers take precedence over merge-forward. Strict CI, base and
+just-in-time gates still apply.</p>
 <p>SIGTERM/SIGINT/SIGHUP stop admission, signal only live runtime
 handles launched by this dispatcher and join nested cleanup before
 releasing the lock (130). Stored PIDs and process-name scans are never
