@@ -205,6 +205,8 @@ echo "PASS 6 an unrecorded checkout: one ticket carries the halt, the checkout i
 # ── 7. the ticket's branch is held by another worktree ─────────────────────────────────
 pr5_new_repo
 git -C "$REPO" branch feat/exp-7; git -C "$REPO" push -q origin feat/exp-7
+# Admission resolves the canonical Linear marker before preparing the worker.
+jq -nc '{issue:"7",body:"<!-- bureau-branch: feat/exp-7 -->"}' >> "$SB/comments.jsonl"
 HOLDER=$(mktemp -d "$SB/holder XXXXXXXX")
 git -C "$REPO" worktree add -q "$HOLDER" feat/exp-7
 set +e
@@ -240,6 +242,8 @@ echo "PASS 8 a worker whose identity changed: needs-human and a comment"
 # ── 9. finished work that is not on origin ─────────────────────────────────────────────
 pr5_new_repo
 git -C "$REPO" branch feat/exp-7; git -C "$REPO" push -q origin feat/exp-7
+# Admission resolves the canonical Linear marker before preparing the worker.
+jq -nc '{issue:"7",body:"<!-- bureau-branch: feat/exp-7 -->"}' >> "$SB/comments.jsonl"
 cat > "$REPO/scripts/implement-pipeline.sh" <<'PROBE'
 #!/bin/bash
 # Probe: an implement stage that commits its work and then fails its final push (exit 18).

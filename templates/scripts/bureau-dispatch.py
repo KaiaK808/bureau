@@ -214,6 +214,7 @@ class Dispatcher:
         self.path = self.store.root / 'dispatch-skips.json'
         self.journal = self.store.root / 'dispatch-lanes'
         self.skips = r.read(self.path, {})
+        self.decision_waits = set()
         self.stopping = False
         self.poll = args.poll_seconds
 
@@ -225,12 +226,18 @@ class Dispatcher:
                 try: child.send_signal(signal.SIGTERM)
                 except ProcessLookupError: pass
 
-    def defer(self, issue, code, paused=False, attempt=None, terminal_reason=None):
+    def defer(self, issue, code, paused=False, attempt=None, terminal_reason=None, decision_wait=False,
+              admission_incomplete=False):
         prior = self.skips.get(issue, {})
         count = min(prior.get('attempts', 0) + 1, 16)
-        quiet = code in (2, 10, 16, 23, 28, 29)
+        # A read-only admission refusal stays read-only through reconciliation.
+        read_wait = code == 24 and admission_incomplete
+        quiet = code in (2, 10, 16, 23, 28, 29) or read_wait
         due = time.time() + min(self.poll * 2 ** (count - 1), self.recheck) if quiet or paused else None
         self.skips[issue] = dict(code=code, attempts=count, until=due)
+        if code == 25 and decision_wait:
+            self.skips[issue]['decision_wait'] = True
+            self.decision_waits.add(issue)
         if terminal_reason is None:
             ledger = r.t.Ledger(self.store.root, issue, r.read(r.config_for(self.repo)))
             terminal_reason = ledger.call('terminal', code)
@@ -239,13 +246,13 @@ class Dispatcher:
         self.skips[issue]['terminal_reason'] = terminal_reason
         if attempt is not None: self.skips[issue]['attempt'] = attempt
         r.save(self.path, self.skips)
-        if code not in (0, 2, 10, 16, 20, 23, 25, 26, 28, 29, 30, 31, 130):
+        if not read_wait and code not in (0, 2, 10, 16, 20, 23, 25, 26, 28, 29, 30, 31, 130):
             try:
                 self.helpers.call('alert_telegram "$1" bureau-dispatch.py "$2" "dispatcher lane halted" || true\n'
                                   'if [ "$2" != 21 ]; then mark_needs_human "$1" dispatcher "$2" || true; fi', issue, str(code))
             except Stop:
                 if self.stopping: raise
-        print(f'dispatch: {issue} exit={code}; ' + ('deferred' if due is not None else 'held (dispatch-skips.json)'), flush=True)
+        print(f'dispatch: {issue} exit={code}; ' + ('deferred' if due is not None or decision_wait else 'held (dispatch-skips.json)'), flush=True)
 
     def reconcile_lane(self, path):
         row = r.read(path)
@@ -261,10 +268,12 @@ class Dispatcher:
         if type(code) is not int or not 0 <= code <= 255: raise ValueError('invalid dispatch outcome: ' + str(path))
         if self.skips.get(issue, {}).get('attempt') != attempt:
             self.defer(issue, code, paused=code == 25 and row.get('paused') is True, attempt=attempt,
-                       terminal_reason=row.get('terminal_reason'))
+                       terminal_reason=row.get('terminal_reason'), decision_wait=row.get('decision_wait') is True,
+                       admission_incomplete=row.get('admission_incomplete') is True)
         ready = self.store.root / 'dispatch-ready' / attempt
         ready.unlink(missing_ok=True)
         ready.with_suffix('.paused').unlink(missing_ok=True)
+        ready.with_suffix('.decision-wait').unlink(missing_ok=True)
         if code != 130: self.clean_worktree(workspace)
         # Saving the skip precedes acknowledgment; a crash between the two is
         # reconciled idempotently by the attempt identity in dispatch-skips.json.
@@ -278,8 +287,9 @@ class Dispatcher:
         # them or mutating the skip store. Active lanes are already excluded.
         pending = {r.read(path)['issue'] for path in self.journal.glob('*.json')}
         now = time.time()
-        return held | pending | set(self.lanes) | {issue for issue, row in self.skips.items()
-                                         if row['until'] is None or row['until'] > now}
+        return held | pending | set(self.lanes) | self.decision_waits | {issue for issue, row in self.skips.items()
+                    if not (row.get('code') == 25 and row.get('decision_wait') is True)
+                    and (row['until'] is None or row['until'] > now)}
 
     def clean_worktree(self, workspace):
         # Keep every interruption or unfinished checkpoint. Only a clean,
@@ -376,6 +386,9 @@ printf "%s %s %s %s" "$BUREAU_PARALLEL_LANES" "$BUREAU_POLL_INTERVAL" '''
             for path in sorted(self.journal.glob('*.json')):
                 self.reconcile_lane(path)
             while not self.stopping:
+                # Decision waits last only this poll. The typed durable record
+                # also lets a restarted dispatcher reconsider them immediately.
+                self.decision_waits.clear()
                 self.reap()
                 if (self.store.root / 'paused').is_file():
                     time.sleep(min(self.poll, .2))
@@ -401,7 +414,8 @@ printf "%s %s %s %s" "$BUREAU_PARALLEL_LANES" "$BUREAU_POLL_INTERVAL" '''
                         self.launch(issue, stage)
                     except Stop as exc:
                         if exc.code == 130: raise
-                        self.defer(issue, exc.code, paused=exc.code == 25 and exc.output == 'paused')
+                        self.defer(issue, exc.code, paused=exc.code == 25 and exc.output == 'paused',
+                                   admission_incomplete=exc.code == 24)
                 # Reap and refill as soon as a lane ends, independently of the
                 # idle poll interval. Idle arrivals are discovered next poll.
                 deadline = time.monotonic() + self.poll

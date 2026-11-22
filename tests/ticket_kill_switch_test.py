@@ -44,7 +44,7 @@ elif 'issueLabels' in q:
 elif 'viewer' in q: result=dict(viewer=dict(id='viewer'))
 elif 'comments' in q or 'branchName' in q:
     comments=[dict(body='<!-- bureau-branch: 009-ticket-switch -->',createdAt='2026-10-26T00:00:00Z')]
-    result=dict(issues=dict(nodes=[dict(branchName='wrong-branch',comments=dict(nodes=comments))]))
+    result=dict(issue=dict(branchName='wrong-branch',comments=dict(nodes=comments,pageInfo=dict(hasNextPage=False,endCursor=None))))
 elif 'nodes { id identifier title description state' in q:
     control=json.loads((root/'control').read_text())
     count=1+sum(json.loads(line)['kind']=='snapshot' for line in (root/'events').read_text().splitlines())

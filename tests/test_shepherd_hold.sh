@@ -28,6 +28,7 @@ REPO_ROOT="$(cd "$(dirname "$0")" && cd .. && pwd)"
 SCRIPTS="$REPO_ROOT/templates/scripts"
 # Physical path: the runtime hands the stages a resolved BUREAU_CONFIG (macOS /var → /private/var).
 SB=$(cd "$(mktemp -d -t bureau-test.shephold.XXXXXXXX)" && pwd -P)
+export GIT_CEILING_DIRECTORIES="$SB"
 trap 'rm -rf "$SB"' EXIT
 unset BUREAU_CONFIG BUREAU_DRY_RUN BUREAU_NO_MERGE BUREAU_STOP_REQUESTED BUREAU_ACTIVE_ENTRY BUREAU_RUN_ID \
       BUREAU_ALERT_THROTTLE_FILE TELEGRAM_BOT_TOKEN TELEGRAM_ALERT_CHAT_ID TMUX 2>/dev/null || true
@@ -95,6 +96,7 @@ case "\$payload" in
     echo state >> "\$sb/linear.log"
     if [ -f "\$sb/state-broken" ]; then b='<html>502 Bad Gateway</html>'
     else b=\$(jq -nc --arg ref "\$(issue_ref)" --argjson l "\$labels" --arg s "\$(cat "\$sb/state")" --arg n "\$(cat "\$sb/state-name" 2>/dev/null || echo '?')" '{data:{issues:{nodes:[{id:"U7",identifier:\$ref,title:"T",description:"D",state:{id:\$s,name:\$n},labels:\$l}]}}}'); fi ;;
+  *'issue(id:'*'branchName comments('*) b='{"data":{"issue":{"branchName":"001-fixture","comments":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' ;;
   *'nodes { branchName'*) echo branch >> "\$sb/linear.log"; b='{"data":{"issues":{"nodes":[{"branchName":"001-fixture","comments":{"nodes":[]}}]}}}' ;;
   *'nodes { id } }'*) echo uuid >> "\$sb/linear.log"; b='{"data":{"issues":{"nodes":[{"id":"U7"}]}}}' ;;
   *)                  echo unmatched >> "\$sb/linear.log"; b='{}' ;;
@@ -262,6 +264,13 @@ for mode in normal gated; do
   ticket s5 '["lane-2"]'
   : > "$SB/state-broken"; : > "$SB/viewer-broken"
   if [ "$mode" = gated ]; then run --from-stage spec TEAM-7; else run TEAM-7; fi
+  if [ "$mode" = normal ]; then
+    [ "$RC" = 24 ] || fail "startup route outage: exit $RC, wanted 24"
+    [ "$LIN" = "state " ] || fail "startup route outage: continued after the incomplete read"
+    nothing_written "startup route outage"
+    [ ! -e "$REPO/.git/bureau" ] || fail "startup route outage: runtime ownership was touched"
+    continue
+  fi
   [ "$RC" = 10 ] || fail "$mode startup outage: exit $RC, wanted 10"
   [ -z "$STAGES" ] || fail "$mode startup outage: a stage ran"
   case " $LIN" in *" add-label"*|*" remove-label"*|*" move-"*|*" comment"*) fail "$mode startup outage: a Linear write went out" ;; esac
@@ -273,7 +282,7 @@ for mode in normal gated; do
     [ ! -e "$tmp" ] || fail "$mode startup outage: a temporary fault or gate file was left behind"
   done
 done
-echo "PASS normal and gated Spec startup outages keep exit 10, one alert and no ticket writes or stage runs"
+echo "PASS incomplete startup routes stop with 24 before ownership; gated Spec startup outages keep exit 10 and one alert"
 
 new_repo "needs-human"; start_control startup
 jq '.agents.max_concurrent_issues = 2 | .agents.file_overlap_gate = false' "$REPO/.bureau.json" > "$SB/config.json"
@@ -508,7 +517,7 @@ ticket s5 '["lane-2"]'
 run EXP-7
 [ "$RC" = 0 ] || fail "free ticket: exit $RC, wanted 0 (its stage moves it to Done)"
 [ "$STAGES" = "implement-pipeline.sh " ] || fail "free ticket: the stage did not run once"
-case "$LIN" in "viewer labels state uuid label-id add-label "*) ;; *) fail "free ticket: the labels are not read between the start check and the claim" ;; esac
+case "$LIN" in "state viewer labels state uuid label-id add-label "*) ;; *) fail "free ticket: the route and label checks did not precede the claim" ;; esac
 ticket s5 '["lane-2"]'
 run --from-stage build EXP-7
 [ "$RC" = 0 ] || fail "free ticket, --from-stage: exit $RC"
@@ -541,7 +550,7 @@ grep -q "carries 'Human Review'" "$SB/err" || fail "configured name: the refusal
 # Without --from-stage a held ticket's state is read (only then) to tell a leftover hold on a
 # finished ticket from a real one; an open ticket is refused all the same.
 run EXP-7
-[ "$RC" = 25 ] && [ "$LIN" = "viewer labels state " ] || fail "configured name, no --from-stage: wanted 25 after the label and state reads"
+[ "$RC" = 25 ] && [ "$LIN" = "state viewer labels state " ] || fail "configured name, no --from-stage: wanted 25 after route, label and state reads"
 nothing_written "configured name, no --from-stage"
 echo "PASS a ticket held by needs-human, blocked, wip or the configured name: 25 before the claim, nothing written"
 
@@ -624,14 +633,14 @@ for held in needs-human blocked wip; do
   ticket s8 "[\"lane-2\",\"$held\"]"
   run EXP-7
   [ "$RC" = 0 ] || fail "Done + $held: exit $RC, wanted 0"
-  [ "$LIN" = "viewer labels state " ] || fail "Done + $held: not the label read, then the state read alone"
+  [ "$LIN" = "state viewer labels state " ] || fail "Done + $held: not route, label and state reads alone"
   nothing_written "Done + $held"
   grep -q "terminal state 'Done' — done (the hold left on it stays: label $held; nothing claimed, nothing written)" "$SB/out" \
     || fail "Done + $held: no terminal line"
 done
 ticket s8 '["lane-2"]'; mkdir -p "$HOLD"; : > "$HOLD/EXP-7"
 run EXP-7
-[ "$RC" = 0 ] && [ "$LIN" = "viewer state " ] || fail "Done + hold file: wanted 0 after the state read alone"
+[ "$RC" = 0 ] && [ "$LIN" = "state viewer state " ] || fail "Done + hold file: wanted 0 after route and state reads alone"
 nothing_written "Done + hold file"
 [ -f "$HOLD/EXP-7" ] || fail "Done + hold file: the hold was removed"
 rm -rf "$HOLD"
@@ -651,9 +660,14 @@ ticket s8 '["needs-human"]'
 run --from-stage build EXP-7
 [ "$RC" = 25 ] && [ "$LIN" = "viewer labels " ] || fail "Done + needs-human, --from-stage: wanted 25 without a state read"
 nothing_written "Done + needs-human, --from-stage"
-# The state read on the hold path fails like the label read: nothing written, 27 and an alert.
+# A failed initial route read stops before even the label check.
 ticket s5 '["needs-human"]'; : > "$SB/state-broken"
 run EXP-7
+[ "$RC" = 24 ] && [ "$LIN" = "state " ] || fail "held, startup route unreadable: wanted 24"
+nothing_written "held, startup route unreadable"
+# A re-entered Shepherd has already checked its route. Its later held-ticket
+# state read retains the established 27 and alert.
+BUREAU_ACTIVE_ENTRY=scripts/shepherd.sh run EXP-7
 [ "$RC" = 27 ] && [ "$LIN" = "viewer labels state " ] || fail "held, state read unusable: wanted 27"
 case " $LIN" in *" add-label"*|*" move-"*|*" comment"*) fail "held, state read unusable: a Linear write went out" ;; esac
 grep -q "could not read the state of EXP-7 — Linear stayed unusable after every retry (fault: not-json); EXP-7 not claimed, nothing written" "$SB/err" \

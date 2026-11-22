@@ -39,7 +39,7 @@ EOF
   pr2_gate_setup
   # Keep the real post_comment through GraphQL serialization; fake only the
   # UUID lookup and network boundary. Every call appends its complete payload.
-  sed -n '/^post_comment() {/,/^}/p' "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/bureau-config.sh"
+  sed -n -e '/^post_comment() {/,/^}/p' -e '/^_bureau_post_comment() {/,/^}/p' "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/bureau-config.sh"
   sed -n '/^commit_stage_changes() {/,/^}/p' "$REPO_ROOT/templates/scripts/bureau-config.sh" >> "$SCRIPTS_DIR/bureau-config.sh"
   cat >> "$SCRIPTS_DIR/bureau-config.sh" <<'EOF'
 _resolve_issue_uuid() { echo fixture-issue-id; }
@@ -48,21 +48,32 @@ linear_raw() {
   echo '{"data":{"commentCreate":{"success":true}}}'
 }
 EOF
-  # Capture GitHub comment/create bodies as argv delivered to gh. Implement
-  # gets no existing PR, exercising both the ready and draft create paths.
+  # Capture GitHub comment/create bodies from argv, files and stdin. Implement
+  # starts without a PR; create persists one for the required hold mirror.
   mv "$PR2_GH/bin/gh" "$PR2_GH/bin/gh-base"
   cat > "$PR2_GH/bin/gh" <<'EOF'
 #!/usr/bin/env python3
-import json, os, pathlib, sys
+import json, os, pathlib, subprocess, sys
 args = sys.argv[1:]; root = pathlib.Path(os.environ['SANDBOX'])
-if '--body' in args:
+body_file = args[args.index('--body-file')+1] if '--body-file' in args else None
+body = (sys.stdin.read() if body_file == '-' else pathlib.Path(body_file).read_text()) if body_file is not None else (args[args.index('--body')+1] if '--body' in args else None)
+if body is not None:
     with (root/'github-payloads.jsonl').open('a') as out:
-        out.write(json.dumps(dict(argv=args, body=args[args.index('--body')+1])) + '\n')
+        out.write(json.dumps(dict(argv=args, body=body)) + '\n')
+created = root/'logs/privacy-created-pr'
 if args[:2] == ['pr', 'create']:
+    created.write_text('99')
     print('https://github.com/test-owner/test-repo/pull/99'); sys.exit(0)
 if args[:2] == ['pr', 'list'] and os.environ.get('PR7_STAGE') == 'implement':
-    print('' if '--jq' in args else '[]'); sys.exit(0)
-os.execv(str(pathlib.Path(os.environ['PR2_GH'])/'bin/gh-base'), ['gh-base', *args])
+    rows = [dict(number=int(created.read_text()), url='https://github.com/test-owner/test-repo/pull/99')] if created.exists() else []
+    if '--jq' in args:
+        result = subprocess.run(['jq', '-r', args[args.index('--jq')+1]], input=json.dumps(rows), text=True)
+        sys.exit(result.returncode)
+    print(json.dumps(rows)); sys.exit(0)
+base = str(pathlib.Path(os.environ['PR2_GH'])/'bin/gh-base')
+if body_file == '-':
+    sys.exit(subprocess.run([base, *args], input=body, text=True).returncode)
+os.execv(base, ['gh-base', *args])
 EOF
   chmod +x "$PR2_GH/bin/gh"
 }
@@ -147,6 +158,10 @@ if stage == 'qa' and form != 'malformed':
     assert any(header in p['variables']['body'] for p in linear), 'QA routing changed'
 if stage == 'implement' and verdict == 'NEEDS_HUMAN' and form != 'malformed':
     assert 'needs-human' in (repo/'calls.log').read_text(), 'implement human hold was lost'
+    holds = [p['variables']['body'] for p in linear if p['variables']['body'].startswith('<!-- bureau-implement-hold:')]
+    mirrors = [p['body'] for p in github if p['argv'][:2] == ['pr', 'comment'] and p['body'].startswith('<!-- bureau-implement-hold:')]
+    # The real PR helper terminates its stdin body with exactly one newline.
+    assert len(holds) == len(mirrors) == 1 and mirrors[0] == holds[0] + '\n', 'required hold mirror differs from Linear'
 print('PASS transport privacy ' + stage + '/' + verdict + '/' + form + ': ' + str(len(linear)) + ' Linear, ' + str(len(github)) + ' GitHub')
 PY
   cases=$((cases + 1))

@@ -42,7 +42,7 @@ with (root/'service.guard').open('a') as lock:
     def save():
         p=root/'service.next'; p.write_text(json.dumps(data)); p.replace(root/'service.json')
     def row_for(q,v):
-        if v.get('id'): return next(i for i in rows if i['id']==v['id'])
+        if v.get('id'): return next(i for i in rows if v['id'] in (i['id'], i['identifier']))
         number=re.search(r'number:\s*\{\s*eq:\s*(\d+)',q)
         return next(i for i in rows if number and i['identifier']=='TST-'+number[1])
     if binary=='curl':
@@ -67,7 +67,7 @@ with (root/'service.guard').open('a') as lock:
             if marker: row['branch']=marker[1]
             event('comment',issue=row['identifier'],body=body); save(); result=dict(commentCreate=dict(success=True))
         elif 'comments(first:100' in q:
-            row=row_for(q,v); result=dict(issue=dict(comments=dict(**row['comments'],pageInfo=dict(hasNextPage=False,endCursor=None))))
+            row=row_for(q,v); result=dict(issue=dict(branchName=row.get('branchName',row['branch']),comments=dict(**row['comments'],pageInfo=dict(hasNextPage=False,endCursor=None))))
         elif 'labels(first:100' in q:
             row=row_for(q,v); result=dict(issue=dict(labels=dict(**row['labels'],pageInfo=dict(hasNextPage=False,endCursor=None))))
         else:
@@ -130,7 +130,8 @@ with (root/'service.guard').open('a') as lock:
         if data.get('withdraw_on_base_read') and field=='state,headRefOid,headRefName,baseRefName':
             row=next(i for i in rows if i['identifier']==p['issue']); row['state']=dict(id='id-backlog',name='Build',type='started'); save()
     elif args[:2]==['pr','comment']:
-        p=pr_for(); body=args[args.index('--body')+1]; p.setdefault('comments',[]).append(dict(body=body,createdAt='2026-10-26T00:00:00Z')); save()
+        p=pr_for(); body_file=args[args.index('--body-file')+1] if '--body-file' in args else None
+        body=(sys.stdin.read() if body_file=='-' else Path(body_file).read_text()) if body_file is not None else args[args.index('--body')+1]; p.setdefault('comments',[]).append(dict(body=body,createdAt='2026-10-26T00:00:00Z')); save()
         event('pr-comment',issue=p['issue'],body=body)
     elif args[:2]==['pr','merge']:
         p=pr_for(); p['state']='MERGED'; save(); event('merge',issue=p['issue'])

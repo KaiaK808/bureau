@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="dcc9d1ee1ccea2da24a3904b81367cf196695a20df20cb9a081c5d513c63fb78">
+<meta name="bureau-source-sha256" content="4ff77dafda307b8d2ad7309a376585fba258f4eaaa3a4f2d3a6b1f8f5293d39f">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -96,6 +96,32 @@ href="#upgrade-to-v36">Upgrade to v3.6</a>, <a
 href="#upgrade-to-v37">Upgrade to v3.7</a>, <a
 href="#upgrade-to-v38">Upgrade to v3.8</a> and <a
 href="#upgrade-to-v39">Upgrade to v3.9</a>.</p>
+<h2 id="implementation-decision-holds">Implementation decision
+holds</h2>
+<p>Drain old drivers and preserve unfinished work. Compare installed
+script drift before resyncing the complete scripts scope together with
+interfaces; <code>/bureau-init --update</code> changes configuration
+only. Do not mix old drivers, the new hold reader, posting helpers and
+app interfaces. No configuration keys or defaults change.</p>
+<p>Before re-enabling dispatch, reissue each open implementation
+decision hold with a fresh runtime ID and its still-open questions,
+including tickets whose <code>needs-human</code> label was already
+removed. Keep these tickets held during reissue. Use the dedicated
+<code>post_implementation_hold</code> helper in
+<code>scripts/bureau-config.sh</code> with the ticket, canonical branch,
+question body and a fresh publication key. Ask humans to repost earlier
+decisions as a new comment beginning with the exact copyable
+<code>Answer: &lt;hold-id&gt;</code> line and a nonblank body below it,
+then remove <code>needs-human</code> and restart Build. Completed holds
+stay as they are; old prose and completion footers do not release new
+holds.</p>
+<p>Answered decisions remain visible through retries and QA rework until
+a new hold or branch supersedes them. Unanswered holds return
+<code>25</code> before ownership or state changes; incomplete history,
+pending publication, a changed prompt snapshot or unusable answer
+context returns <code>24</code>. Local validation uses fake Linear and
+providers; the Linear editor round-trip and live adopters remain
+unqualified.</p>
 <h2 id="select-the-source-release">Select the source release</h2>
 <p>First update the actual source clone that supplies
 <code>/bureau-init</code>. Its usual location is

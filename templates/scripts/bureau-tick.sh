@@ -46,7 +46,7 @@ if [ "$MODE" = all ] && [ "$BUREAU_NO_MERGE" = 0 ]; then PASS_HELD="mark-held"; 
 # tick_stage <stage> [mark-held]: run one ticket of <stage>, write the result and exit;
 # return when the stage has no ticket to run now.
 tick_stage() {
-  local stage="$1" mark="${2:-}" pipeline
+  local stage="$1" mark="${2:-}" pipeline read_rc
   [ "$MODE" = all ] || [ "$MODE" = "$stage" ] || return 0
   agent_enabled "$stage" || return 0
   if [ "$stage" = merge ] && [ "$BUREAU_NO_MERGE" = 1 ]; then return 0; fi
@@ -67,8 +67,14 @@ tick_stage() {
     # only one stage. The picker must walk past held tickets in this same queue.
     case ",$SKIPPED," in *",$ISSUE,"*) RC=10; OUTCOME=failed; write_result; exit "$RC" ;; esac
     STAGE="$stage"
-    if ! BEFORE=$(get_issue_state "$ISSUE") || ! BRANCH=$(get_issue_branch "$ISSUE"); then
-      RC=10; OUTCOME=failed; write_result; exit "$RC"
+    read_rc=0
+    BEFORE=$(get_issue_state "$ISSUE") || read_rc=$?
+    if [ "$read_rc" = 0 ] && [ -z "$BEFORE" ]; then read_rc=24; fi
+    if [ "$read_rc" = 0 ]; then BRANCH=$(get_issue_branch "$ISSUE") || read_rc=$?; fi
+    if [ "$read_rc" != 0 ]; then
+      RC=10
+      [ "$read_rc" != 24 ] || RC=24
+      OUTCOME=failed; write_result; exit "$RC"
     fi
     if [ "$stage" = code_review ] && [ "$BUREAU_NO_MERGE" = 1 ]; then
       if ! DETAIL=$(get_issue_detail "$ISSUE"); then

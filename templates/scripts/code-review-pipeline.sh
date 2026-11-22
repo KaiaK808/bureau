@@ -420,12 +420,13 @@ echo "Phase 1/3: multi-specialist review (3 passes in parallel)"
 # The comments are read first and the count must be a number: a failed read used to
 # become cycle 0 (`|| echo "0"`), which switched the loop breaker off exactly when Linear
 # was unreliable. The stage ends before any paid review: 10 (Linear down) and 27 (Linear
-# unusable) pass through; any other failure is an answer that could not be parsed, 27.
+# unusable) and 24 (incomplete history) pass through; any other failure is an
+# answer that could not be parsed, 27.
 _comments_rc=0
 _review_comments=$(get_issue_comments "$ISSUE") || _comments_rc=$?
 if [ "$_comments_rc" != 0 ]; then
   echo "  ERROR: could not read the comments of $ISSUE to count review cycles (exit $_comments_rc)." >&2
-  case "$_comments_rc" in 10|"$BUREAU_EXIT_LINEAR_UNUSABLE") exit "$_comments_rc" ;; *) exit "$BUREAU_EXIT_LINEAR_UNUSABLE" ;; esac
+  case "$_comments_rc" in 10|24|"$BUREAU_EXIT_LINEAR_UNUSABLE") exit "$_comments_rc" ;; *) exit "$BUREAU_EXIT_LINEAR_UNUSABLE" ;; esac
 fi
 _review_counts=$(printf '%s' "$_review_comments" | review_counts 2>/dev/null) || _review_counts=""
 REVIEW_CYCLE_COUNT=$(printf '%s' "$_review_counts" | jq -r .cycles) || REVIEW_CYCLE_COUNT=""

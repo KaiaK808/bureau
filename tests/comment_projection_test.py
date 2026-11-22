@@ -30,7 +30,7 @@ class CommentProjectionTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         config = (SCRIPTS/'bureau-config.sh').read_text()
         self.helpers = '\n'.join(function(config, name) for name in
-                                 ('bureau_comment_projection', 'parse_claude_json', 'post_comment'))
+                                 ('bureau_comment_projection', 'parse_claude_json', 'post_comment', '_bureau_post_comment'))
         self.helpers += '''
 bureau_ticket_checkpoint() { :; }
 bureau_cap_comment() { printf '%s' "$1"; }

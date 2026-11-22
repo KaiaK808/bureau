@@ -38,6 +38,8 @@ IWT=""
 preserved() {
   pr5_new_repo
   git -C "$REPO" branch feat/exp-7; git -C "$REPO" push -q origin feat/exp-7
+  # Admission resolves the canonical Linear marker before preparing the worker.
+  jq -nc '{issue:"7",body:"<!-- bureau-branch: feat/exp-7 -->"}' >> "$SB/comments.jsonl"
   cat > "$REPO/scripts/implement-pipeline.sh" <<PROBE
 #!/bin/bash
 # Probe: the first run commits its work and fails (18); a later run records that it ran.

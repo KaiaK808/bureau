@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="178a19e4ace12f029b9cfdc58d8bed794f5cf9862f9ed9f92bda9df4b3e6e009">
+<meta name="bureau-source-sha256" content="4bbccbc86023f687e049b89f6f62e02b1d7382ede95d29b629842467c74982ad">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -3139,6 +3139,55 @@ loop</h3>
 <code>implement-pipeline.sh</code> invokes the selected provider inside
 a bounded retry loop and parks the issue with <code>needs-human</code>
 if it doesn't reach <code>status: COMPLETE</code> within the budget.</p>
+<p>An implementation <code>NEEDS_HUMAN</code> (including a gate-only
+halt) or app implementation <code>blocked</code> result publishes a
+runtime decision hold with a fresh ID bound to the canonical branch.
+Copy its exact <code>Answer: &lt;hold-id&gt;</code> line onto the first
+line of a new Linear comment and write a nonblank decision below it.
+Write your decision below this line on the Linear ticket. Then remove
+<code>needs-human</code> and restart Build. Retries of the same
+publication reuse the ID; the earliest copy starts the answer window.
+The newest distinct hold governs. Ordinary Bureau comments use a safe
+heading if they would begin with reserved answer or hold syntax; app
+summaries use that boundary too.</p>
+<p>Every matching reply later than that hold is forwarded oldest first
+with its timestamp and source questions, with the marker line stripped,
+as bounded untrusted JSON ticket data in both implementation loops and
+app prepare. LF, CRLF and CR line endings after the exact marker are
+accepted; the answer body is preserved unchanged. Answers remain context
+through retries and QA rework until a new hold supersedes them or the
+canonical branch changes. They are excluded from the separate QA/review
+feedback selection. Completion and QA/review hand-backs do not resolve a
+hold. The prompt's hold identity is checked again before hand-off; a
+pass that saw an older hold cannot advance on a newer one it did not
+read.</p>
+<p>Clearing the label without a marked reply returns <code>25</code>;
+the queue skips that ticket for the rest of the poll. Missing or invalid
+pagination (even on a short page), pending hold publication, a changed
+prompt snapshot, or decisions and question context that cannot fit
+within <code>BUREAU_COMMENT_MAX_BYTES</code> return <code>24</code>. For
+an oversized context, edit or replace oversized marked replies with
+shorter ones, or reissue shorter questions; no decision is silently
+truncated for the provider. Hold publication projects provider questions
+and app summaries to remove private metadata before adding the reserved
+ID and instructions and capping its public question body and keeps
+failed publication pending for retry. A failed PR mirror returns
+<code>18</code>. These read-only checks precede ownership, Linear
+mutations, worker reset and direct-stage Git preparation, with the
+overlap gate on or off. A failed or empty initial Shepherd route read
+returns <code>24</code> before ownership or label changes. Read-only
+admission failures remain free of Linear mutations during dispatcher
+reconciliation and are retried on later polls. Bounded ticks preserve
+<code>24</code> in their process exit and result JSON; Shepherd
+read/move handlers and review comment counting preserve it too.
+Admission, overlap preflight and preparation use complete, paginated
+canonical-branch resolution on Shepherd, dispatcher, queue and
+direct-worker paths; branch lookup has no comment-count limit. An
+otherwise eligible disabled-implementation <code>--respect-config</code>
+hand-off still returns <code>20</code>. No configuration keys or
+defaults change. See the <a
+href="migration.html#implementation-decision-holds">coordinated
+upgrade</a>.</p>
 <table>
 <thead>
 <tr>
@@ -3194,12 +3243,14 @@ group is ended and the stage halts with <code>14</code></td>
 stage whose passes time out can use all of it: a timed-out pass no
 longer ends the stage while another pass fits (see <a
 href="troubleshooting.html#exit-124-timeout--a-provider-pass-hit-its-time-limit">Exit
-124</a>). An unproductive first <code>PARTIAL</code> iteration can
-become <code>STUCK</code>; a timed-out pass never does; prior productive
-iterations and legitimate <code>COMPLETE</code> results have separate
-handling. The executor checks Git evidence and, for Codex completion,
-the configured project tests. A provider's success text alone cannot
-complete the stage.</p>
+124</a>). If the budget leaves no room for the first pass,
+<code>CAP_TIME</code> still publishes the summary and sets
+<code>needs-human</code>. An unproductive first <code>PARTIAL</code>
+iteration can become <code>STUCK</code>; a timed-out pass never does;
+prior productive iterations and legitimate <code>COMPLETE</code> results
+have separate handling. The executor checks Git evidence and, for Codex
+completion, the configured project tests. A provider's success text
+alone cannot complete the stage.</p>
 <p>Terminal states map to PR state + Linear:</p>
 <table>
 <thead>

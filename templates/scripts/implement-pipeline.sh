@@ -84,7 +84,7 @@ refresh_review_context() {
   pattern+='|\A🚫 QA flagged for human review\.'
   pattern+='|(?m)^VERDICT: (REQUEST_CHANGES|BLOCK)[[:space:]]*$'
   feedback=$(printf '%s' "$blob" \
-    | jq -r --arg re "$pattern" '[.comments[] | select(.body | test($re))][0].body // empty' 2>/dev/null || echo "")
+    | jq -r --arg re "$pattern" '[.comments[] | select(.body | startswith("Answer: ") or startswith("<!-- bureau-implement-hold:") | not) | select(.body | test($re))][0].body // empty' 2>/dev/null || echo "")
   if [ -n "$feedback" ] && [ "${#feedback}" -gt 20 ]; then
     # Only the selected review comment may be expanded. A human/QA note wins
     # alone, with ordinary feedback keeping the historical bytes and no warning.
@@ -98,13 +98,14 @@ refresh_review_context() {
         fi
         ;;
     esac
-    printf '\n--- Feedback to address (PRIORITY) ---\n%s\nAddress ALL fixes before remaining tasks.\n--- End feedback ---\n' "$feedback"
-    [ -z "$context" ] || printf '\n%s\n' "$context"
+    printf '\n--- Feedback to address (PRIORITY) ---\n%s\nAddress ALL fixes before remaining tasks.\n' "$feedback"
     case "$feedback" in
       '🔄 QA: tests failing — routing back to Build.'*$'\nFlaky: passed on one rerun; failed tests: '*)
         printf '\nIf inspection finds no product or harness defect and the unchanged configured gate passes, report COMPLETE without edits and note "no change needed, QA red looks flaky". A still-red gate or an independent blocker keeps its normal hold; never skip tests or invent a change to clear QA.\n'
         ;;
     esac
+    printf '%s\n' '--- End feedback ---'
+    [ -z "$context" ] || printf '\n%s\n' "$context"
   fi
 }
 
@@ -694,7 +695,6 @@ build_summary_comment() {
 }
 
 precondition_linear
-precondition_runner implement
 
 if [ -n "${1:-}" ]; then
   ISSUE="$1"
@@ -714,6 +714,8 @@ fi
 # spawns the pipeline seconds later; in that window the state can change
 # (parallel rebase agent, human intervention). Confirm the issue is still in
 # Build before doing any work.
+IMPLEMENT_CONTEXT=$(bureau_implementation_context "$ISSUE")
+precondition_runner implement
 bureau_stage_enter "$ISSUE" "$@"
 
 ACTUAL_STATE=$(get_issue_state "$ISSUE")
@@ -755,6 +757,7 @@ if [ -z "$BRANCH" ] || [[ "$BRANCH" == *" "* ]] || [[ ${#BRANCH} -gt 200 ]]; the
 fi
 
 echo "  Found branch: $BRANCH"
+bureau_implementation_context "$ISSUE" "$(printf '%s' "$IMPLEMENT_CONTEXT" | jq -c '[.branch,.hold_id]')" >/dev/null
 git fetch origin
 
 if ! git rev-parse --verify "$BRANCH" >/dev/null 2>&1 \
@@ -893,6 +896,7 @@ echo "  Found tasks: $TASKS_FILE"
 START_TS=$(bureau_number clock.epoch "$(date +%s)" 0 0 9999999999)
 RESULT=""
 STATUS=""
+IMPLEMENT_EXPECTED=""
 TASKS_DONE_TOTAL=0
 COMMITS_TOTAL=0
 ITER_LOG=""
@@ -1013,6 +1017,10 @@ if use_goal_loop_enabled && [ "$IMPECCABLE_UI_ACTIVE" = 0 ]; then
   echo "  /goal-driven implementation (use_goal_loop=true; iter loop disabled)"
   HEAD_BEFORE_RUN=$(git rev-parse HEAD)
 
+  IMPLEMENT_CONTEXT=$(bureau_implementation_context "$ISSUE")
+  printf '%s' "$IMPLEMENT_CONTEXT" | jq -e --arg branch "$BRANCH" '.branch == $branch' >/dev/null || exit 24
+  IMPLEMENT_EXPECTED=$(printf '%s' "$IMPLEMENT_CONTEXT" | jq -c '[.branch,.hold_id]')
+  IMPLEMENT_ANSWERS=$(printf '%s' "$IMPLEMENT_CONTEXT" | jq -r '.text')
   REVIEW_CONTEXT=$(refresh_review_context "$ISSUE")
 
   IMPL_SYSTEM="You are implementing $ISSUE on branch $BRANCH for $ISSUE_TITLE.
@@ -1021,6 +1029,7 @@ $LESSONS_CONTEXT}
 $PROJECT_CONTEXT
 $DESIGN_CONTEXT
 $REVIEW_CONTEXT
+$IMPLEMENT_ANSWERS
 Parent issue: $ISSUE — $ISSUE_TITLE
 $ISSUE_DESC
 Rules of engagement:
@@ -1163,6 +1172,10 @@ for (( i=1; i<=MAX_ITER; i++ )); do
   echo "  → iter $i (per-iter timeout ${THIS_TIMEOUT}s)"
 
   # Re-fetch review feedback so mid-run human comments are seen by the next pass.
+  IMPLEMENT_CONTEXT=$(bureau_implementation_context "$ISSUE")
+  printf '%s' "$IMPLEMENT_CONTEXT" | jq -e --arg branch "$BRANCH" '.branch == $branch' >/dev/null || exit 24
+  IMPLEMENT_EXPECTED=$(printf '%s' "$IMPLEMENT_CONTEXT" | jq -c '[.branch,.hold_id]')
+  IMPLEMENT_ANSWERS=$(printf '%s' "$IMPLEMENT_CONTEXT" | jq -r '.text')
   REVIEW_CONTEXT=$(refresh_review_context "$ISSUE")
 
   HEAD_BEFORE=$(git rev-parse HEAD)
@@ -1208,6 +1221,7 @@ $PROJECT_CONTEXT
 $DESIGN_CONTEXT${IMPECCABLE_CONTEXT:+
 $IMPECCABLE_CONTEXT}
 $REVIEW_CONTEXT
+$IMPLEMENT_ANSWERS
 $TIMEOUT_NOTE${IMPLEMENT_GATE_FEEDBACK:+
 $IMPLEMENT_GATE_FEEDBACK}${IMPECCABLE_FEEDBACK:+
 $IMPECCABLE_FEEDBACK}
@@ -1650,6 +1664,10 @@ fi
 
 PR_URL=""
 NEEDS_HUMAN_UNMARKED=0
+# A pass may only hand off against the hold snapshot included in its prompt.
+if [ -n "$IMPLEMENT_EXPECTED" ]; then
+  bureau_implementation_context "$ISSUE" "$IMPLEMENT_EXPECTED" >/dev/null
+fi
 case "$STATUS" in
   COMPLETE)
     # When QA is configured (opt-in), the implement pipeline routes through QA
@@ -1700,7 +1718,17 @@ case "$STATUS" in
     else
       NEEDS_HUMAN_UNMARKED=1
     fi
-    post_comment "$ISSUE" "$(bureau_comment_projection "$(build_summary_comment "$STATUS" "$TASKS_DONE_TOTAL" "$ITER_LOG" "$PR_URL")")"
+    SUMMARY=$(bureau_comment_projection "$(build_summary_comment "$STATUS" "$TASKS_DONE_TOTAL" "$ITER_LOG" "$PR_URL")")
+    if [ "$STATUS" = NEEDS_HUMAN ]; then
+      QUESTIONS=$(bureau_comment_projection "$(parse_claude_json "$RESULT" '.notes.needs_human // []')")
+      HOLD_COMMENT=$(post_implementation_hold "$ISSUE" "$BRANCH" "Questions for human (provider notes.needs_human):
+$QUESTIONS
+
+$SUMMARY") || exit 24
+      comment_on_branch_pr "$BRANCH" "$HOLD_COMMENT" required || exit 18
+    else
+      post_comment "$ISSUE" "$SUMMARY"
+    fi
     if [ "$STATUS" = NEEDS_HUMAN ]; then bureau_outcome_signal human_hold || true; fi
     NEXT_STATE_LABEL="Build (needs-human)"
     ;;

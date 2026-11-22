@@ -519,6 +519,18 @@ def canonical_branch(comments):
     return None
 
 
+def implementation_context(repo, issue, expected='', retry=''):
+    try:
+        value = json.loads(shell(repo, 'bureau_implementation_context', issue, expected, retry))
+        if not isinstance(value['branch'], str) or not isinstance(value['text'], str) or 'hold_id' not in value:
+            raise ValueError('invalid implementation context')
+        return value
+    except subprocess.CalledProcessError as exc:
+        raise AdmissionStop(25 if exc.returncode == 25 else 24) from exc
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise AdmissionStop(24) from exc
+
+
 def stage_context(repo, stage, issue, run, config):
     paths = ['AGENTS.md', 'CLAUDE.md', 'SPEC.md', '.specify/memory/constitution.md', 'LESSONS.md']
     return dict(version=1, run_id=run, issue=issue['identifier'], stage=stage,
@@ -570,8 +582,9 @@ def prepare(repo, args, store):
     expected = states.get(STAGES[args.stage][0])
     if not expected or snapshot['state']['id'] != expected:
         raise Conflict('Issue is not in the configured entry state for ' + args.stage)
+    decision = implementation_context(repo, args.issue) if args.stage == 'implement' else None
     branch = git(repo, 'branch', '--show-current')
-    canonical = canonical_branch(json.loads(shell(repo, 'get_issue_comments', args.issue)))
+    canonical = (decision['branch'] or None) if decision is not None else canonical_branch(json.loads(shell(repo, 'get_issue_comments', args.issue)))
     if canonical and branch != canonical:
         raise Conflict('Attach the canonical issue branch before preparing: ' + canonical)
     if args.stage != 'spec' and (not branch or branch in ('main', 'master')):
@@ -587,6 +600,8 @@ def prepare(repo, args, store):
             (store.root / 'workers' / key).unlink(missing_ok=True)
             (store.root / 'preserved' / (key + '.json')).unlink(missing_ok=True)
         context = stage_context(repo, args.stage, snapshot, run, config)
+        if decision is not None:
+            context['implementation_answers'] = decision
         context.update(canonical_branch=canonical, status='prepared', allow_merge=args.allow_merge, owner=args.owner,
                        config_hash=hashlib.sha256(config_for(repo).read_bytes()).hexdigest())
         if args.stage in ('spec', 'spec_review') and (canonical or re.fullmatch(r'[0-9]+-' + re.escape(args.issue.lower()), branch)):
@@ -695,6 +710,12 @@ def finish(repo, args, store):
     branch = git(repo, 'branch', '--show-current')
     comments = json.loads(shell(repo, 'get_issue_comments', record['issue']))
     canonical = canonical_branch(comments)
+    if record['stage'] == 'implement':
+        decision = record.get('implementation_answers')
+        if decision is None: raise AdmissionStop(24)  # drain drivers prepared before the upgrade
+        current_decision = implementation_context(repo, record['issue'], json.dumps([decision['branch'], decision['hold_id']]),
+                                                  args.run if result['outcome'] == 'blocked' else '')
+        canonical = current_decision['branch'] or None
     if canonical and canonical != branch:
         raise Conflict('Canonical issue branch changed or does not match this checkout')
     if record.get('canonical_branch') and canonical != record.get('canonical_branch'):
@@ -714,11 +735,18 @@ def finish(repo, args, store):
         label = config['linear'].get('labels', {}).get('needs_human', {}).get('name', 'needs-human')
         if label not in {item['name'] for item in current.get('labels', {}).get('nodes', [])}:
             shell(repo, 'add_issue_label', record['issue'], label)
-    if not any(marker in c.get('body', '') for c in comments):
+    decision_hold = record['stage'] == 'implement' and result['outcome'] == 'blocked'
+    if decision_hold or not any(marker in c.get('body', '') for c in comments):
         body = (('<!-- bureau-branch: ' + branch + ' -->\n') if branch and branch not in ('main','master') else '') + marker + '\n' + result['summary']
         if result.get('verdict'):
             body += '\nVERDICT: ' + result['verdict']
-        shell(repo, 'post_comment', record['issue'], body)
+        if decision_hold:
+            try:
+                shell(repo, 'post_implementation_hold', record['issue'], branch, body, args.run)
+            except subprocess.CalledProcessError as exc:
+                raise AdmissionStop(24) from exc
+        else:
+            shell(repo, 'post_comment', record['issue'], body)
     if target_id != current['state']['id']:
         if config.get('agents', {}).get('file_overlap_gate', False) is not False:
             try:
@@ -823,13 +851,22 @@ def execute(repo, args, store):
         attempt = attempt or uuid.uuid4().hex
         # Admission precedes ownership/reset so legacy unstarted Build tickets
         # cannot manufacture mutual writer holds merely by being picked.
+        implementation_route = stage == 'implement'
+        # Dispatcher lanes enter here directly; the re-entered Shepherd skips
+        # its shell startup gate. Ordinary Shepherd starts already checked it.
+        if args.issue and entry == 'shepherd.sh' and not inherited and os.environ.get('BUREAU_DISPATCH_LANE') == '1':
+            config = read(config_for(repo))
+            implementation_route = issue_snapshot(repo, args.issue)['state']['id'] == config['linear']['teams'][0]['states'].get('build')
+            if implementation_route and '--respect-config' in command and not enabled(config, 'implement'):
+                raise AdmissionStop(20)
+        decision = implementation_context(repo, args.issue) if args.issue and implementation_route else None
         overlap_enabled = read(config_for(repo)).get('agents', {}).get('file_overlap_gate', False)
         if overlap_enabled is not False and args.issue:
             preflight = stage in ('implement', 'copy', 'qa')
             if entry == 'shepherd.sh':
                 preflight = issue_snapshot(repo, args.issue)['state']['id'] == read(config_for(repo))['linear']['teams'][0]['states'].get('build')
             if preflight:
-                branch = shell(repo, 'get_issue_branch', args.issue)
+                branch = decision['branch'] if decision is not None else shell(repo, 'get_issue_branch', args.issue)
                 try:
                     overlap(repo, 'admit', args.issue, branch, run=run)
                 except AdmissionStop as exc:
@@ -944,8 +981,12 @@ def execute(repo, args, store):
                 terminal_error = True
             if dispatch_record is not None:
                 ready = os.environ.get('BUREAU_DISPATCH_READY_FILE')
+                # Reconciliation must distinguish a read-only refusal from a
+                # stage's environment failure after ownership/work began.
                 dispatch_record.update(code=130 if interrupted or code < 0 else code,
-                                       paused=bool(code == 25 and ready and Path(ready + '.paused').exists()))
+                                       admission_incomplete=bool(code == 24 and not resources and child is None),
+                                       paused=bool(code == 25 and ready and Path(ready + '.paused').exists()),
+                                       decision_wait=bool(code == 25 and ready and Path(ready + '.decision-wait').exists()))
                 dispatch_record['terminal_reason'] = terminal_reason
                 # This coordination record is mandatory, outside prunable
                 # evidence, and written before the inherited dispatch FD closes.

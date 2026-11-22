@@ -13,7 +13,7 @@ from mutation_checks import mutation_caught, snapshot_files
 
 ROOT=Path(__file__).resolve().parents[1]
 SCRIPTS=ROOT/'templates/scripts'
-names=('bureau-provider.py','bureau-runtime.py','bureau-process.py','bureau-evidence.py','bureau-gates.py','bureau-activity.py','bureau-ticket.py','bureau-spec.py','bureau-supervision.py','bureau-tick.sh',
+names=('bureau-provider.py','bureau-runtime.py','bureau-process.py','bureau-evidence.py','bureau-gates.py','bureau-activity.py','bureau-ticket.py','bureau-spec.py','bureau-supervision.py','bureau-tick.sh','bureau-hold-context.py',
        'merge-pipeline.sh','bureau-config.sh','bureau-env.sh','code-review-pipeline.sh','bureau-insights.sh')
 before={name:hashlib.sha256((SCRIPTS/name).read_bytes()).hexdigest() for name in names}
 
@@ -33,9 +33,21 @@ with tempfile.TemporaryDirectory(prefix='bureau evidence controls ') as scratch:
     subprocess.run(['git','-C',str(baseline),'init','-q'],check=True,capture_output=True)
     git_maintenance.disable(baseline)
     (baseline/'.bureau.json').write_text('{}')
+    # Preserve real runtime admission while keeping every Linear request offline.
+    fake_bin = root / 'bin'; fake_bin.mkdir()
+    curl = fake_bin / 'curl'
+    curl.write_text('''#!/usr/bin/env python3
+import json, sys
+payload = json.loads(sys.argv[sys.argv.index('-d') + 1])
+assert 'comments(first:100' in payload['query'], 'unexpected Linear request'
+print(json.dumps({'data': {'issue': {'branchName': 'main', 'comments': {
+    'nodes': [], 'pageInfo': {'hasNextPage': False, 'endCursor': None}}}}}))
+''')
+    curl.chmod(0o755)
     result=subprocess.run([sys.executable,str(root/'bureau-runtime.py'),'--repo',str(baseline),
                            'exec','--issue','TEAM-1','--entry','implement-pipeline.sh','--',sys.executable,'-c','pass'],
-                          capture_output=True,text=True,timeout=12)
+                          capture_output=True,text=True,timeout=12,
+                          env={**os.environ, 'PATH':str(fake_bin)+os.pathsep+os.environ['PATH']})
     assert result.returncode==0, result.stdout+result.stderr
     records=baseline/'.git/bureau/evidence/v1/stage-outcomes.jsonl'
     assert records.is_file(), 'successful baseline stage outcome missing'
