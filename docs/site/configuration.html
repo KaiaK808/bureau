@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="e9c94e8a5955cf70dc50499fbb6c33108a3e5586940faf2941c6fa640c9fa09b">
+<meta name="bureau-source-sha256" content="a604ffc9ce76c7e08794afb069c41d9a0567ef0bff04e16404ec5762231e972d">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -2113,27 +2113,38 @@ coordinator boundary: an explicitly selected external operator config,
 otherwise the primary installation config. A config in the tested
 checkout is read only from a pinned trusted base using the existing
 regular-blob and symlink protections; a PR head never selects its own
-wrapper. An automatically exported <code>BUREAU_CONFIG</code> is not
-operator selection. The executable's resolved symlink target must be
-executable and outside tested checkouts. Doctor reports source, enabled
-state and executable resolution without invoking the wrapper or
-acquiring a slot. Its <code>--wrapper-config</code> explicitly selects
-an external policy for diagnostics; <code>--wrapper-base</code> accepts
-a pinned trusted commit for checkout-owned policy. Without that
-argument, doctor uses the local <code>origin/main</code> commit when
-needed and reports unavailable trust if it cannot resolve one; it never
-trusts HEAD as a fallback.</p>
+wrapper. Physical path traversal rejects checkout-owned symlinks before
+applying parent steps; ordinary relative external paths and symlinks
+outside tested checkouts remain allowed. An automatically exported
+<code>BUREAU_CONFIG</code> is not operator selection. The executable's
+resolved symlink target must be executable and outside tested checkouts.
+Doctor reports source, enabled state and executable resolution without
+invoking the wrapper or acquiring a slot. Its
+<code>--wrapper-config</code> explicitly selects an external policy for
+diagnostics; <code>--wrapper-base</code> accepts a pinned trusted commit
+for checkout-owned policy. Without that argument, doctor uses the local
+<code>origin/main</code> commit when needed and reports unavailable
+trust if it cannot resolve one; it never trusts HEAD as a fallback. Only
+unavailable authoritative configuration with no visible wrapper key
+permits a quiet fallback; invalid trusted content, invalid policy and
+missing executables remain errors. An absent wrapper script also
+contains pinned Git read failures and timeouts within its diagnostic
+report.</p>
 <p>The prefix receives literal argv followed by a private child envelope
 and the original native argv or existing Bash command boundary. Prefix
 output stays in diagnostic logs; only target output reaches canonical
 destinations. The foreground prefix must wait for the envelope. Private
 per-launch start/end records live under shared Git coordination state,
-outside checkout resets. Successful native process launch proves start;
-a missing executable, missing/stale proof, swallowed child status, or
-even exit-zero refusal returns 24. A launched shell returning 127
-remains a child result. These records are separate from evidence-v1 and
-are not an operating-system isolation boundary against code running as
-the same user.</p>
+outside checkout resets. The default <code>.git/bureau</code> directory
+is allowed in a normal repository; coordination elsewhere inside
+checkout content is rejected. Cancellation-marker write failure still
+forwards the signal and runs process teardown and hold cleanup,
+preserving cancellation and any uncertain-cleanup hold. Successful
+native process launch proves start; a missing executable, missing/stale
+proof, swallowed child status, or even exit-zero refusal returns 24. A
+launched shell returning 127 remains a child result. These records are
+separate from evidence-v1 and are not an operating-system isolation
+boundary against code running as the same user.</p>
 <p>The primitive's command timeout begins at proven child start. Its
 injectable budget clock excludes the union of validated queue intervals,
 including open intervals, preserving time already spent on other work. A

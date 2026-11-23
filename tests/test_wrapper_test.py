@@ -208,11 +208,41 @@ class WrapperTests(unittest.TestCase):
             self.assertEqual(policy.source, 'operator:' + str(self.config))
             self.assertTrue(report['enabled']); self.assertNotIn('error', report)
             self.config.unlink()
-            with self.assertRaises(OSError):
+            with self.assertRaises(w.PolicyUnavailable):
                 w.resolve_policy(self.repo, primary_config=self.repo / '.bureau.json',
                                  operator_config='../operator.json', trusted_base=base)
             self.assertIn('error', w.diagnose_policy(self.repo, primary_config=self.repo / '.bureau.json',
                                                     operator_config='../operator.json', trusted_base=base))
+
+    def test_checkout_symlink_before_parent_steps_is_rejected(self):
+        self.policy()
+        alternate = self.base / 'alternate' / 'a' / 'b'
+        alternate.mkdir(parents=True)
+        (self.base / 'alternate' / 'operator.json').write_text(self.config.read_text())
+        secondary = self.base / 'secondary'
+        secondary.mkdir()
+        for checkout in (self.repo, secondary):
+            hop = checkout / 'hop'
+            hop.symlink_to(alternate, target_is_directory=True)
+            external = self.base / (checkout.name + '-hop')
+            external.symlink_to(hop, target_is_directory=True)
+            for prefix in (hop, external):
+                with self.subTest(prefix=prefix), self.assertRaisesRegex(ValueError, 'tested checkout symlink'):
+                    w.resolve_policy(self.repo, primary_config=self.config,
+                                     operator_config=prefix / '..' / '..' / 'operator.json',
+                                     tested_checkouts=(secondary,))
+
+    def test_external_configuration_symlinks_are_allowed(self):
+        original = self.policy()
+        directory = self.base / 'external-directory'
+        directory.symlink_to(self.base, target_is_directory=True)
+        link = self.base / 'external-config'
+        link.symlink_to(Path('external-directory') / 'operator.json')
+        for selected in (directory / 'operator.json', link):
+            with self.subTest(selected=selected):
+                policy = w.resolve_policy(self.repo, primary_config=self.config, operator_config=selected)
+                self.assertEqual(policy.argv, original.argv)
+                self.assertEqual(policy.source, 'operator:' + str(self.config))
 
     def test_temporary_root_rejects_surrounding_repository(self):
         self.git('init', '-q')
@@ -298,6 +328,87 @@ class WrapperTests(unittest.TestCase):
             (self.repo / '.bureau.json').write_text(json.dumps(asked))
             self.assertIn('error', d.test_wrapper_diagnostics(self.repo, config=asked))
 
+    def test_policy_unavailable_only_for_authority_reads(self):
+        base = self.pin({})
+        primary = self.repo / '.bureau.json'
+        for trusted_base in (None, '0' * 40):
+            with self.subTest(base=trusted_base):
+                with self.assertRaises(w.PolicyUnavailable):
+                    w.resolve_policy(self.repo, primary_config=primary, trusted_base=trusted_base)
+                report = w.diagnose_policy(self.repo, primary_config=primary, trusted_base=trusted_base)
+                self.assertTrue(report['authority_unavailable']); self.assertIn('error', report)
+        with patch.object(w.module('review-config').Blobs, 'read', side_effect=OSError('injected read failure')):
+            report = w.diagnose_policy(self.repo, primary_config=primary, trusted_base=base)
+        self.assertTrue(report['authority_unavailable']); self.assertIn('injected read failure', report['error'])
+        report = w.diagnose_policy(self.repo, primary_config=primary, trusted_base='invalid')
+        self.assertIn('error', report); self.assertNotIn('authority_unavailable', report)
+        report = w.diagnose_policy(self.repo, primary_config=self.config, operator_config=self.config)
+        self.assertTrue(report['authority_unavailable']); self.assertIn('error', report)
+
+    def test_doctor_reports_missing_pinned_executable_when_head_removes_keys(self):
+        executable = self.base / 'removed-prefix'
+        executable.write_text('#!/bin/sh\nexit 0\n'); executable.chmod(0o700)
+        base = self.pin({'repo': {'test_wrapper': [str(executable)], 'test_wrapper_start_timeout_seconds': 60}})
+        executable.unlink()
+        config = {'repo': {}}
+        (self.repo / '.bureau.json').write_text(json.dumps(config))
+        self.git('add', '.bureau.json'); self.git('commit', '-qm', 'fixture removed wrapper keys')
+        with patch.object(d, 'main_checkout', return_value=(self.repo, None)):
+            report = d.test_wrapper_diagnostics(self.repo, trusted_base=base, config=config)
+        self.assertIn(str(executable), report['error'])
+        self.assertNotIn('authority_unavailable', report)
+        self.assertTrue(report['source'].startswith('pinned-base:' + base))
+
+    def test_doctor_reports_invalid_pinned_content_without_visible_keys(self):
+        self.pin({})
+        config = {'repo': {}}
+        for text in ('{', '[]', '{"repo":{"test_wrapper":null}}',
+                     '{"repo":{"test_wrapper_start_timeout_seconds":0}}'):
+            with self.subTest(content=text):
+                (self.repo / '.bureau.json').write_text(text)
+                self.git('add', '.bureau.json'); self.git('commit', '-qm', 'fixture invalid pinned policy')
+                base = self.git('rev-parse', 'HEAD')
+                (self.repo / '.bureau.json').write_text(json.dumps(config))
+                with patch.object(d, 'main_checkout', return_value=(self.repo, None)):
+                    report = d.test_wrapper_diagnostics(self.repo, trusted_base=base, config=config)
+                self.assertIn('error', report); self.assertNotIn('authority_unavailable', report)
+
+    def test_doctor_missing_script_contains_pinned_read_failures(self):
+        self.pin({})
+        module = d.module
+        blobs = module('review-config').Blobs
+        def missing_wrapper(name):
+            if name == 'test-wrapper': raise FileNotFoundError('wrapper absent')
+            return module(name)
+        with patch.object(d, 'main_checkout', return_value=(self.repo, None)), \
+                patch.object(d, 'module', side_effect=missing_wrapper):
+            for section in ({}, {'test_wrapper': [sys.executable]}):
+                config = {'repo': section}
+                (self.repo / '.bureau.json').write_text(json.dumps(config))
+                def check():
+                    report = d.test_wrapper_diagnostics(self.repo, trusted_base='0' * 40, config=config)
+                    self.assertIsNone(report['enabled'])
+                    if section: self.assertIn('bureau-test-wrapper.py', report['error'])
+                    else: self.assertNotIn('error', report)
+                with self.subTest(section=section, failure='unavailable commit'):
+                    check()  # Exercise the real Git failure, not a permissive fake.
+                for failure in (OSError('injected read failure'), ValueError('invalid authority'),
+                                subprocess.TimeoutExpired('git ls-tree', 10)):
+                    with self.subTest(section=section, failure=type(failure).__name__), \
+                            patch.object(blobs, 'git', side_effect=failure):
+                        check()
+
+    def test_symlinked_config_without_keys_stays_quiet(self):
+        target = self.base / 'shared-config.json'
+        target.write_text('{"repo": {}}')
+        link = self.repo / '.bureau.json'
+        if link.exists() or link.is_symlink():
+            link.unlink()
+        link.symlink_to(target)
+        with patch.object(d, 'main_checkout', return_value=(self.repo.resolve(), None)):
+            report = d.test_wrapper_diagnostics(self.repo, config={'repo': {}})
+        self.assertNotIn('error', report)
+
     def test_production_launches_stay_unrouted(self):
         # No production call site can consult or route through the new primitive.
         for name in PRODUCTION_LAUNCH_FILES:
@@ -381,6 +492,18 @@ class WrapperTests(unittest.TestCase):
         self.assert_result(result, 24, 'launch-error')
         self.assertIn('inside a tested checkout', result.reason)
         self.assertFalse((self.repo / 'coordination').exists())
+
+    def test_default_coordination_directory_launches(self):
+        self.pin({})
+        result = w.execute(self.policy(), [sys.executable, '-I', '-B', '-c', 'print("default coordination")'],
+                           repo=self.repo, stdout=self.base / 'default-output',
+                           run_id='run', attempt_id='attempt', grace_seconds=.1)
+        self.assert_result(result, 0, 'child-result')
+        root = self.repo / '.git' / 'bureau'
+        self.assertEqual(Path(result.records).parent, root)
+        self.assertFalse(list(root.glob('process-holds/*.json')))
+        self.assertEqual((self.base / 'default-output').read_text(), 'default coordination\n')
+        self.assertTrue((Path(result.records) / 'start.json').exists())
 
     def test_rewritten_command_never_launches(self):
         marker = self.base / 'target-started'
@@ -520,7 +643,7 @@ class WrapperTests(unittest.TestCase):
         self.assertEqual(w.module('process').uncertain_exit(124), 124)
         self.assertEqual(w.module('process').uncertain_exit(130), 130)
 
-    def runner(self, mode='run', command=None, release_on_cancel=False):
+    def runner(self, mode='run', command=None, release_on_cancel=False, fail_cancel_publish=False):
         self.policy(mode)
         self.counter += 1
         path = self.base / f'runner-{self.counter}.py'
@@ -533,10 +656,22 @@ class WrapperTests(unittest.TestCase):
                    '    forward(child, sig)\n'
                    '    if sig == signal.SIGTERM: os.killpg(child.pid, signal.SIGUSR1)\n'
                    'pg.signal_group=release\n') if release_on_cancel else ''
+        failure = ('publish=w.publish\n'
+                   'def fail_publish(path, record, **kwargs):\n'
+                   '    if path.name == "cancelled.json":\n'
+                   f'        Path({str(self.base / "cancel-publish-failed")!r}).touch()\n'
+                   '        raise OSError("injected cancellation marker failure")\n'
+                   '    return publish(path, record, **kwargs)\n'
+                   'w.publish=fail_publish\n'
+                   'pg=w.module("process")\nforward=pg.signal_group\n'
+                   'def track_signal(child, sig):\n'
+                   f'    with Path({str(self.base / "forwarded-signals")!r}).open("a") as out: out.write(str(sig) + "\\n")\n'
+                   '    forward(child, sig)\n'
+                   'pg.signal_group=track_signal\n') if fail_cancel_publish else ''
         path.write_text('import importlib.util,json,sys\nfrom pathlib import Path\n' +
                        f'spec=importlib.util.spec_from_file_location("runner_wrapper", {str(SCRIPTS / "bureau-test-wrapper.py")!r})\n' +
                        'w=importlib.util.module_from_spec(spec); sys.modules[spec.name]=w; spec.loader.exec_module(w)\n' +
-                       release +
+                       release + failure +
                        f'p=w.resolve_policy({str(self.repo)!r}, primary_config={str(self.config)!r})\n' +
                        f'r=w.execute(p, {command!r}, repo={str(self.repo)!r}, stdout={str(self.base / ("running-"+str(self.counter)))!r}, '
                        f'run_id="run", attempt_id="attempt", coordination_root={str(self.control)!r}, '
@@ -558,8 +693,8 @@ class WrapperTests(unittest.TestCase):
             time.sleep(.02)
         self.fail('fixture handshake timed out')
 
-    def cancel(self, signum, queued):
-        process, output = self.runner('queued' if queued else 'running')
+    def cancel(self, signum, queued, fail_cancel_publish=False):
+        process, output = self.runner('queued' if queued else 'running', fail_cancel_publish=fail_cancel_publish)
         if queued:
             self.wait_for(lambda: self.events.exists() and '"queued"' in self.events.read_text())
         else:
@@ -585,6 +720,13 @@ class WrapperTests(unittest.TestCase):
             time.sleep(.12)
             self.assertNotIn('start-envelope', self.events.read_text())
             self.assertFalse(any(p.stat().st_size for p in self.base.glob('running-*')))
+
+    def test_cancel_marker_failure_still_terminates_queued_prefix(self):
+        self.cancel(signal.SIGTERM, True, fail_cancel_publish=True)
+        self.assertTrue((self.base / 'cancel-publish-failed').exists())
+        self.assertFalse(list(self.control.glob('test-wrapper-*/cancelled.json')))
+        self.assertEqual((self.base / 'forwarded-signals').read_text().splitlines(),
+                         [str(int(signal.SIGTERM)), str(int(signal.SIGKILL))])
 
     def test_int_queued(self): self.cancel(signal.SIGINT, True)
     def test_term_queued(self): self.cancel(signal.SIGTERM, True)
@@ -689,12 +831,18 @@ PRODUCTION_LAUNCH_FILES = (
 )
 POLICY_CASES = ('test_policy_validation', 'test_trusted_sources', 'test_symlink_and_executable_trust',
                 'test_doctor_never_invokes_wrapper', 'test_doctor_needs_no_wrapper_asset_when_unset',
-                'test_doctor_uses_pinned_policy_when_head_removes_keys', 'test_doctor_stays_quiet_without_trusted_base_or_key',
+                'test_doctor_uses_pinned_policy_when_head_removes_keys', 'test_doctor_stays_quiet_without_trusted_base_or_key', 'test_symlinked_config_without_keys_stays_quiet',
                 'test_relative_external_configuration',
+                'test_checkout_symlink_before_parent_steps_is_rejected', 'test_external_configuration_symlinks_are_allowed',
+                'test_policy_unavailable_only_for_authority_reads',
+                'test_doctor_reports_missing_pinned_executable_when_head_removes_keys',
+                'test_doctor_reports_invalid_pinned_content_without_visible_keys',
+                'test_doctor_missing_script_contains_pinned_read_failures',
                 'test_temporary_root_rejects_surrounding_repository',
                 'test_production_launches_stay_unrouted')
 PROCESS_CASES = ('test_int_queued', 'test_term_queued', 'test_hup_queued', 'test_int_running', 'test_term_running',
-                 'test_hup_running', 'test_serializes_only_execution_envelopes', 'test_cancelled_prefix_release_never_starts_target')
+                 'test_hup_running', 'test_serializes_only_execution_envelopes', 'test_cancelled_prefix_release_never_starts_target',
+                 'test_cancel_marker_failure_still_terminates_queued_prefix')
 NEGATIVE_CASES = ('test_negative_control_refusal', 'test_negative_control_timing', 'test_negative_control_proof')
 EXECUTION_CASES = ('test_literal_argv_environment_and_canonical_output',
                    'test_refusal_and_real_child_same_status', 'test_native_exec_failure_and_shell_status',
@@ -702,6 +850,7 @@ EXECUTION_CASES = ('test_literal_argv_environment_and_canonical_output',
                    'test_queued_600_execution_299_succeeds', 'test_execution_over_300_times_out',
                    'test_live_union_clock_and_outer_consumers', 'test_uncertain_cleanup_keeps_hold',
                    'test_envelope_source_is_frozen_after_import', 'test_coordination_directory_rejects_checkout',
+                   'test_default_coordination_directory_launches',
                    'test_rewritten_command_never_launches', 'test_cancellation_immediately_before_spawn',
                    'test_poll_clock_sample_follows_records', 'test_poll_reconciles_start_after_end')
 if __name__ == '__main__':

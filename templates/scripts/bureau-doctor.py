@@ -633,14 +633,14 @@ def test_wrapper_diagnostics(repo, operator_config=None, trusted_base=None, conf
             try:
                 text = module('review-config').Blobs(trusted_base, repo).read(paths[0].relative_to(repo).as_posix())
                 authority = json.loads(text) if text is not None else {}
-            except (OSError, ValueError): pass
+            except (OSError, ValueError, subprocess.SubprocessError): pass
         configured = wrapper_configured(authority) if authority is not None else any(wrapper_configured(value) for value in visible)
         if configured:
             report['error'] = 'Missing runtime asset: scripts/bureau-test-wrapper.py; resync scripts'
         return report
     report = wrapper.diagnose_policy(repo, primary_config=primary / '.bureau.json',
                                      operator_config=operator_config, trusted_base=trusted_base)
-    if report.get('error') and operator_config is None:
+    if report.get('authority_unavailable') and operator_config is None:
         seen = [config]
         try: seen.append(json.loads((primary / '.bureau.json').read_text()))
         except (OSError, ValueError): pass

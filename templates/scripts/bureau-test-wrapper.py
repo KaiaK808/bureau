@@ -3,7 +3,7 @@
 
 A foreground prefix must wait for the private envelope. Only the envelope's
 successful native Popen proves start; prefix exit alone proves no child result.
-Coordination belongs outside disposable checkouts. Records are protocol data,
+Coordination belongs outside checkout content, including in .git. Records are protocol data,
 not evidence-v1 receipts, and are not an isolation boundary against the same UID.
 """
 from __future__ import annotations
@@ -83,6 +83,34 @@ def within(path, root):
     return path == root or root in path.parents
 
 
+class PolicyUnavailable(ValueError):
+    """The authoritative configuration could not be obtained."""
+
+
+def physical_policy_path(selected, roots):
+    """Inspect every physical component before normalizing away parent steps."""
+    current = Path(selected.anchor)
+    pending = list(selected.parts[1:])
+    links = 0
+    while pending:
+        part = pending.pop(0)
+        if part == '..':
+            current = current.parent
+            continue
+        current = current / part
+        if current.is_symlink():
+            # Without a later parent step the lexical path stays in the checkout and is read pinned.
+            if '..' in pending and any(within(current, root) for root in roots):
+                raise ValueError('configuration path traverses a tested checkout symlink')
+            links += 1
+            if links > 40:
+                raise ValueError('configuration path contains too many symlinks')
+            target = Path(os.readlink(current))
+            current = Path(target.anchor) if target.is_absolute() else current.parent
+            pending = list(target.parts[1:] if target.is_absolute() else target.parts) + pending
+    return current
+
+
 def resolve_policy(repo, *, primary_config, trusted_base=None, operator_config=None, tested_checkouts=()):
     """Freeze trusted content. BUREAU_CONFIG is deliberately never consulted.
 
@@ -93,18 +121,27 @@ def resolve_policy(repo, *, primary_config, trusted_base=None, operator_config=N
     repo = Path(repo).resolve()
     roots = tuple(dict.fromkeys((repo, *(Path(p).resolve() for p in tested_checkouts))))
     selected = Path(operator_config if operator_config is not None else primary_config).absolute()
-    resolved = selected.resolve()
+    resolved = physical_policy_path(selected, roots)
     selected = Path(os.path.abspath(selected))
     # Check lexical and resolved paths: a checkout symlink cannot select authority.
     controlled = next((root for root in roots if within(selected, root) or within(resolved, root)), None)
     if controlled is not None:
         if not within(selected, controlled):
             raise ValueError('configuration symlink enters a tested checkout')
-        text = module('review-config').Blobs(trusted_base, controlled).read(selected.relative_to(controlled).as_posix())
+        if trusted_base is None:
+            raise PolicyUnavailable('a pinned base commit is required')
+        try:
+            text = module('review-config').Blobs(trusted_base, controlled).read(selected.relative_to(controlled).as_posix())
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise PolicyUnavailable(str(exc)) from exc
         config = json.loads(text) if text is not None else {}
         source = 'pinned-base:' + str(trusted_base) + ':' + selected.relative_to(controlled).as_posix()
     else:
-        config = json.loads(resolved.read_text())
+        try:
+            text = resolved.read_text()
+        except OSError as exc:
+            raise PolicyUnavailable(str(exc)) from exc
+        config = json.loads(text)
         source = ('operator:' if operator_config is not None else 'primary:') + str(resolved)
     argv, timeout = validate_policy(config)
     executable = None
@@ -136,6 +173,8 @@ def diagnose_policy(repo, *, primary_config, trusted_base=None, operator_config=
                                 operator_config=operator_config)
         report.update(source=policy.source, enabled=policy.enabled, executable=policy.executable,
                       start_timeout_seconds=policy.start_timeout, policy_digest=policy.identity)
+    except PolicyUnavailable as exc:
+        report.update(error=str(exc), authority_unavailable=True)
     except (OSError, ValueError, TypeError, subprocess.SubprocessError) as exc:
         report['error'] = str(exc)
     return report
@@ -358,7 +397,8 @@ def execute(policy, command, *, repo, stdout, stderr=None, timeout=None, clock=N
                                      git_credentials=policy.git_credentials)
         root = Path(coordination_root) if coordination_root is not None else pg.hold_root(repo, provider.process_env(['git']))
         root = root.resolve()
-        if within(root, Path(repo).resolve()):
+        checkout = Path(repo).resolve()
+        if within(root, checkout) and not within(root, (checkout / '.git').resolve()):
             raise ValueError('coordination directory is inside a tested checkout')
         root.mkdir(parents=True, exist_ok=True)
         directory = Path(tempfile.mkdtemp(prefix='test-wrapper-', dir=root))
@@ -448,7 +488,8 @@ def execute(policy, command, *, repo, stdout, stderr=None, timeout=None, clock=N
         try:
             if child is not None:
                 if cancelled is not None:
-                    publish(directory / 'cancelled.json', dict(signal=cancelled))
+                    try: publish(directory / 'cancelled.json', dict(signal=cancelled))
+                    except OSError: pass  # Termination and verification remain mandatory.
                     pg.signal_group(child, cancelled)
                     try: child.wait(timeout=grace_seconds)
                     except subprocess.TimeoutExpired: pass
