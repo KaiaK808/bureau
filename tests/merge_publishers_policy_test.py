@@ -22,10 +22,47 @@ def load(path):
 
 
 reader = load(ROOT / 'templates/scripts/bureau-merge-review.py')
-doctor = load(Path(sys.argv.pop(1)) if len(sys.argv) > 1 else ROOT / 'templates/scripts/bureau-doctor.py')
+doctor = load(Path(sys.argv.pop(1)) if len(sys.argv) > 1 and sys.argv[1].endswith('.py')
+              else ROOT / 'templates/scripts/bureau-doctor.py')
 
 
 class PolicyTests(unittest.TestCase):
+    def cli(self, *args):
+        with patch.object(reader.Reader, 'api', side_effect=AssertionError('CLI validation must not read GitHub')):
+            from contextlib import redirect_stdout, redirect_stderr
+            from io import StringIO
+            out, err = StringIO(), StringIO()
+            with redirect_stdout(out), redirect_stderr(err), patch.object(sys, 'argv', ['bureau-merge-review.py', *args]):
+                code = reader.main()
+            return code, out.getvalue(), err.getvalue()
+
+    def test_cli_help_without_reads(self):
+        for flag in ('--help', '-h'):
+            with self.subTest(flag=flag):
+                code, out, err = self.cli(flag)
+                self.assertEqual(code, 0)
+                self.assertIn('usage:', out)
+                self.assertEqual(err, '')
+
+    def test_cli_invalid_arguments_fail_without_result_or_reads(self):
+        for args in ((), ('policy',), ('unknown', 'owner/repo'), ('policy', 'owner/repo', 'extra'),
+                     ('policy', 'bad-repo'), ('threads', 'owner/repo', 'x'), ('threads', 'owner/repo', '0'),
+                     ('threads', 'owner/repo', '2147483648'), ('threads', 'owner/repo', '9' * 5000),
+                     ('statuses', 'owner/repo', 'bad-sha'), ('review', 'owner/repo', '1', 'TEAM-1'),
+                     ('review', 'owner/repo', '1', 'TEAM-1', 'broken-json'),
+                     ('review', 'owner/repo', '1', 'TEAM-1', '[' * 2000 + ']' * 2000),
+                     ('review', 'owner/repo', '1', '', '{}'),
+                     ('review', 'owner/repo', '1', 'TEAM-1\n', '{}'),
+                     ('review', 'owner/repo', '1', 'TEAM-1', '[]'),
+                     ('review', 'owner/repo', '1', 'TEAM-1', '{"kind":"ok"}'),
+                     ('review', 'owner/repo', '1', 'TEAM-1', '{"kind":"unknown"}')):
+            with self.subTest(args=args):
+                code, out, err = self.cli(*args)
+                self.assertNotEqual(code, 0)
+                self.assertEqual(out, '')
+                self.assertEqual(len(err.splitlines()), 1)
+                self.assertNotIn('Traceback', err)
+
     def test_api_rejects_partial_and_malformed_error_envelopes(self):
         for errors in ([{'message': 'partial response'}], {}, '', False, 0):
             proc = types.SimpleNamespace(returncode=0, stdout=json.dumps(dict(data={}, errors=errors)))

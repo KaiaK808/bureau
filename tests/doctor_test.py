@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -21,6 +22,8 @@ class DoctorTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory(prefix='bureau doctor '); self.addCleanup(self.temp.cleanup)
         self.repo=Path(self.temp.name).resolve()
+        boundary=patch.dict(os.environ,{'GIT_CEILING_DIRECTORIES':str(self.repo)})
+        boundary.start();self.addCleanup(boundary.stop)
         subprocess.run(['git','init','-q',str(self.repo)],check=True)
         git_maintenance.disable(self.repo)
         self.config={'version':1,'linear':{'teams':[{'id':'team-id','key':'TEAM','states':{'build':'state-id'}}],
@@ -29,6 +32,43 @@ class DoctorTests(unittest.TestCase):
                      'repo':{'test_command':'python3 test.py'},'extension':['preserve']}
         self.path=self.repo/'.bureau.json';self.path.write_text(json.dumps(self.config))
         self.env=patch.dict(os.environ,{'BUREAU_CONFIG':str(self.path)});self.env.start();self.addCleanup(self.env.stop)
+
+    def publisher_config(self, **agents):
+        self.config['agents'] = agents
+        self.config['linear']['teams'][0]['states']['merge'] = 'merge'
+        self.path.write_text(json.dumps(self.config))
+        shutil.copytree(ROOT/'templates/scripts', self.repo/'scripts')
+        (self.repo/'AGENTS.md').write_text('<!-- bureau-init:begin -->\nFixture.\n<!-- bureau-init:end -->\n')
+        return d.diagnose(self.repo, 'app')
+
+    def test_missing_publishers_error_in_automatic_mode(self):
+        result = self.publisher_config(merge_mode='auto')
+        self.assertFalse(result['ok'], result)
+        self.assertTrue(any('agents.merge_publishers' in e for e in result['errors']), result)
+        for mode in (None, 'auto'):
+            with self.subTest(mode=mode):
+                self.config['agents'] = {} if mode is None else {'merge_mode': mode}
+                self.assertTrue(any('agents.merge_publishers' in e for e in d.validate(self.config)))
+
+    def test_missing_publishers_warn_in_manual_mode(self):
+        result = self.publisher_config(merge_mode='manual')
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['errors'], [])
+        self.assertTrue(any('agents.merge_publishers' in w for w in result['warnings']), result)
+
+    def test_missing_publishers_warn_when_mode_falls_closed(self):
+        result = self.publisher_config(merge_mode='Auto')
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['merge_mode'], 'manual')
+        self.assertTrue(any('agents.merge_publishers' in w for w in result['warnings']), result)
+        self.assertTrue(any('fall closed to manual' in w for w in result['warnings']), result)
+
+    def test_present_invalid_publishers_error_in_both_modes(self):
+        for mode in ('auto', 'manual', 'Auto'):
+            for value in (None, 'user:publisher', ['untyped'], ['user:publisher', 'user:PUBLISHER']):
+                with self.subTest(mode=mode, value=value):
+                    self.config['agents'] = dict(merge_mode=mode, merge_publishers=value)
+                    self.assertTrue(any('agents.merge_publishers' in e for e in d.validate(self.config)))
 
     def test_cached_modules_keep_diagnostics_and_config_reads_live(self):
         d.module.cache_clear()

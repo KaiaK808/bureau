@@ -57,9 +57,10 @@ def validate(config):
             if not isinstance(states, dict) or not states or any(not isinstance(v, str) for v in states.values()):
                 errors.append('Team states must map names to string IDs')
     agents = config['agents']
-    try: module('merge-review').merge_publishers(config)
-    except ValueError as exc: errors.append(str(exc))
-    except FileNotFoundError: errors.append('Missing runtime asset: scripts/bureau-merge-review.py; resync scripts')
+    if 'merge_publishers' in agents or merge_mode(config)[0] == 'auto':
+        try: module('merge-review').merge_publishers(config)
+        except ValueError as exc: errors.append(str(exc))
+        except FileNotFoundError: errors.append('Missing runtime asset: scripts/bureau-merge-review.py; resync scripts')
     if 'merge_approvers' in agents:
         try: module('approval-status').merge_approvers(config)
         except ValueError as exc: errors.append(str(exc))
@@ -597,6 +598,9 @@ def diagnose(repo, mode):
     runtime = module('runtime'); provider = module('provider')
     repo = runtime.root_for(repo); path = runtime.config_for(repo); config = json.loads(path.read_text())
     errors = validate(config); warnings = []; effective = {}
+    if isinstance(config, dict) and isinstance(config.get('agents'), dict) \
+            and 'merge_publishers' not in config['agents'] and merge_mode(config)[0] == 'manual':
+        warnings.append('agents.merge_publishers is missing; configure trusted publishers on the default branch before enabling automatic merging')
     if not errors:
         try: env_path = stage_env_file(path)
         except (OSError, ValueError, RuntimeError) as exc: errors.append(str(exc))

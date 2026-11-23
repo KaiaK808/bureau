@@ -236,19 +236,55 @@ def timestamp(value):
 
 
 def main():
+    args = sys.argv[1:]
+    usage = 'usage: bureau-merge-review.py policy OWNER/REPO | threads OWNER/REPO PR | statuses OWNER/REPO HEAD | review OWNER/REPO PR ISSUE POLICY_JSON'
+    if args in (['--help'], ['-h']):
+        print(usage)
+        return 0
     try:
-        reader = Reader(sys.argv[2])
-        action = sys.argv[1]
+        counts = dict(policy=2, threads=3, statuses=3, review=5)
+        if not args or args[0] not in counts or len(args) != counts[args[0]]:
+            raise ValueError('expected policy, threads, statuses or review with the required arguments; use --help')
+        action, repo = args[:2]
+        if not re.fullmatch(r'[A-Za-z0-9-]+/[A-Za-z0-9_.-]+', repo):
+            raise ValueError('repository must be OWNER/REPO')
+        if action in ('threads', 'review'):
+            if not re.fullmatch(r'[1-9][0-9]*', args[2]):
+                raise ValueError('PR must be a positive integer')
+            number = int(args[2])
+            if number > 2147483647:
+                raise ValueError('PR exceeds the GraphQL Int range')
+        if action == 'statuses' and not SHA.fullmatch(args[2]):
+            raise ValueError('HEAD must be a 40-character hexadecimal commit')
+        if action == 'review':
+            if not args[3] or any(c.isspace() or ord(c) < 32 for c in args[3]):
+                raise ValueError('ISSUE must be a nonempty single-line identifier')
+            policy = json.loads(args[4])
+            if not isinstance(policy, dict) or policy.get('kind') not in ('ok', 'policy', 'read'):
+                raise ValueError('POLICY_JSON must be a publisher policy result')
+            if policy['kind'] == 'ok':
+                merge_publishers(dict(agents=dict(merge_publishers=policy.get('entries'))))
+                if not isinstance(policy.get('commit'), str) or not SHA.fullmatch(policy['commit']):
+                    raise ValueError('POLICY_JSON must pin a default-branch commit')
+            elif not isinstance(policy.get('message'), str) or not policy['message']:
+                raise ValueError('POLICY_JSON must include its failure message')
+    except (ValueError, RecursionError):
+        # Callers turn any nonzero helper exit into an unreadable gate (2),
+        # never a decided verdict or the stale-approval handoff (20).
+        print('bureau-merge-review: invalid arguments; use --help', file=sys.stderr)
+        return 2
+    try:
+        reader = Reader(repo)
         if action == 'policy':
             result = reader.policy()
         elif action == 'threads':
-            result = reader.threads(int(sys.argv[3]))
+            result = reader.threads(number)
         elif action == 'statuses':
-            result = reader.statuses(sys.argv[3])
+            result = reader.statuses(args[2])
         else:
-            result = reader.review(int(sys.argv[3]), sys.argv[4], json.loads(sys.argv[5]))
+            result = reader.review(number, args[3], policy)
     except ReadError as exc:
-        if sys.argv[1] == 'statuses':
+        if action == 'statuses':
             print(str(exc), file=sys.stderr)
             return 1
         result = dict(kind='read', message=str(exc))
