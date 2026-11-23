@@ -48,6 +48,12 @@ if mode.startswith('refuse'):
     sys.exit(int(mode[6:]))
 if mode in ('queued', 'running', 'hang'):
     for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP): signal.signal(sig, signal.SIG_IGN)
+if mode == 'cancel-release':
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP): signal.signal(sig, signal.SIG_IGN)
+    signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGUSR1})
+    log('queued')
+    signal.sigwait({signal.SIGUSR1})
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGUSR1})
 if mode in ('queued', 'hang'):
     log('queued')
     time.sleep(60)
@@ -67,6 +73,8 @@ if mode == 'serialize':
     lock = open(event + '.lock', 'a')
     fcntl.flock(lock, fcntl.LOCK_EX)
 if mode == 'delay': time.sleep(.08)
+if mode == 'rewrite':
+    argv[argv.index('--') + 1:] = [sys.executable, '-I', '-B', '-c', 'pass']
 log('start-envelope')
 rc = subprocess.call(argv, close_fds=True)
 log('release')
@@ -83,11 +91,36 @@ class ProbeClock:
     def monotonic(self): return self.now
 
 
+def require_external_root(path, env):
+    # Discover normally first; a ceiling here would hide a surrounding checkout.
+    unbounded = {k: v for k, v in env.items() if k != 'GIT_CEILING_DIRECTORIES'}
+    unbounded['GIT_DISCOVERY_ACROSS_FILESYSTEM'] = '1'
+    check = subprocess.run(['git', '-C', str(path), 'rev-parse', '--show-toplevel'],
+                           env=unbounded, capture_output=True)
+    if check.returncode == 0:
+        raise ValueError('fixture root is inside a repository')
+    if check.returncode != 128 or b'not a git repository' not in check.stderr:
+        raise ValueError('cannot establish fixture root is outside a repository')
+
+
 class WrapperTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix='bureau-wrapper-')
         self.addCleanup(temporary.cleanup)
         self.base = Path(temporary.name).resolve()
+        # No host Git config, maintenance, credentials or hooks.
+        env = {k: v for k, v in os.environ.items() if k in ('PATH', 'HOME', 'TMPDIR', 'SYSTEMROOT')}
+        env.update(PYTHONDONTWRITEBYTECODE='1',
+                   GIT_DISCOVERY_ACROSS_FILESYSTEM='0', LC_ALL='C', GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull,
+                   GIT_AUTHOR_NAME='Fixture', GIT_COMMITTER_NAME='Fixture',
+                   GIT_AUTHOR_EMAIL='fixture@example.invalid', GIT_COMMITTER_EMAIL='fixture@example.invalid',
+                   GIT_CONFIG_COUNT='2', GIT_CONFIG_KEY_0='maintenance.auto', GIT_CONFIG_VALUE_0='false',
+                   GIT_CONFIG_KEY_1='gc.auto', GIT_CONFIG_VALUE_1='0')
+        require_external_root(self.base, env)
+        # Bound all later discovery only after the independent root check.
+        env['GIT_CEILING_DIRECTORIES'] = str(self.base)
+        clean = patch.dict(os.environ, env, clear=True)
+        clean.start(); self.addCleanup(clean.stop)
         self.repo = self.base / 'checkout'
         self.repo.mkdir()
         self.control = self.base / 'coordination'
@@ -95,32 +128,19 @@ class WrapperTests(unittest.TestCase):
         self.wrapper.write_text(FAKE)
         self.events = self.base / 'events.jsonl'
         self.config = self.base / 'operator.json'
-        # Bounded discovery; no host Git config, maintenance, credentials or hooks.
-        env = {k: v for k, v in os.environ.items() if k in ('PATH', 'HOME', 'TMPDIR', 'SYSTEMROOT')}
-        env.update(PYTHONDONTWRITEBYTECODE='1', GIT_CEILING_DIRECTORIES=str(self.base),
-                   GIT_DISCOVERY_ACROSS_FILESYSTEM='0', LC_ALL='C', GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull,
-                   GIT_AUTHOR_NAME='Fixture', GIT_COMMITTER_NAME='Fixture',
-                   GIT_AUTHOR_EMAIL='fixture@example.invalid', GIT_COMMITTER_EMAIL='fixture@example.invalid',
-                   GIT_CONFIG_COUNT='2', GIT_CONFIG_KEY_0='maintenance.auto', GIT_CONFIG_VALUE_0='false',
-                   GIT_CONFIG_KEY_1='gc.auto', GIT_CONFIG_VALUE_1='0')
-        clean = patch.dict(os.environ, env, clear=True)
-        clean.start(); self.addCleanup(clean.stop)
-        # The temporary root itself must not discover a surrounding repository.
-        check = subprocess.run(['git', '-C', str(self.base), 'rev-parse', '--show-toplevel'], capture_output=True)
-        self.assertNotEqual(check.returncode, 0, 'fixture root is inside a repository')
         self.counter = 0
 
-    def policy(self, mode='run', **settings):
+    def policy(self, mode='run', runtime=w, **settings):
         config = {'repo': {'test_wrapper': [sys.executable, str(self.wrapper), mode, str(self.events)], **settings}}
         self.config.write_text(json.dumps(config))
-        return w.resolve_policy(self.repo, primary_config=self.config, operator_config=self.config)
+        return runtime.resolve_policy(self.repo, primary_config=self.config, operator_config=self.config)
 
     def execute(self, command=None, mode='run', runtime=w, policy=None, **kwargs):
         self.counter += 1
         out, err = self.base / f'out-{self.counter}', self.base / f'err-{self.counter}'
-        result = runtime.execute(policy or self.policy(mode), command or [sys.executable, '-I', '-B', '-c', 'print("child")'],
+        result = runtime.execute(policy or self.policy(mode, runtime=runtime), command or [sys.executable, '-I', '-B', '-c', 'print("child")'],
                                  repo=self.repo, stdout=out, stderr=err, run_id='run', attempt_id='attempt',
-                                 coordination_root=self.control, grace_seconds=.1, **kwargs)
+                                 coordination_root=kwargs.pop('coordination_root', self.control), grace_seconds=.1, **kwargs)
         return result, out, err
 
     def assert_result(self, result, code, kind):
@@ -176,6 +196,30 @@ class WrapperTests(unittest.TestCase):
         with self.assertRaises(ValueError): w.resolve_policy(self.repo, primary_config=self.repo / '.bureau.json')
         self.assertEqual(w.resolve_policy(self.repo, primary_config=self.config).source, 'primary:' + str(self.config))
 
+    def test_relative_external_configuration(self):
+        original = self.policy()
+        base = self.pin({})
+        with patch('os.getcwd', return_value=str(self.repo)):
+            policy = w.resolve_policy(self.repo, primary_config=self.repo / '.bureau.json',
+                                      operator_config='../operator.json', trusted_base=base)
+            report = w.diagnose_policy(self.repo, primary_config=self.repo / '.bureau.json',
+                                       operator_config='../operator.json', trusted_base=base)
+            self.assertEqual(policy.argv, original.argv)
+            self.assertEqual(policy.source, 'operator:' + str(self.config))
+            self.assertTrue(report['enabled']); self.assertNotIn('error', report)
+            self.config.unlink()
+            with self.assertRaises(OSError):
+                w.resolve_policy(self.repo, primary_config=self.repo / '.bureau.json',
+                                 operator_config='../operator.json', trusted_base=base)
+            self.assertIn('error', w.diagnose_policy(self.repo, primary_config=self.repo / '.bureau.json',
+                                                    operator_config='../operator.json', trusted_base=base))
+
+    def test_temporary_root_rejects_surrounding_repository(self):
+        self.git('init', '-q')
+        with tempfile.TemporaryDirectory(dir=self.repo) as directory:
+            with self.assertRaisesRegex(ValueError, 'fixture root is inside a repository'):
+                require_external_root(Path(directory), os.environ)
+
     def test_symlink_and_executable_trust(self):
         base = self.pin({}, symlink=True)
         with self.assertRaises(ValueError):
@@ -216,9 +260,43 @@ class WrapperTests(unittest.TestCase):
         partial = load(installed / 'bureau-doctor.py', 'doctor_without_wrapper')
         config = {'linear': {'teams': [{'id':'id','key':'TEAM','states':{'done':'id'}}]}, 'agents':{}, 'repo':{}}
         self.assertFalse([e for e in partial.validate(config) if 'wrapper' in e])
-        self.assertFalse(partial.test_wrapper_diagnostics(self.repo, config=config)['enabled'])
+        report = partial.test_wrapper_diagnostics(self.repo, config=config)
+        self.assertIsNone(report['enabled']); self.assertNotIn('error', report)
+        self.assertIn('script is not installed', report['reason'])
         configured = {**config, 'repo': {'test_wrapper': [sys.executable]}}
         self.assertTrue([e for e in partial.validate(configured) if 'bureau-test-wrapper.py' in e])
+        base = self.pin(configured)
+        (self.repo / '.bureau.json').write_text(json.dumps(config))
+        report = partial.test_wrapper_diagnostics(self.repo, trusted_base=base, config=config)
+        self.assertIn('bureau-test-wrapper.py', report['error'])
+        self.git('add', '.bureau.json'); self.git('commit', '-qm', 'fixture disabled policy')
+        disabled = self.git('rev-parse', 'HEAD')
+        (self.repo / '.bureau.json').write_text(json.dumps(configured))
+        report = partial.test_wrapper_diagnostics(self.repo, trusted_base=disabled, config=configured)
+        self.assertIsNone(report['enabled']); self.assertNotIn('error', report)
+
+    def test_doctor_uses_pinned_policy_when_head_removes_keys(self):
+        self.policy()
+        base = self.pin(json.loads(self.config.read_text()))
+        (self.repo / '.bureau.json').write_text('{"repo":{}}')
+        with patch.object(d, 'main_checkout', return_value=(self.repo, None)):
+            report = d.test_wrapper_diagnostics(self.repo, trusted_base=base, config={'repo': {}})
+            self.assertTrue(report['enabled']); self.assertNotIn('error', report)
+            self.assertTrue(report['source'].startswith('pinned-base:' + base))
+            self.git('update-ref', 'refs/remotes/origin/main', base)
+            self.assertTrue(d.test_wrapper_diagnostics(self.repo, config={'repo': {}})['enabled'])
+        self.assertFalse(self.events.exists())
+
+    def test_doctor_stays_quiet_without_trusted_base_or_key(self):
+        config = {'repo': {}}
+        (self.repo / '.bureau.json').write_text(json.dumps(config))
+        with patch.object(d, 'main_checkout', return_value=(self.repo.resolve(), None)):
+            quiet = d.test_wrapper_diagnostics(self.repo, config=config)
+            self.assertNotIn('error', quiet)
+            self.assertIsNone(quiet['enabled'])
+            asked = {'repo': {'test_wrapper': [sys.executable]}}
+            (self.repo / '.bureau.json').write_text(json.dumps(asked))
+            self.assertIn('error', d.test_wrapper_diagnostics(self.repo, config=asked))
 
     def test_production_launches_stay_unrouted(self):
         # No production call site can consult or route through the new primitive.
@@ -226,6 +304,9 @@ class WrapperTests(unittest.TestCase):
             source = (SCRIPTS / name).read_bytes()
             self.assertNotIn(b'test-wrapper', source)
             self.assertNotIn(b'test_wrapper', source)
+        grouped = (*POLICY_CASES, *EXECUTION_CASES, *PROCESS_CASES, *NEGATIVE_CASES)
+        self.assertEqual(len(grouped), len(set(grouped)))
+        self.assertEqual(set(grouped), set(unittest.defaultTestLoader.getTestCaseNames(WrapperTests)))
         installer = (ROOT / 'scripts/bureau_install.py').read_text()
         self.assertIn('template_files("templates/scripts", "*")', installer)
         weights = {}
@@ -274,6 +355,64 @@ class WrapperTests(unittest.TestCase):
         result, _, _ = self.execute(policy=policy)
         self.assert_result(result, 0, 'child-result')
 
+    def test_envelope_source_is_frozen_after_import(self):
+        source = (SCRIPTS / 'bureau-test-wrapper.py').read_bytes()
+        target = self.repo / 'bureau-test-wrapper.py'
+        target.write_bytes(source)
+        runtime = load(target, 'frozen_wrapper')
+        runtime.SCRIPTS = SCRIPTS
+        replaced = self.base / 'replaced-ran'
+        target.write_text(f'from pathlib import Path\nPath({str(replaced)!r}).touch()\n')
+        policy = self.policy(runtime=runtime)
+        command = [sys.executable, '-I', '-B', '-c', 'print("trusted child")']
+        with patch.object(sys, 'executable', str(self.base / 'changed-interpreter')):
+            result, out, _ = self.execute(command, runtime=runtime, policy=policy)
+        self.assert_result(result, 0, 'child-result')
+        self.assertEqual(out.read_text(), 'trusted child\n'); self.assertFalse(replaced.exists())
+        envelope = Path(result.records) / 'envelope.py'
+        self.assertEqual(envelope.read_bytes(), source)
+        self.assertEqual(envelope.stat().st_mode & 0o777, 0o600)
+        self.assertFalse(w.within(envelope.resolve(), self.repo))
+        forwarded = json.loads(self.events.read_text().splitlines()[0])['argv']
+        self.assertEqual(forwarded[:4], [runtime.INTERPRETER, '-I', '-B', str(envelope)])
+
+    def test_coordination_directory_rejects_checkout(self):
+        result, _, _ = self.execute(coordination_root=self.repo / 'coordination')
+        self.assert_result(result, 24, 'launch-error')
+        self.assertIn('inside a tested checkout', result.reason)
+        self.assertFalse((self.repo / 'coordination').exists())
+
+    def test_rewritten_command_never_launches(self):
+        marker = self.base / 'target-started'
+        command = [sys.executable, '-I', '-B', '-c', f'from pathlib import Path; Path({str(marker)!r}).touch()']
+        result, out, _ = self.execute(command, mode='rewrite')
+        self.assert_result(result, 24, 'launch-error')
+        self.assertFalse(marker.exists()); self.assertEqual(out.read_bytes(), b'')
+        self.assertFalse((Path(result.records) / 'start.json').exists())
+        self.assertEqual(w.read_record(Path(result.records) / 'end.json')['launch_error'], 'command-mismatch')
+
+    def test_cancellation_immediately_before_spawn(self):
+        directory = self.base / 'launch'; directory.mkdir(mode=0o700)
+        command = [sys.executable, '-I', '-B', '-c', 'raise SystemExit("target started")']
+        request = dict(version=1, execution_id='exec', run_id='run', attempt_id='attempt',
+                       command_digest=w.digest(command), policy_digest='policy', queued_at=0.,
+                       stdout=str(self.base / 'stdout'), stderr=str(self.base / 'stdout'))
+        w.publish(directory / 'request.json', request)
+        monotonic = time.monotonic
+        def cancel():
+            if not (directory / 'cancelled.json').exists():
+                w.publish(directory / 'cancelled.json', dict(signal=signal.SIGTERM))
+            return monotonic()
+        previous = {sig: signal.getsignal(sig) for sig in w.SIGNALS}
+        try:
+            with patch.object(w.time, 'monotonic', side_effect=cancel), patch.object(w.subprocess, 'Popen') as spawn:
+                self.assertEqual(w.envelope(directory, command), 130)
+                spawn.assert_not_called()
+        finally:
+            for sig, handler in previous.items(): signal.signal(sig, handler)
+        self.assertFalse((directory / 'start.json').exists())
+        self.assertEqual(w.read_record(directory / 'end.json')['launch_error'], 'cancelled')
+
     def test_refusal_and_real_child_same_status(self):
         for code in (0, 7):
             refused, out, _ = self.execute(mode='refuse' + str(code))
@@ -302,10 +441,10 @@ class WrapperTests(unittest.TestCase):
         self.assert_result(result, 124, 'timeout')
         self.assertEqual(result.reason, 'wrapper-start-timeout'); self.assertEqual(out.read_bytes(), b'')
 
-    def simulated(self, duration, runtime=w):
+    def simulated(self, duration, runtime=w, interleaving=None):
         probe = ProbeClock()
         clock = runtime.BudgetClock('run', 'attempt', probe.monotonic)
-        policy = self.policy()
+        policy = self.policy(runtime=runtime)
         fake = Mock(pid=54321, returncode=None)
         directory = None
         def spawn(argv, **kwargs):
@@ -319,13 +458,34 @@ class WrapperTests(unittest.TestCase):
             record.update(pid=54322, pgid=fake.pid, started_at=600.0, wrapper_status=None)
             runtime.publish(directory/'start.json', record)
             runtime.publish(directory/'end.json', dict(record, ended_at=600.0+duration, child_status=0))
-            probe.now += duration
+            probe.now = 0.0 if interleaving == 'clock' else probe.now + duration
             fake.returncode = 0
             return fake
         fake.poll.return_value = 0
-        with patch.object(runtime.subprocess, 'Popen', side_effect=spawn), patch.object(runtime.module('process').ProcessHold, 'cleanup'):
+        reader = runtime.read_record
+        start_reads = 0
+        def read(path):
+            nonlocal start_reads
+            record = reader(path)
+            if path.name == 'start.json':
+                start_reads += 1
+                if interleaving == 'start' and start_reads == 1: return None
+            if record is not None and interleaving == 'clock':
+                probe.now = record.get('ended_at', record.get('started_at', probe.now))
+            return record
+        with patch.object(runtime.subprocess, 'Popen', side_effect=spawn), patch.object(runtime.module('process').ProcessHold, 'cleanup'), \
+                patch.object(runtime, 'read_record', side_effect=read):
             result, _, _ = self.execute(runtime=runtime, policy=policy, clock=clock, timeout=300)
+        if interleaving == 'start': self.assertEqual(start_reads, 2)
         return result, clock
+
+    def test_poll_clock_sample_follows_records(self):
+        result, clock = self.simulated(299, interleaving='clock')
+        self.assert_result(result, 0, 'child-result'); self.assertEqual(clock.charged(), 299)
+
+    def test_poll_reconciles_start_after_end(self):
+        result, _ = self.simulated(299, interleaving='start')
+        self.assert_result(result, 0, 'child-result')
 
     def test_queued_600_execution_299_succeeds(self):
         result, clock = self.simulated(299)
@@ -360,18 +520,27 @@ class WrapperTests(unittest.TestCase):
         self.assertEqual(w.module('process').uncertain_exit(124), 124)
         self.assertEqual(w.module('process').uncertain_exit(130), 130)
 
-    def runner(self, mode='run', command=None):
+    def runner(self, mode='run', command=None, release_on_cancel=False):
         self.policy(mode)
         self.counter += 1
         path = self.base / f'runner-{self.counter}.py'
         output = self.base / f'result-{self.counter}.json'
         command = command or [sys.executable, '-I', '-B', '-c', 'import time; print("running",flush=True); time.sleep(60)']
+        release = ('import os,signal\npg=w.module("process")\nforward=pg.signal_group\n'
+                   'def release(child, sig):\n'
+                   '    if sig == signal.SIGTERM:\n'
+                   f'        assert list(Path({str(self.control)!r}).glob("test-wrapper-*/cancelled.json"))\n'
+                   '    forward(child, sig)\n'
+                   '    if sig == signal.SIGTERM: os.killpg(child.pid, signal.SIGUSR1)\n'
+                   'pg.signal_group=release\n') if release_on_cancel else ''
         path.write_text('import importlib.util,json,sys\nfrom pathlib import Path\n' +
                        f'spec=importlib.util.spec_from_file_location("runner_wrapper", {str(SCRIPTS / "bureau-test-wrapper.py")!r})\n' +
                        'w=importlib.util.module_from_spec(spec); sys.modules[spec.name]=w; spec.loader.exec_module(w)\n' +
+                       release +
                        f'p=w.resolve_policy({str(self.repo)!r}, primary_config={str(self.config)!r})\n' +
                        f'r=w.execute(p, {command!r}, repo={str(self.repo)!r}, stdout={str(self.base / ("running-"+str(self.counter)))!r}, '
-                       f'run_id="run", attempt_id="attempt", coordination_root={str(self.control)!r}, grace_seconds=.1)\n' +
+                       f'run_id="run", attempt_id="attempt", coordination_root={str(self.control)!r}, '
+                       f'grace_seconds={5 if release_on_cancel else .1})\n' +
                        f'Path({str(output)!r}).write_text(json.dumps(r.__dict__))\n')
         process = subprocess.Popen([sys.executable, '-I', '-B', str(path)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.addCleanup(self.reap, process)
@@ -424,6 +593,23 @@ class WrapperTests(unittest.TestCase):
     def test_term_running(self): self.cancel(signal.SIGTERM, False)
     def test_hup_running(self): self.cancel(signal.SIGHUP, False)
 
+    def test_cancelled_prefix_release_never_starts_target(self):
+        marker = self.base / 'target-started'
+        command = [sys.executable, '-I', '-B', '-c', f'from pathlib import Path; Path({str(marker)!r}).touch()']
+        process, output = self.runner('cancel-release', command, release_on_cancel=True)
+        self.wait_for(lambda: self.events.exists() and '"queued"' in self.events.read_text())
+        process.send_signal(signal.SIGTERM)
+        stdout, stderr = process.communicate(timeout=10)
+        self.assertEqual(process.returncode, 0, (stdout, stderr))
+        result = json.loads(output.read_text())
+        self.assert_result(w.Result(**result), 130, 'cancelled')
+        self.assertIn('start-envelope', self.events.read_text())
+        self.assertIn('release', self.events.read_text())
+        directory = Path(result['records'])
+        self.assertEqual((directory / 'cancelled.json').stat().st_mode & 0o777, 0o600)
+        self.assertEqual(w.read_record(directory / 'end.json')['launch_error'], 'cancelled')
+        self.assertFalse((directory / 'start.json').exists()); self.assertFalse(marker.exists())
+
     def test_serializes_only_execution_envelopes(self):
         command = [sys.executable, '-I', '-B', '-c', 'import time; time.sleep(.2)']
         first, first_result = self.runner('serialize', command)
@@ -442,32 +628,45 @@ class WrapperTests(unittest.TestCase):
         self.assertEqual(sum(r['event']=='release' for r in rows),2)
         self.assertFalse(list(self.control.glob('process-holds/*.json')))
 
-    def test_negative_controls(self):
+    def mutant(self, before, after, kind):
         source = (SCRIPTS/'bureau-test-wrapper.py').read_text()
-        mutations = (
-            ("if start is None:\n                            result = Result(24, 'refused'", "if start is None:\n                            result = Result(0, 'child-result'", 'refusal'),
-            ("execution_end - start['started_at'] > timeout", 'execution_end - queued > timeout', 'timing'),
-            ("if start is None: raise ValueError('end without start proof')", 'if start is None: return', 'proof'),
-        )
-        for index, (before, after, kind) in enumerate(mutations):
-            self.assertIn(before, source)
-            target = self.base/f'mutant-{index}.py'; target.write_text(source.replace(before, after))
-            mutant = load(target, f'wrapper_mutant_{index}')
-            mutant.SCRIPTS = SCRIPTS
-            if kind == 'refusal':
-                result, _, _ = self.execute(mode='refuse0', runtime=mutant)
-                with self.assertRaises(AssertionError): self.assert_result(result,24,'refused')
-            elif kind == 'timing':
-                result, _ = self.simulated(299, runtime=mutant)
-                with self.assertRaises(AssertionError): self.assert_result(result,0,'child-result')
-            else:
-                expected = dict(version=1,execution_id='exec',run_id='run',attempt_id='attempt',command_digest='cmd',
-                                policy_digest='policy',queued_at=0.,pgid=1)
-                record = dict(expected,started_at=1.,ended_at=2.,pid=2,child_status=0,wrapper_status=None)
-                def oracle(runtime):
-                    with self.assertRaises(ValueError): runtime.proof(record,expected,3.)
-                oracle(w)
-                with self.assertRaises(AssertionError): oracle(mutant)
+        self.assertEqual(source.count(before), 1)
+        target = self.base / f'mutant-{kind}.py'; target.write_text(source.replace(before, after))
+        mutant = load(target, 'wrapper_mutant_' + kind)
+        mutant.SCRIPTS = SCRIPTS
+        return mutant
+
+    def test_negative_control_refusal(self):
+        def oracle(result): self.assertEqual((result.code, result.kind), (24, 'refused'))
+        control, _, _ = self.execute(mode='refuse0')
+        self.assert_result(control, 24, 'refused'); oracle(control)
+        mutant = self.mutant("if start is None:\n                            result = Result(24, 'refused'",
+                             "if start is None:\n                            result = Result(0, 'child-result'", 'refusal')
+        result, _, _ = self.execute(mode='refuse0', runtime=mutant)
+        self.assert_result(result, 0, 'child-result')
+        self.assertEqual(result.reason, 'wrapper-refused-before-start')
+        with self.assertRaises(AssertionError): oracle(result)
+
+    def test_negative_control_timing(self):
+        def oracle(result): self.assertEqual((result.code, result.kind), (0, 'child-result'))
+        control, _ = self.simulated(299)
+        self.assert_result(control, 0, 'child-result'); oracle(control)
+        mutant = self.mutant("execution_end - start['started_at'] > timeout", 'execution_end - queued > timeout', 'timing')
+        result, _ = self.simulated(299, runtime=mutant)
+        self.assert_result(result, 124, 'timeout'); self.assertEqual(result.reason, 'execution-timeout')
+        with self.assertRaises(AssertionError): oracle(result)
+
+    def test_negative_control_proof(self):
+        expected = dict(version=1,execution_id='exec',run_id='run',attempt_id='attempt',command_digest='cmd',
+                        policy_digest='policy',queued_at=0.,pgid=1)
+        record = dict(expected,started_at=1.,ended_at=2.,pid=2,child_status=0,wrapper_status=None)
+        def oracle(runtime):
+            with self.assertRaisesRegex(ValueError, 'end without start proof'): runtime.proof(record,expected,3.)
+        oracle(w)
+        mutant = self.mutant("        if start is None: raise ValueError('end without start proof')\n        if any",
+                             '        if start is None: return\n        if any', 'proof')
+        self.assertIsNone(mutant.proof(record, expected, 3.))
+        with self.assertRaises(AssertionError): oracle(mutant)
 
 
 PRODUCTION_LAUNCH_FILES = (
@@ -490,16 +689,28 @@ PRODUCTION_LAUNCH_FILES = (
 )
 POLICY_CASES = ('test_policy_validation', 'test_trusted_sources', 'test_symlink_and_executable_trust',
                 'test_doctor_never_invokes_wrapper', 'test_doctor_needs_no_wrapper_asset_when_unset',
+                'test_doctor_uses_pinned_policy_when_head_removes_keys', 'test_doctor_stays_quiet_without_trusted_base_or_key',
+                'test_relative_external_configuration',
+                'test_temporary_root_rejects_surrounding_repository',
                 'test_production_launches_stay_unrouted')
 PROCESS_CASES = ('test_int_queued', 'test_term_queued', 'test_hup_queued', 'test_int_running', 'test_term_running',
-                 'test_hup_running', 'test_serializes_only_execution_envelopes')
+                 'test_hup_running', 'test_serializes_only_execution_envelopes', 'test_cancelled_prefix_release_never_starts_target')
+NEGATIVE_CASES = ('test_negative_control_refusal', 'test_negative_control_timing', 'test_negative_control_proof')
+EXECUTION_CASES = ('test_literal_argv_environment_and_canonical_output',
+                   'test_refusal_and_real_child_same_status', 'test_native_exec_failure_and_shell_status',
+                   'test_broken_proof_and_status_disagreement', 'test_start_watchdog',
+                   'test_queued_600_execution_299_succeeds', 'test_execution_over_300_times_out',
+                   'test_live_union_clock_and_outer_consumers', 'test_uncertain_cleanup_keeps_hold',
+                   'test_envelope_source_is_frozen_after_import', 'test_coordination_directory_rejects_checkout',
+                   'test_rewritten_command_never_launches', 'test_cancellation_immediately_before_spawn',
+                   'test_poll_clock_sample_follows_records', 'test_poll_reconciles_start_after_end')
 if __name__ == '__main__':
     if len(sys.argv) == 2 and sys.argv[1] in ('--policy', '--execution', '--process', '--negative'):
         group = sys.argv.pop()
         names = unittest.defaultTestLoader.getTestCaseNames(WrapperTests)
         selected = [name for name in names if (name in POLICY_CASES if group == '--policy' else
-                    name in PROCESS_CASES if group == '--process' else name == 'test_negative_controls' if group == '--negative' else
-                    name not in (*POLICY_CASES, *PROCESS_CASES, 'test_negative_controls'))]
+                    name in PROCESS_CASES if group == '--process' else name in NEGATIVE_CASES if group == '--negative' else
+                    name in EXECUTION_CASES)]
         unittest.main(defaultTest=[f'WrapperTests.{name}' for name in selected])
     else:
         unittest.main()

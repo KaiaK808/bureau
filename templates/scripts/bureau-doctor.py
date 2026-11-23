@@ -602,24 +602,53 @@ def claude_config_dirs(config, effective, provider, warnings):
 
 
 def test_wrapper_diagnostics(repo, operator_config=None, trusted_base=None, config=None):
+    repo = Path(repo).resolve()
     try: primary, _ = main_checkout(repo)
     except OSError: primary = None
     if primary is None: primary = repo
-    if operator_config is None and not wrapper_configured(config):
-        try: shared = json.loads((primary / '.bureau.json').read_text())
-        except (OSError, ValueError): shared = None
-        if not wrapper_configured(shared):
-            return dict(enabled=False, routing_installed=False, routing='Stage routing is not installed yet.')
-    if trusted_base is None and primary == repo:
+    selected = Path(operator_config) if operator_config is not None else primary / '.bureau.json'
+    paths = (Path(os.path.abspath(selected)), selected.resolve())
+    controlled = any(path == repo or repo in path.parents for path in paths)
+    if trusted_base is None and controlled:
         command = ['git', '-C', str(repo), 'rev-parse', '--verify', 'refs/remotes/origin/main^{commit}']
-        result = subprocess.run(command, capture_output=True, text=True, env=module('provider').process_env(command))
-        if result.returncode == 0: trusted_base = result.stdout.strip()
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, env=module('provider').process_env(command))
+            if result.returncode == 0: trusted_base = result.stdout.strip()
+        except OSError: pass
     try:
-        return module('test-wrapper').diagnose_policy(repo, primary_config=primary / '.bureau.json',
-                                                     operator_config=operator_config, trusted_base=trusted_base)
+        wrapper = module('test-wrapper')
     except FileNotFoundError:
-        return dict(error='Missing runtime asset: scripts/bureau-test-wrapper.py; resync scripts',
-                    routing_installed=False, routing='Stage routing is not installed yet.')
+        report = dict(enabled=None, reason='Test wrapper script is not installed; resync scripts.',
+                      routing_installed=False, routing='Stage routing is not installed yet.')
+        visible = [config]
+        authority = None
+        for path in {primary / '.bureau.json', selected}:
+            try:
+                value = json.loads(path.read_text())
+                visible.append(value)
+                if path == selected and not controlled: authority = value
+            except (OSError, ValueError) as exc:
+                if operator_config is not None and path == selected: report['error'] = str(exc)
+        if controlled and trusted_base is not None:
+            try:
+                text = module('review-config').Blobs(trusted_base, repo).read(paths[0].relative_to(repo).as_posix())
+                authority = json.loads(text) if text is not None else {}
+            except (OSError, ValueError): pass
+        configured = wrapper_configured(authority) if authority is not None else any(wrapper_configured(value) for value in visible)
+        if configured:
+            report['error'] = 'Missing runtime asset: scripts/bureau-test-wrapper.py; resync scripts'
+        return report
+    report = wrapper.diagnose_policy(repo, primary_config=primary / '.bureau.json',
+                                     operator_config=operator_config, trusted_base=trusted_base)
+    if report.get('error') and operator_config is None:
+        seen = [config]
+        try: seen.append(json.loads((primary / '.bureau.json').read_text()))
+        except (OSError, ValueError): pass
+        if not any(wrapper_configured(value) for value in seen):
+            # Nothing asks for a wrapper, so an unavailable trusted base is not a doctor finding.
+            return dict(enabled=None, reason='No wrapper key is visible; trusted policy unavailable: ' + report['error'],
+                        routing_installed=False, routing=report['routing'])
+    return report
 
 
 def diagnose(repo, mode, wrapper_config=None, wrapper_base=None):

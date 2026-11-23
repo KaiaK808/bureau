@@ -26,6 +26,8 @@ from functools import lru_cache
 
 sys.dont_write_bytecode = True
 SCRIPTS = Path(__file__).resolve().parent
+ENVELOPE_SOURCE = Path(__file__).read_bytes()
+INTERPRETER = str(Path(sys.executable).resolve())
 SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
 
 
@@ -92,6 +94,7 @@ def resolve_policy(repo, *, primary_config, trusted_base=None, operator_config=N
     roots = tuple(dict.fromkeys((repo, *(Path(p).resolve() for p in tested_checkouts))))
     selected = Path(operator_config if operator_config is not None else primary_config).absolute()
     resolved = selected.resolve()
+    selected = Path(os.path.abspath(selected))
     # Check lexical and resolved paths: a checkout symlink cannot select authority.
     controlled = next((root for root in roots if within(selected, root) or within(resolved, root)), None)
     if controlled is not None:
@@ -125,7 +128,7 @@ def diagnose_policy(repo, *, primary_config, trusted_base=None, operator_config=
     report = dict(source=None, enabled=None, executable=None, routing_installed=False,
                   routing='Stage routing is not installed yet.')
     selected = Path(operator_config if operator_config is not None else primary_config).absolute()
-    controlled = within(selected, Path(repo).resolve()) or within(selected.resolve(), Path(repo).resolve())
+    controlled = within(Path(os.path.abspath(selected)), Path(repo).resolve()) or within(selected.resolve(), Path(repo).resolve())
     report['source'] = ('pinned-base:' + str(trusted_base) + ':' + selected.name if controlled
                         else ('operator:' if operator_config is not None else 'primary:') + str(selected))
     try:
@@ -202,7 +205,7 @@ def command_argv(command):
 
 
 def compose(policy, directory, command):
-    return [*policy.argv, sys.executable, '-I', '-B', str(Path(__file__).resolve()),
+    return [*policy.argv, INTERPRETER, '-I', '-B', str(directory / 'envelope.py'),
             '--envelope', str(directory), '--', *command_argv(command)]
 
 
@@ -285,8 +288,12 @@ def envelope(directory, command):
         signal.signal(sig, stop)
     base = {key: request[key] for key in IDENTITY}
     base.update(pgid=os.getpgrp(), wrapper_status=None)
-    if cancelled:
-        return 130
+    def failed(error, code):
+        publish(directory / 'end.json', dict(base, started_at=None, ended_at=time.monotonic(),
+                                           pid=None, child_status=None, launch_error=error))
+        return code
+    if digest(command) != request['command_digest']:
+        return failed('command-mismatch', 24)
     try:
         with open(request['stdout'], 'ab', buffering=0) as out:
             if request['stderr'] == request['stdout']:
@@ -296,7 +303,8 @@ def envelope(directory, command):
             try:
                 # The pre-Popen timestamp is published only after exec succeeded.
                 at = time.monotonic()
-                if cancelled: return 130
+                if cancelled or (directory / 'cancelled.json').exists():
+                    return failed('cancelled', 130)
                 child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=out, stderr=err)
                 if cancelled:
                     child.kill()
@@ -308,9 +316,7 @@ def envelope(directory, command):
             finally:
                 if err is not out: err.close()
     except OSError as exc:
-        publish(directory / 'end.json', dict(base, started_at=None, ended_at=time.monotonic(),
-                                           pid=None, child_status=None, launch_error=type(exc).__name__))
-        return 24
+        return failed(type(exc).__name__, 24)
     finally:
         if child is not None and child.poll() is None:
             child.kill()
@@ -351,9 +357,14 @@ def execute(policy, command, *, repo, stdout, stderr=None, timeout=None, clock=N
         env = provider.untrusted_env(os.environ if environ is None else environ, policy.env_mode,
                                      git_credentials=policy.git_credentials)
         root = Path(coordination_root) if coordination_root is not None else pg.hold_root(repo, provider.process_env(['git']))
+        root = root.resolve()
+        if within(root, Path(repo).resolve()):
+            raise ValueError('coordination directory is inside a tested checkout')
         root.mkdir(parents=True, exist_ok=True)
         directory = Path(tempfile.mkdtemp(prefix='test-wrapper-', dir=root))
         os.chmod(directory, 0o700)
+        with os.fdopen(os.open(directory / 'envelope.py', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'wb') as out:
+            out.write(ENVELOPE_SOURCE)
         out_path = Path(stdout).absolute()
         err_path = Path(stderr).absolute() if stderr is not None else out_path
         for path in dict.fromkeys((out_path, err_path)):
@@ -376,22 +387,27 @@ def execute(policy, command, *, repo, stdout, stderr=None, timeout=None, clock=N
                 request['pgid'] = child.pid
                 teardown_at = None
                 while True:
-                    now = clock.monotonic()
                     if cancelled is not None:
                         result = Result(130, 'cancelled', 'cancelled', state, execution)
                         break
-                    if start is None:
+                    candidate = read_record(directory / 'start.json') if start is None else None
+                    end = read_record(directory / 'end.json')
+                    if end is not None and start is None and candidate is None:
                         candidate = read_record(directory / 'start.json')
+                    now = clock.monotonic()
+                    if start is None:
                         if candidate is not None:
                             proof(candidate, request, now)
                             clock.started(execution, candidate['started_at'])
                             start = candidate
                             state = 'RUNNING'
-                    end = read_record(directory / 'end.json')
                     if end is not None:
                         proof(end, request, now, start)
                         if end.get('launch_error'):
-                            result = Result(24, 'launch-error', 'exec-failed', state, execution)
+                            if end['launch_error'] == 'cancelled':
+                                result = Result(130, 'cancelled', 'cancelled', state, execution)
+                            else:
+                                result = Result(24, 'launch-error', 'exec-failed', state, execution)
                             break
                         if start is None: raise ValueError('end without start proof')
                         if teardown_at is None: teardown_at = now + 5
@@ -431,7 +447,8 @@ def execute(policy, command, *, repo, stdout, stderr=None, timeout=None, clock=N
         if start is None: clock.revoke(execution)
         try:
             if child is not None:
-                if result.kind == 'cancelled':
+                if cancelled is not None:
+                    publish(directory / 'cancelled.json', dict(signal=cancelled))
                     pg.signal_group(child, cancelled)
                     try: child.wait(timeout=grace_seconds)
                     except subprocess.TimeoutExpired: pass
