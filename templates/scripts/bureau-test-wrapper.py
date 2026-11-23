@@ -117,9 +117,8 @@ def git_metadata_dir(checkout, env):
     path = checkout / '.git'
     if path.is_symlink() or not path.is_dir():
         return None
-    # Inherited repository selection would answer for another repository despite -C.
-    env = {key: value for key, value in env.items()
-           if key not in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_PREFIX')}
+    # Only PATH and HOME: any inherited Git variable could answer for another repository.
+    env = {key: env[key] for key in ('PATH', 'HOME') if key in env}
     try:
         found = subprocess.run(['git', '-C', str(checkout), 'rev-parse', '--absolute-git-dir'],
                                capture_output=True, text=True, timeout=15, env=env)

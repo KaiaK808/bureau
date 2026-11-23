@@ -277,6 +277,23 @@ class WrapperTests(unittest.TestCase):
         self.assert_result(result, 0, 'child-result')
         self.assertEqual(Path(result.records).parent, target.resolve())
 
+    def test_inherited_object_directory_cannot_admit_look_alike(self):
+        policy = self.policy()
+        other = self.base / 'object-source'
+        subprocess.run(['git', 'init', '-q', str(other)], check=True, capture_output=True,
+                       env={k: v for k, v in os.environ.items() if not k.startswith('GIT_')})
+        checkout = self.base / 'look-alike'
+        (checkout / '.git' / 'refs').mkdir(parents=True)
+        (checkout / '.git' / 'HEAD').write_text('ref: refs/heads/main\n')
+        with patch.dict(os.environ, {'GIT_DIR': str(other / '.git'),
+                                     'GIT_OBJECT_DIRECTORY': str(other / '.git' / 'objects')}):
+            result = w.execute(policy, [sys.executable, '-I', '-B', '-c', 'print("ran")'], repo=checkout,
+                               stdout=self.base / 'look-alike-output', coordination_root=checkout / '.git' / 'bureau',
+                               run_id='run', attempt_id='attempt', grace_seconds=.1)
+        self.assert_result(result, 24, 'launch-error')
+        self.assertIn('inside a tested checkout', result.reason)
+        self.assertFalse(list(checkout.rglob('envelope.py')))
+
     def test_external_configuration_symlinks_are_allowed(self):
         original = self.policy()
         directory = self.base / 'external-directory'
@@ -894,7 +911,7 @@ EXECUTION_CASES = ('test_literal_argv_environment_and_canonical_output',
                    'test_broken_proof_and_status_disagreement', 'test_start_watchdog',
                    'test_queued_600_execution_299_succeeds', 'test_execution_over_300_times_out',
                    'test_live_union_clock_and_outer_consumers', 'test_uncertain_cleanup_keeps_hold',
-                   'test_envelope_source_is_frozen_after_import', 'test_coordination_directory_rejects_checkout', 'test_fake_git_directory_cannot_hold_envelope', 'test_inherited_git_dir_does_not_reject_real_coordination',
+                   'test_envelope_source_is_frozen_after_import', 'test_coordination_directory_rejects_checkout', 'test_fake_git_directory_cannot_hold_envelope', 'test_inherited_git_dir_does_not_reject_real_coordination', 'test_inherited_object_directory_cannot_admit_look_alike',
                    'test_default_coordination_directory_launches',
                    'test_rewritten_command_never_launches', 'test_cancellation_immediately_before_spawn',
                    'test_poll_clock_sample_follows_records', 'test_poll_reconciles_start_after_end')
