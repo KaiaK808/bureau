@@ -3,7 +3,6 @@
 import argparse
 import json
 import os
-from pathlib import Path
 import re
 import stat
 import sys
@@ -15,7 +14,7 @@ SPEC_DECLARATION = re.compile(r'^\s*[-*]\s+\*\*((?:FR|SC)-[0-9]{3,})\*\*\s*:')
 TASK_DECLARATION = re.compile(r'^\s*-\s+\[[ xX]\]\s+(T[0-9]{3,})\b')
 REQUIREMENT_ID = re.compile(r'(?:FR|SC)-[0-9]{3,}')
 TASK_ID = re.compile(r'T[0-9]{3,}')
-FENCE = re.compile(r'^\s*(`{3,}|~{3,})(.*)$')
+FENCE = re.compile(r'^ {0,3}(`{3,}|~{3,})(.*)$')
 SCOPE = ('Validation checks only whether the declaration is well formed. It does not prove '
          'requirements are complete, that any verifier exists or passed, or that the product '
          'is accepted. Enforcement is not active.')
@@ -27,10 +26,11 @@ def pointer(parent, key):
 
 def read_regular(filename, limit=None):
     """Refuse an input that is a symlink; parents may be system links such as /tmp on macOS."""
-    path = Path(os.path.abspath(filename))
-    directory = os.open(os.path.realpath(path.parent), os.O_RDONLY | os.O_DIRECTORY)
+    # The kernel walks the parent, so a parent step after a symlink keeps its real meaning.
+    parent, name = os.path.split(os.fspath(filename))
+    directory = os.open(parent or '.', os.O_RDONLY | os.O_DIRECTORY)
     try:
-        fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
         with os.fdopen(fd, 'rb') as source:
             info = os.fstat(source.fileno())
             if not stat.S_ISREG(info.st_mode):

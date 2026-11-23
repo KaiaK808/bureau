@@ -365,6 +365,23 @@ T006 in prose.
         dangling.symlink_to(self.directory / 'absent')
         self.cli(paths={**self.paths, 'contract': dangling}, code=2)
 
+    def test_parent_symlink_keeps_filesystem_parent_step(self):
+        other = self.directory / 'other'
+        (other / 'sub').mkdir(parents=True)
+        alias = self.directory / 'alias'
+        alias.symlink_to(other / 'sub', target_is_directory=True)
+        (other / 'contract').write_bytes(b'{')
+        self.cli(paths={**self.paths, 'contract': alias / '..' / 'contract'}, code=22)
+
+    def test_fence_indentation_follows_markdown(self):
+        value = contract()
+        value['requirements'] = []
+        self.write_inputs(value, spec='    ```\n- **FR-001**: Required.\n', tasks='No tasks declared.\n')
+        report = self.cli(code=22)
+        self.assertIn('unmapped spec requirement: FR-001', [e['message'] for e in report['errors']])
+        self.write_inputs(value, spec='```\n    ```\n- **FR-001**: Still fenced.\n```\n', tasks='No tasks declared.\n')
+        self.cli()
+
     def test_nonregular_and_unreadable_inputs(self):
         missing = self.directory / 'missing'
         directory = self.directory / 'directory'
