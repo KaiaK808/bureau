@@ -235,21 +235,6 @@ class ContractTests(unittest.TestCase):
 - **FR-01**: Too short.
 - FR-002: Missing bold.
 FR-003 in prose.
-```markdown
-- **FR-001**: Ignored duplicate.
-- **FR-004**: Ignored.
-~~~
-```
-~~~~ example
-- **SC-001**: Ignored.
-~~~
-- **SC-002**: Still ignored.
-~~~~
-- **SC-003**: Visible.
-````
-```
-- **FR-005**: Still fenced.
-````
 '''
         tasks = '''- [ ] T001 Create.
   - [x] T003 [P] Configure.
@@ -259,15 +244,9 @@ FR-003 in prose.
 - [ ] T01 Short.
 - [ ] T005suffix Not a word boundary.
 T006 in prose.
-```text
-- [ ] T001 Ignored duplicate.
-```
-~~~
-- [ ] T007 Ignored.
-~~~
 '''
         self.assertEqual(set(validator.declarations(spec, MODULE['SPEC_DECLARATION'], '/spec')),
-                         {'FR-001', 'SC-1000', 'SC-003'})
+                         {'FR-001', 'SC-1000'})
         self.assertEqual(set(validator.declarations(tasks, MODULE['TASK_DECLARATION'], '/tasks')),
                          {'T001', 'T003', 'T1000'})
         self.assertEqual(validator.errors, [])
@@ -373,14 +352,20 @@ T006 in prose.
         (other / 'contract').write_bytes(b'{')
         self.cli(paths={**self.paths, 'contract': alias / '..' / 'contract'}, code=22)
 
-    def test_fence_indentation_follows_markdown(self):
+    def test_declarations_in_code_blocks_still_count(self):
         value = contract()
         value['requirements'] = []
-        self.write_inputs(value, spec='    ```\n- **FR-001**: Required.\n', tasks='No tasks declared.\n')
+        for spec in ('    ```\n- **FR-001**: Required.\n',
+                     '- Example:\n  ```text\n  sample\n- **FR-001**: Required.\n',
+                     '```text\n```\u00a0\n```\n- **FR-001**: Required.\n',
+                     '```\n- **FR-001**: Inside a block.\n```\n'):
+            with self.subTest(spec=spec):
+                self.write_inputs(value, spec=spec, tasks='No tasks declared.\n')
+                report = self.cli(code=22)
+                self.assertIn('unmapped spec requirement: FR-001', [e['message'] for e in report['errors']])
+        self.write_inputs(value, spec='- **FR-001**: One.\n```\n- **FR-001**: Two.\n```\n', tasks='No tasks declared.\n')
         report = self.cli(code=22)
-        self.assertIn('unmapped spec requirement: FR-001', [e['message'] for e in report['errors']])
-        self.write_inputs(value, spec='```\n    ```\n- **FR-001**: Still fenced.\n```\n', tasks='No tasks declared.\n')
-        self.cli()
+        self.assertTrue(any('duplicate declaration: FR-001' in e['message'] for e in report['errors']))
 
     def test_nonregular_and_unreadable_inputs(self):
         missing = self.directory / 'missing'

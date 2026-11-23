@@ -47,7 +47,7 @@ SPEC_DECLARATION: ^\s*[-*]\s+\*\*((?:FR|SC)-[0-9]{3,})\*\*\s*:
 TASK_DECLARATION: ^\s*-\s+\[[ xX]\]\s+(T[0-9]{3,})\b
 ```
 
-For example, `- **FR-001**: System MUST ...`, `- **SC-001**: ...`, `- [ ] T001 Create ...` and `- [x] T003 [P] Configure ...` declare IDs. Occurrences inside backtick or tilde fenced blocks are ignored. Duplicate declarations are errors. Prose mentions and other list formats declare nothing.
+For example, `- **FR-001**: System MUST ...`, `- **SC-001**: ...`, `- [ ] T001 Create ...` and `- [x] T003 [P] Configure ...` declare IDs. Every matching line counts, including inside a code block, so a Markdown quirk cannot hide a requirement. To show an example without declaring it, write it in a form that does not match these patterns. Duplicate declarations are errors. Prose mentions and other list formats declare nothing.
 
 The contract may contain at most 256 KiB (UTF-8 bytes, checked before parsing), 128 requirements and 256 checks across all requirements. Booleans are not integers. Nonstandard JSON constants and malformed hashes are rejected. All inputs must be regular UTF-8 files; an input that is itself a symlink is refused. Directories above it may be symlinks, as `/tmp` is on macOS.
 

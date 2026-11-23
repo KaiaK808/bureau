@@ -14,7 +14,6 @@ SPEC_DECLARATION = re.compile(r'^\s*[-*]\s+\*\*((?:FR|SC)-[0-9]{3,})\*\*\s*:')
 TASK_DECLARATION = re.compile(r'^\s*-\s+\[[ xX]\]\s+(T[0-9]{3,})\b')
 REQUIREMENT_ID = re.compile(r'(?:FR|SC)-[0-9]{3,}')
 TASK_ID = re.compile(r'T[0-9]{3,}')
-FENCE = re.compile(r'^ {0,3}(`{3,}|~{3,})(.*)$')
 SCOPE = ('Validation checks only whether the declaration is well formed. It does not prove '
          'requirements are complete, that any verifier exists or passed, or that the product '
          'is accepted. Enforcement is not active.')
@@ -103,17 +102,9 @@ class Validator:
         return result
 
     def declarations(self, text, pattern, location):
-        found, fence = {}, ''
+        # Every matching line counts, also in a code block: a Markdown quirk must not hide a requirement.
+        found = {}
         for number, line in enumerate(text.splitlines(), 1):
-            marker = FENCE.match(line)
-            if fence:
-                if (marker and marker[1][0] == fence[0] and len(marker[1]) >= len(fence)
-                        and not marker[2].strip()):
-                    fence = ''
-                continue
-            if marker and (marker[1][0] != '`' or '`' not in marker[2]):
-                fence = marker[1]
-                continue
             match = pattern.match(line)
             if match:
                 if match[1] in found:
