@@ -2,7 +2,9 @@
 # Slowest successful observation per file/OS, rounded up with update_shard_weights.py.
 # Future unmeasured cells use the other OS or 60s Linux / 120s macOS.
 # Hold-answer driver: local macOS measurement, 95.21s rounded up; Linux unmeasured.
+# Acceptance-contract driver: unmeasured on both platforms; use fallback estimates.
 # test_file	ubuntu_seconds	macos_seconds
+test_acceptance_contract.sh	-	-
 test_acceptance_insights.sh	13	30
 test_acceptance_insights_negative_controls.sh	161	275
 test_adrs.sh	1	1

@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "contract_id": "sample-delivery",
+  "revision": 1,
+  "retired_requirement_ids": ["FR-002"],
+  "requirements": [
+    {
+      "requirement_id": "FR-001",
+      "spec_ref": "FR-001",
+      "task_ids": ["T001"],
+      "checks": [
+        {"verifier_id": "sample-tests", "expect": {"kind": "pass"}},
+        {
+          "verifier_id": "sample-regression",
+          "expect": {
+            "kind": "fails_on_base_passes_on_candidate",
+            "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "fixture": {
+              "commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "requirement_id": "SC-001",
+      "spec_ref": "SC-001",
+      "task_ids": ["T002"],
+      "checks": [
+        {"verifier_id": "sample-artifact", "expect": {"kind": "present", "path": "deliverables/result.txt"}},
+        {"verifier_id": "sample-artifact", "expect": {"kind": "nonempty", "path": "deliverables/result.txt"}},
+        {
+          "verifier_id": "sample-artifact",
+          "expect": {
+            "kind": "digest",
+            "path": "deliverables/result.txt",
+            "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        }
+      ]
+    }
+  ]
+}
