@@ -363,6 +363,8 @@ PY
         groups, cleaned = [], []
 
         def launch(*args, **kwargs):
+            if args[0] != ['bash', 'test_a.sh']:  # Group inspection also launches ps on macOS.
+                return real_popen(*args, **kwargs)
             child = real_popen(*args, cwd=self.tests, **kwargs)
             self.children.append(child)
             groups.append(child.pid)
