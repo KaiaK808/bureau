@@ -41,6 +41,8 @@ def review_transport(args, commit, default_config, comments):
         return False, None
     route = args[1]
     fields = dict(a.split('=', 1) for a in args[2:] if '=' in a)
+    flags = {a.split('=', 1)[0]: flag for flag, a in zip(args[2:], args[3:])
+             if flag in ('-f', '-F', '--raw-field', '--field') and '=' in a}
     method = args[args.index('--method') + 1] if '--method' in args else ('POST' if fields else 'GET')
     if route == 'repos/test/repo':
         value = dict(default_branch='main')
@@ -59,6 +61,8 @@ def review_transport(args, commit, default_config, comments):
             node = next((c for c in comments(None) if c['id'] == fields['id']), None)
             value = dict(data=dict(node=project_review(node, review_fields(query, 'IssueComment'))))
         else:
+            # gh sends -f values as strings, which GraphQL rejects for $num:Int!.
+            assert flags.get('num') in ('-F', '--field'), 'GraphQL Int variable must be a typed field'
             if 'comments(' in query:
                 name = 'comments'
                 nodes = comments(int(fields['num']))

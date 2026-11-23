@@ -246,7 +246,7 @@ def main():
         if not args or args[0] not in counts or len(args) != counts[args[0]]:
             raise ValueError('expected policy, threads, statuses or review with the required arguments; use --help')
         action, repo = args[:2]
-        if not re.fullmatch(r'[A-Za-z0-9-]+/[A-Za-z0-9_.-]+', repo):
+        if not re.fullmatch(r'[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+', repo):
             raise ValueError('repository must be OWNER/REPO')
         if action in ('threads', 'review'):
             if not re.fullmatch(r'[1-9][0-9]*', args[2]):

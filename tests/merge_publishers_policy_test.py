@@ -63,6 +63,24 @@ class PolicyTests(unittest.TestCase):
                 self.assertEqual(len(err.splitlines()), 1)
                 self.assertNotIn('Traceback', err)
 
+    def test_cli_accepts_managed_user_owner(self):
+        result = dict(kind='policy', message='missing')
+        with patch.object(reader.Reader, 'policy', return_value=result) as policy:
+            code, out, err = self.cli('policy', 'developer_acme/repo')
+        self.assertEqual((code, json.loads(out), err), (0, result, ''))
+        policy.assert_called_once_with()
+
+    def test_transport_fake_rejects_untyped_graphql_int(self):
+        transport = load(ROOT / 'tests/lib/review-transport.py')
+        for name in ('comments', 'reviewThreads'):
+            query = 'query=query{repository{pullRequest{' + name + '(first:100){totalCount nodes{id} pageInfo{hasNextPage endCursor}}}}}'
+            call = lambda flag: transport.review_transport(
+                ['api', 'graphql', '--method', 'POST', '-f', query, flag, 'num=9'], 'a' * 40, {}, lambda number: [])
+            with self.subTest(name=name):
+                self.assertTrue(call('-F')[0])
+                with self.assertRaisesRegex(AssertionError, 'typed field'):
+                    call('-f')
+
     def test_api_rejects_partial_and_malformed_error_envelopes(self):
         for errors in ([{'message': 'partial response'}], {}, '', False, 0):
             proc = types.SimpleNamespace(returncode=0, stdout=json.dumps(dict(data={}, errors=errors)))
