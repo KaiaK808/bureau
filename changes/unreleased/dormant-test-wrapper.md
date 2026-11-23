@@ -1,0 +1,3 @@
+section: Added
+
+- Add a dormant shared test wrapper primitive with trusted literal argv policy, private child-start/end proof, queue-aware budget clock and read-only doctor diagnostics. `repo.test_wrapper` defaults to disabled; `repo.test_wrapper_start_timeout_seconds` defaults to 21600 seconds within (0, 86400]. **Upgrade:** compare installed script drift and resync scripts to install the new asset before configuring it. Stage routing is not installed yet: existing launches, timers, build keys and evidence formats are unchanged. Validation: local fake-wrapper single-case coverage and static checks; full suites, hosted Linux/macOS qualification and live slot integration remain maintainer checks.

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="0af5acc4754bcf609fe41d519306bd8111caf1039f52b61a99bdf3ca19611e13">
+<meta name="bureau-source-sha256" content="e9c94e8a5955cf70dc50499fbb6c33108a3e5586940faf2941c6fa640c9fa09b">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -2073,6 +2073,79 @@ pause</td>
 </tbody>
 </table>
 <h3 id="repo"><code>repo</code></h3>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Type</th>
+<th>Default</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>repo.test_wrapper</code></td>
+<td>literal string argv array</td>
+<td>absent or <code>[]</code> (disabled)</td>
+<td>Dormant prefix for the shared test executor. First executable must
+be absolute; control characters, null, shell strings and mixed types are
+rejected. Subsequent arguments may contain spaces or be empty. No
+per-class overrides.</td>
+</tr>
+<tr>
+<td><code>repo.test_wrapper_start_timeout_seconds</code></td>
+<td>finite number</td>
+<td><code>21600</code></td>
+<td>Separate child-start watchdog in seconds, strictly greater than 0
+and at most 86400, including when wrapping is disabled. Allows a normal
+wait behind long suites.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Stage routing is not installed yet.</strong> These settings
+do not change any existing stage, gate, provider, scanner, timer, build
+reuse key or evidence format. The new
+<code>bureau-test-wrapper.py</code> primitive is available for a later
+routing upgrade. Resync scripts to install it; configuration alone
+cannot activate routing.</p>
+<p>The primitive freezes policy and provenance at the trusted
+coordinator boundary: an explicitly selected external operator config,
+otherwise the primary installation config. A config in the tested
+checkout is read only from a pinned trusted base using the existing
+regular-blob and symlink protections; a PR head never selects its own
+wrapper. An automatically exported <code>BUREAU_CONFIG</code> is not
+operator selection. The executable's resolved symlink target must be
+executable and outside tested checkouts. Doctor reports source, enabled
+state and executable resolution without invoking the wrapper or
+acquiring a slot. Its <code>--wrapper-config</code> explicitly selects
+an external policy for diagnostics; <code>--wrapper-base</code> accepts
+a pinned trusted commit for checkout-owned policy. Without that
+argument, doctor uses the local <code>origin/main</code> commit when
+needed and reports unavailable trust if it cannot resolve one; it never
+trusts HEAD as a fallback.</p>
+<p>The prefix receives literal argv followed by a private child envelope
+and the original native argv or existing Bash command boundary. Prefix
+output stays in diagnostic logs; only target output reaches canonical
+destinations. The foreground prefix must wait for the envelope. Private
+per-launch start/end records live under shared Git coordination state,
+outside checkout resets. Successful native process launch proves start;
+a missing executable, missing/stale proof, swallowed child status, or
+even exit-zero refusal returns 24. A launched shell returning 127
+remains a child result. These records are separate from evidence-v1 and
+are not an operating-system isolation boundary against code running as
+the same user.</p>
+<p>The primitive's command timeout begins at proven child start. Its
+injectable budget clock excludes the union of validated queue intervals,
+including open intervals, preserving time already spent on other work. A
+600-second queue followed by 299 seconds of execution fits a 300-second
+command allowance. The independent start watchdog and execution deadline
+return 124 with distinct reasons; cancellation returns 130. INT, TERM
+and HUP trigger group teardown, with a five-second grace followed by
+kill/join/verification. Uncertain cleanup retains the existing durable
+process hold and returns 25, preserving 124/130 when already determined.
+The later routing change must connect outer provider, silence, QA and
+implementation timers to this clock; existing timers are unchanged
+here.</p>
 <p><code>repo.changed_test_command</code> optionally measures
 fail-before-pass after QA's final gate passes. For example,
 <code>"changed_test_command": "python3 -m pytest -q {file}"</code> runs
