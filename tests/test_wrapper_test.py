@@ -232,6 +232,37 @@ class WrapperTests(unittest.TestCase):
                                      operator_config=prefix / '..' / '..' / 'operator.json',
                                      tested_checkouts=(secondary,))
 
+    def test_symlink_target_parent_step_is_rejected(self):
+        self.policy()
+        outside = self.base / 'outside'
+        (outside / 'a').mkdir(parents=True)
+        (outside / 'operator.json').write_text(self.config.read_text())
+        hop = self.repo / 'hop'
+        hop.symlink_to(str(outside / 'a') + '/../operator.json')
+        alias = self.base / 'alias'
+        alias.symlink_to(hop)
+        with self.assertRaisesRegex(ValueError, 'tested checkout symlink'):
+            w.resolve_policy(self.repo, primary_config=self.config, operator_config=alias)
+
+    def test_fake_git_directory_cannot_hold_envelope(self):
+        policy = self.policy()
+        for kind in ('symlink', 'directory'):
+            with self.subTest(kind=kind):
+                checkout = self.base / ('fake-' + kind)
+                checkout.mkdir()
+                if kind == 'symlink':
+                    (checkout / '.git').symlink_to('.')
+                    target = checkout / 'coordination'
+                else:
+                    (checkout / '.git').mkdir()
+                    target = checkout / '.git' / 'bureau'
+                result = w.execute(policy, [sys.executable, '-I', '-B', '-c', 'print("ran")'], repo=checkout,
+                                   stdout=self.base / (kind + '-output'), coordination_root=target,
+                                   run_id='run', attempt_id='attempt', grace_seconds=.1)
+                self.assert_result(result, 24, 'launch-error')
+                self.assertIn('inside a tested checkout', result.reason)
+                self.assertFalse(list(checkout.rglob('envelope.py')))
+
     def test_external_configuration_symlinks_are_allowed(self):
         original = self.policy()
         directory = self.base / 'external-directory'
@@ -833,7 +864,7 @@ POLICY_CASES = ('test_policy_validation', 'test_trusted_sources', 'test_symlink_
                 'test_doctor_never_invokes_wrapper', 'test_doctor_needs_no_wrapper_asset_when_unset',
                 'test_doctor_uses_pinned_policy_when_head_removes_keys', 'test_doctor_stays_quiet_without_trusted_base_or_key', 'test_symlinked_config_without_keys_stays_quiet',
                 'test_relative_external_configuration',
-                'test_checkout_symlink_before_parent_steps_is_rejected', 'test_external_configuration_symlinks_are_allowed',
+                'test_checkout_symlink_before_parent_steps_is_rejected', 'test_symlink_target_parent_step_is_rejected', 'test_external_configuration_symlinks_are_allowed',
                 'test_policy_unavailable_only_for_authority_reads',
                 'test_doctor_reports_missing_pinned_executable_when_head_removes_keys',
                 'test_doctor_reports_invalid_pinned_content_without_visible_keys',
@@ -849,7 +880,7 @@ EXECUTION_CASES = ('test_literal_argv_environment_and_canonical_output',
                    'test_broken_proof_and_status_disagreement', 'test_start_watchdog',
                    'test_queued_600_execution_299_succeeds', 'test_execution_over_300_times_out',
                    'test_live_union_clock_and_outer_consumers', 'test_uncertain_cleanup_keeps_hold',
-                   'test_envelope_source_is_frozen_after_import', 'test_coordination_directory_rejects_checkout',
+                   'test_envelope_source_is_frozen_after_import', 'test_coordination_directory_rejects_checkout', 'test_fake_git_directory_cannot_hold_envelope',
                    'test_default_coordination_directory_launches',
                    'test_rewritten_command_never_launches', 'test_cancellation_immediately_before_spawn',
                    'test_poll_clock_sample_follows_records', 'test_poll_reconciles_start_after_end')

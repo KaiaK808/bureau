@@ -91,6 +91,7 @@ def physical_policy_path(selected, roots):
     """Inspect every physical component before normalizing away parent steps."""
     current = Path(selected.anchor)
     pending = list(selected.parts[1:])
+    direct = '..' not in selected.parts
     links = 0
     while pending:
         part = pending.pop(0)
@@ -99,8 +100,8 @@ def physical_policy_path(selected, roots):
             continue
         current = current / part
         if current.is_symlink():
-            # Without a later parent step the lexical path stays in the checkout and is read pinned.
-            if '..' in pending and any(within(current, root) for root in roots):
+            # Only a direct path that stays lexically in that checkout is safe: it is read pinned.
+            if any(within(current, root) and not (direct and within(selected, root)) for root in roots):
                 raise ValueError('configuration path traverses a tested checkout symlink')
             links += 1
             if links > 40:
@@ -109,6 +110,21 @@ def physical_policy_path(selected, roots):
             current = Path(target.anchor) if target.is_absolute() else current.parent
             pending = list(target.parts[1:] if target.is_absolute() else target.parts) + pending
     return current
+
+
+def git_metadata_dir(checkout, env):
+    """The checkout's genuine git directory; a symlink or look-alike directory is not one."""
+    path = checkout / '.git'
+    if path.is_symlink() or not path.is_dir():
+        return None
+    try:
+        found = subprocess.run(['git', '-C', str(checkout), 'rev-parse', '--absolute-git-dir'],
+                               capture_output=True, text=True, timeout=15, env=env)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if found.returncode != 0 or Path(found.stdout.strip()).resolve() != path.resolve():
+        return None
+    return path.resolve()
 
 
 def resolve_policy(repo, *, primary_config, trusted_base=None, operator_config=None, tested_checkouts=()):
@@ -398,8 +414,10 @@ def execute(policy, command, *, repo, stdout, stderr=None, timeout=None, clock=N
         root = Path(coordination_root) if coordination_root is not None else pg.hold_root(repo, provider.process_env(['git']))
         root = root.resolve()
         checkout = Path(repo).resolve()
-        if within(root, checkout) and not within(root, (checkout / '.git').resolve()):
-            raise ValueError('coordination directory is inside a tested checkout')
+        if within(root, checkout):
+            metadata = git_metadata_dir(checkout, provider.process_env(['git']))
+            if metadata is None or not within(root, metadata):
+                raise ValueError('coordination directory is inside a tested checkout')
         root.mkdir(parents=True, exist_ok=True)
         directory = Path(tempfile.mkdtemp(prefix='test-wrapper-', dir=root))
         os.chmod(directory, 0o700)
