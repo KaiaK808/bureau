@@ -367,6 +367,23 @@ T006 in prose.
         report = self.cli(code=22)
         self.assertTrue(any('duplicate declaration: FR-001' in e['message'] for e in report['errors']))
 
+    def test_line_separators_cannot_hide_declarations(self):
+        value = contract()
+        value['requirements'] = []
+        for separator in ('\x0b', '\x0c', '\x1c', '\x85', '\u2028', '\u2029'):
+            with self.subTest(separator=repr(separator)):
+                self.write_inputs(value, spec='- **FR-001**' + separator + ': Required.\n', tasks='No tasks declared.\n')
+                report = self.cli(code=22)
+                self.assertIn('unmapped spec requirement: FR-001', [e['message'] for e in report['errors']])
+                found = MODULE['Validator']().declarations('- [ ]' + separator + 'T001 Create.\n',
+                                                           MODULE['TASK_DECLARATION'], '/tasks')
+                self.assertEqual(set(found), {'T001'})
+        for ending in ('\n', '\r\n', '\r'):
+            with self.subTest(ending=repr(ending)):
+                text = '- **FR-001**: One.' + ending + '- **FR-002**: Two.' + ending
+                found = MODULE['Validator']().declarations(text, MODULE['SPEC_DECLARATION'], '/spec')
+                self.assertEqual(found, {'FR-001': 1, 'FR-002': 2})
+
     def test_nonregular_and_unreadable_inputs(self):
         missing = self.directory / 'missing'
         directory = self.directory / 'directory'

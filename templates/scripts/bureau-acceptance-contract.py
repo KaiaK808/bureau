@@ -104,7 +104,8 @@ class Validator:
     def declarations(self, text, pattern, location):
         # Every matching line counts, also in a code block: a Markdown quirk must not hide a requirement.
         found = {}
-        for number, line in enumerate(text.splitlines(), 1):
+        # Markdown line endings only: splitlines() also breaks a line at whitespace the patterns accept.
+        for number, line in enumerate(re.split(r'\r\n|\n|\r', text), 1):
             match = pattern.match(line)
             if match:
                 if match[1] in found:
