@@ -16,6 +16,82 @@ Both entrypoints are discovered by `tests/run.sh` and run in every full shard on
 bash tests/run.sh
 ```
 
+Direct calls run once. Hosted CI never retries, and its workflow is unchanged.
+Use the local full-suite entrypoint below for a full local validation; on shared
+machines follow the maintainer's scheduled-suite limits.
+
+## Local full suite and serial reruns
+
+```bash
+python3 tests/run_suite.py --out "$SUITE_OUTPUT" --tag sample --project sample --shards 2
+```
+
+Set `SUITE_OUTPUT` to an output directory outside the worktree. Start with a clean
+checkout and use a fresh tag for that output directory. The orchestrator refuses
+even empty `CI`, `GITHUB_ACTIONS`, `BUREAU_TEST_SHARD` or `BUREAU_TEST_MANIFEST`
+variables, with no bypass. It freezes the complete partition from `run.sh --list`,
+runs manifests with the shard selector unset, and waits for every shard to end.
+Only then can it rerun failed files, once each and serially. A direct `run.sh`
+invocation never retries. It does not restart the full suite.
+
+`FAIL` and cleanly terminated `TIMEOUT` files qualify only with complete,
+consistent per-file records and successful process-group cleanup. A crashed or
+interrupted shard, missing/malformed/duplicate records, a vanished selected file,
+failed cleanup or a nonzero exit without a failed file prevents reruns and green.
+The entire failed set must fit both limits: five files and 3600 seconds of
+expected runtime from the current OS's weights/fallbacks, rather than deadlines.
+Otherwise no rerun starts. Deadlines retain the original rule and any explicit
+`BUREAU_TEST_FILE_TIMEOUT`. Stop at the first rerun that does not pass; the result
+lists the remaining files as not attempted. HEAD and worktree cleanliness are
+checked at the start, after shards, after each rerun and before green publication.
+
+Output includes `suite-TAG-s1.log`, `suite-TAG-s2.log` (with default two shards),
+`suite-TAG-rerun-<file>.log` and atomic `suite-TAG-result.json`. Schema version 1
+records SHA, tag/project, shard selections, attempts/deadlines/cleanup, first-pass
+failures, rerun paths, recovered files and files not attempted. States/exits are
+`passed` or `passed_after_serial_rerun` (0), `failed` (1), `invalid` or usage/I/O
+error (2), and `cancelled` (130). SIGINT, SIGTERM and SIGHUP stop new work, signal
+active runners for their own cleanup, and wait up to 50 seconds before killing a
+stuck runner, with a further three-second reap deadline per forced kill.
+Cancellation never promotes green. Failed result publication
+returns 2; a missing result never means green.
+
+A recovered file has reason `failed_in_parallel_passed_serially`: an **observed
+file-level flake**, not a proven cause. Detached processes that left their test's
+process group and persistent fixtures are not tracked. External wrappers must
+keep exclusive suite/worktree admission throughout execution and publication;
+these snapshot checks cannot detect transient edits or unrelated concurrent suites.
+
+`--state-dir DIR` overrides `$XDG_STATE_HOME/bureau/suites/KEY`, defaulting to
+`~/.local/state/bureau/suites/KEY` when XDG_STATE_HOME is unset. State also stays
+outside the worktree. `flakes.jsonl` is append-only, locked with `fcntl.flock`,
+flushed and fsynced. Entries identify the file (`test_name` equals the filename,
+`identity_scope: file`), SHA, UTC timestamp and run tag. Replaying the same
+SHA/tag/file does not append twice. Distinct SHAs count once using their earliest
+observation in the episode; repeats cannot refresh the seven-day window. The
+third SHA within the inclusive rolling seven days creates one
+`proposals/<id>.json`; an open proposal suppresses another for that file.
+
+```bash
+python3 tests/run_suite.py --state-dir "$SUITE_STATE" --project sample --resolve-proposal ID
+```
+
+Resolution starts a new counting episode using only later observations. Ledger
+or proposal persistence errors prevent recovered green. The code calls no Linear,
+GitHub or network service. A maintainer wrapper reads the proposal outbox and must
+validate schema, tag/project, expected SHA, complete attempts and the state before
+accepting local green; wrapper/desk adoption is separate from this checkout and
+cannot override red hosted checks.
+
+`BUREAU_TEST_RESULTS=path` optionally makes `run_test_files.py` append one JSON
+line per selection: `file`, `outcome` (`PASS`, `FAIL`, `TIMEOUT`, `MISSING`),
+`cleanup_ok`, `elapsed_seconds` and `deadline`. It must use a separate file for
+each runner. Without it, leaf output, exits and missing-file skipping stay unchanged.
+`test_run_suite.sh` uses only tiny private temporary Git repositories and real
+copies of the selection/runner scripts, with no provider or real state access.
+
+## Leaf runner details
+
 Required tooling: `bash`, `git`, `jq`, `timeout` (GNU coreutils). On macOS, install with `brew install coreutils` (provides `timeout`; `bash` and `jq` are usually present).
 
 The runner also requires Python 3.9+. Each file has its own process group and a
@@ -27,8 +103,11 @@ group members are stopped even after a successful test.
 
 Test files start with default SIGINT, SIGQUIT and SIGHUP dispositions, so starting
 the suite in the background or under `nohup` no longer changes results. The
-runner's own Ctrl-C handling is unchanged: it exits 130 and stops the active test
-group when SIGINT is handled, and still ignores SIGINT if it inherited that setting.
+runner's own Ctrl-C handling without `BUREAU_TEST_RESULTS` is unchanged: it exits
+130 and stops the active test group when SIGINT is handled, and still ignores
+SIGINT if it inherited that setting. The optional results path handles INT, TERM
+and HUP explicitly, defers interruption while registering a new child, and ignores
+repeated signals while the first interruption's cleanup finishes.
 
 Both `tests/run.sh` and direct `tests/run_test_files.py` runs set
 `PYTHONDONTWRITEBYTECODE=1` for every test, keeping template imports free of

@@ -1,4 +1,5 @@
 """Run selected shell tests with process-group deadlines and optional timings."""
+import json
 import os
 from pathlib import Path
 import re
@@ -88,16 +89,33 @@ def reset_test_signals():
     # Background shells and nohup can leave these ignored across exec.
     for signum in (signal.SIGINT, signal.SIGQUIT, signal.SIGHUP):
         signal.signal(signum, signal.SIG_DFL)
+    if 'BUREAU_TEST_RESULTS' in os.environ:
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGTERM, signal.SIGHUP})
 
 
-def run_file(name, timeout, log):
+def run_file(name, timeout, log, evidence=None):
     started = time.monotonic()
     outcome = 'FAIL'
-    child = subprocess.Popen(['bash', name], stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
-                             preexec_fn=reset_test_signals,
-                             env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
+    if evidence is not None:
+        evidence['cleanup_ok'] = True
+    # Keep cancellation pending until the child is registered inside its cleanup
+    # scope. The child resets this mask before exec; legacy calls stay unchanged.
+    # A nested runner inside a test must never write into this run's records.
+    child_env = {k: v for k, v in os.environ.items() if k != 'BUREAU_TEST_RESULTS'}
+    child_env['PYTHONDONTWRITEBYTECODE'] = '1'
+    mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM, signal.SIGHUP}) if evidence is not None else None
+    try:
+        child = subprocess.Popen(['bash', name], stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
+                                 preexec_fn=reset_test_signals,
+                                 env=child_env)
+    except BaseException:
+        if mask is not None:
+            signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+        raise
     try:
         try:
+            if mask is not None:
+                signal.pthread_sigmask(signal.SIG_SETMASK, mask)
             child.wait(timeout=max(0, started + timeout - time.monotonic()))
             outcome = 'PASS' if child.returncode == 0 else 'FAIL'
         except subprocess.TimeoutExpired:
@@ -106,10 +124,21 @@ def run_file(name, timeout, log):
             # Successful tests must not leave background children writing either.
             stop_group(child)
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+        if evidence is not None:
+            evidence['cleanup_ok'] = False
         print(f'Runner cleanup failed: {error}', file=log)
         if outcome != 'TIMEOUT':
             outcome = 'FAIL'
     return outcome, time.monotonic() - started
+
+
+def append_result(name, outcome, elapsed, timeout, evidence):
+    path = os.environ.get('BUREAU_TEST_RESULTS')
+    if path is not None:
+        with open(path, 'a') as output:
+            output.write(json.dumps(dict(file=name, outcome=outcome, elapsed_seconds=elapsed,
+                                         deadline=timeout, **evidence)) + '\n')
+            output.flush()
 
 
 def main(names):
@@ -125,11 +154,19 @@ def main(names):
         records.write(TIMING_HEADER)
         records.flush()
         for name in names:
-            if not Path(name).is_file():
-                continue
             timeout = override if override is not None else max(600, 3 * expected_seconds(name, weights, os_name))
+            if not Path(name).is_file():
+                if 'BUREAU_TEST_RESULTS' in os.environ:
+                    append_result(name, 'MISSING', 0, timeout, dict(cleanup_ok=True))
+                    failed.append(name)
+                continue
             with tempfile.TemporaryFile(mode='w+', errors='replace') as log:
-                outcome, elapsed = run_file(name, timeout, log)
+                if 'BUREAU_TEST_RESULTS' in os.environ:
+                    evidence = {}
+                    outcome, elapsed = run_file(name, timeout, log, evidence)
+                    append_result(name, outcome, elapsed, timeout, evidence)
+                else:
+                    outcome, elapsed = run_file(name, timeout, log)
                 records.write(f'{name}\t{elapsed:.6f}\t{outcome}\t{os_name}\n')
                 records.flush()
                 if outcome == 'TIMEOUT':
@@ -154,8 +191,15 @@ def main(names):
 
 if __name__ == '__main__':
     def interrupted(signum, frame):
+        if 'BUREAU_TEST_RESULTS' in os.environ:
+            if getattr(interrupted, 'seen', False):
+                return  # Let the first interruption's bounded cleanup finish.
+            interrupted.seen = True
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, interrupted)
+    if 'BUREAU_TEST_RESULTS' in os.environ:
+        signal.signal(signal.SIGINT, interrupted)
+        signal.signal(signal.SIGHUP, interrupted)
     try:
         sys.exit(main(sys.argv[1:]))
     except KeyboardInterrupt:
