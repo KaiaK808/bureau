@@ -53,8 +53,12 @@ failures, rerun paths, recovered files and files not attempted. States/exits are
 error (2), and `cancelled` (130). SIGINT, SIGTERM and SIGHUP stop new work, signal
 active runners for their own cleanup, and wait up to 50 seconds before killing a
 stuck runner, with a further three-second reap deadline per forced kill.
-Cancellation never promotes green. Failed result publication
-returns 2; a missing result never means green.
+Finalization blocks those signals and checks pending cancellation again after
+fsync, immediately before replacing the result. The green replace is the commit
+point: a signal held across it cannot change the receipt or its exit code.
+Failed publication removes any old result and attempts a non-green receipt;
+if that also fails, stderr reports the error and the exit is 2 (130 when
+cancelled). A missing result never means green.
 
 A recovered file has reason `failed_in_parallel_passed_serially`: an **observed
 file-level flake**, not a proven cause. Detached processes that left their test's
@@ -76,8 +80,12 @@ third SHA within the inclusive rolling seven days creates one
 python3 tests/run_suite.py --state-dir "$SUITE_STATE" --project sample --resolve-proposal ID
 ```
 
-Resolution starts a new counting episode using only later observations. Ledger
-or proposal persistence errors prevent recovered green. The code calls no Linear,
+Resolution starts a new counting episode using only later observations. Under
+the lock, a non-empty ledger without a trailing newline or a malformed proposal
+is rejected before append or resolution, without automatic repair. Proposals
+require a matching lowercase hex ID, file, open/resolved status, non-empty SHA
+and run-tag lists, creation time and a resolution time only when resolved.
+Ledger or proposal validation/persistence errors prevent recovered green. The code calls no Linear,
 GitHub or network service. A maintainer wrapper reads the proposal outbox and must
 validate schema, tag/project, expected SHA, complete attempts and the state before
 accepting local green; wrapper/desk adoption is separate from this checkout and
@@ -106,8 +114,9 @@ the suite in the background or under `nohup` no longer changes results. The
 runner's own Ctrl-C handling without `BUREAU_TEST_RESULTS` is unchanged: it exits
 130 and stops the active test group when SIGINT is handled, and still ignores
 SIGINT if it inherited that setting. The optional results path handles INT, TERM
-and HUP explicitly, defers interruption while registering a new child, and ignores
-repeated signals while the first interruption's cleanup finishes.
+and HUP explicitly, defers interruption while registering a new child and during
+process-group cleanup, and ignores repeated signals while the first
+interruption's cleanup finishes.
 
 Both `tests/run.sh` and direct `tests/run_test_files.py` runs set
 `PYTHONDONTWRITEBYTECODE=1` for every test, keeping template imports free of

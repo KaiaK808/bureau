@@ -122,7 +122,12 @@ def run_file(name, timeout, log, evidence=None):
             outcome = 'TIMEOUT'
         finally:
             # Successful tests must not leave background children writing either.
-            stop_group(child)
+            cleanup_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM, signal.SIGHUP}) if evidence is not None else None
+            try:
+                stop_group(child)
+            finally:
+                if cleanup_mask is not None:
+                    signal.pthread_sigmask(signal.SIG_SETMASK, cleanup_mask)
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
         if evidence is not None:
             evidence['cleanup_ok'] = False

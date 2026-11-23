@@ -277,6 +277,184 @@ fi
     def observation(self, sha, tag=None):
         return dict(sha=sha, tag=tag or sha, recovered={'test_a.sh': 'failed_in_parallel_passed_serially'})
 
+    def synthetic_suite(self, tag='sample', recovered=False):
+        self.out.mkdir(exist_ok=True)
+        run = suite.Suite(suite.argparse.Namespace(out=self.out, tag=tag, project='sample',
+                                                 state_dir=self.state))
+        run.result.update(state='passed_after_serial_rerun' if recovered else 'passed', sha='a' * 40)
+        if recovered:
+            run.result['recovered'] = self.observation('a')['recovered']
+        return run
+
+    def test_signal_at_publication_commit(self):
+        real_fsync, real_replace = os.fsync, os.replace
+        for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            for phase in ('before', 'after'):
+                with self.subTest(signal=signum, phase=phase):
+                    run = self.synthetic_suite(f'{signum}-{phase}')
+                    published, injected = [], []
+
+                    def fsync(fd):
+                        real_fsync(fd)
+                        if phase == 'before' and not injected:
+                            injected.append(True)
+                            signal.raise_signal(signum)
+
+                    def replace(source, target):
+                        published.append(json.loads(Path(source).read_text())['state'])
+                        real_replace(source, target)
+                        if phase == 'after' and not injected:
+                            injected.append(True)
+                            signal.raise_signal(signum)
+
+                    with patch.object(run, 'execute'), patch.object(suite, 'integrity'), \
+                            patch.object(suite.os, 'fsync', side_effect=fsync), \
+                            patch.object(suite.os, 'replace', side_effect=replace):
+                        code = run.run()
+                    result = json.loads((self.out / f'suite-{run.args.tag}-result.json').read_text())
+                    self.assertEqual(code, 130 if phase == 'before' else 0)
+                    self.assertEqual(result['state'], 'cancelled' if phase == 'before' else 'passed')
+                    self.assertEqual(published, [result['state']], 'publication must have one commit')
+
+    def test_publication_failure_leaves_no_green_receipt(self):
+        real_replace = os.replace
+        for cancelled in (False, True):
+            for fallback_works in (False, True):
+                with self.subTest(cancelled=cancelled, fallback_works=fallback_works):
+                    run = self.synthetic_suite(f'{cancelled}-{fallback_works}')
+                    path = self.out / f'suite-{run.args.tag}-result.json'
+                    path.write_text(json.dumps(run.result))  # An old green must not survive failure.
+                    attempts = []
+
+                    def replace(source, target):
+                        attempts.append(json.loads(Path(source).read_text())['state'])
+                        if len(attempts) == 1:
+                            if cancelled:
+                                signal.raise_signal(signal.SIGTERM)
+                            raise OSError('publication failed')
+                        if not fallback_works:
+                            raise OSError('fallback failed')
+                        real_replace(source, target)
+
+                    errors = io.StringIO()
+                    with patch.object(run, 'execute'), patch.object(suite, 'integrity'), \
+                            patch.object(suite.os, 'replace', side_effect=replace), \
+                            patch.object(suite.sys, 'stderr', errors):
+                        code = run.run()
+                    self.assertEqual(code, 130 if cancelled else 2)
+                    if fallback_works:
+                        self.assertEqual(json.loads(path.read_text())['state'],
+                                         'cancelled' if cancelled else 'invalid')
+                    else:
+                        self.assertFalse(path.exists())
+                        self.assertIn('fallback failed', errors.getvalue())
+                    self.assertEqual(list(self.out.glob('tmp*')), [])
+
+    def test_signal_during_cleanup_finishes_test_group(self):
+        self.plant('test_a.sh', '''exec python3 - <<'PY'
+import signal, subprocess, sys
+member = subprocess.Popen([sys.executable, '-c',
+    'import signal; signal.signal(signal.SIGTERM, signal.SIG_IGN); '
+    'print("ready", flush=True); signal.pause()'], stdout=subprocess.PIPE, text=True)
+assert member.stdout.readline() == 'ready\\n'
+PY
+''')
+        real_popen, real_stop = subprocess.Popen, runner.stop_group
+        groups, cleaned = [], []
+
+        def launch(*args, **kwargs):
+            child = real_popen(*args, cwd=self.tests, **kwargs)
+            self.children.append(child)
+            groups.append(child.pid)
+            return child
+
+        def stop(child):
+            signal.raise_signal(signal.SIGTERM)  # The leader exited; its resistant member remains.
+            real_stop(child)
+            cleaned.append(child.pid)
+
+        def interrupted(signum, frame):
+            raise KeyboardInterrupt
+
+        previous = signal.signal(signal.SIGTERM, interrupted)
+        try:
+            with patch.dict(os.environ, {**self.env, 'BUREAU_TEST_RESULTS': str(self.base / 'records')},
+                            clear=True), patch.object(runner.subprocess, 'Popen', side_effect=launch), \
+                    patch.object(runner, 'stop_group', side_effect=stop), \
+                    tempfile.TemporaryFile(mode='w+', dir=self.base) as log:
+                with self.assertRaises(KeyboardInterrupt):
+                    runner.run_file('test_a.sh', 5, log, {})
+            self.assertEqual(cleaned, groups)
+            self.assertEqual(len(groups), 1)
+            self.assertFalse(process_group_running(groups[0]), 'test group survived or inspection unavailable')
+        finally:
+            signal.signal(signal.SIGTERM, previous)
+            for group in groups:
+                try:
+                    os.killpg(group, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    def test_unterminated_ledger_is_invalid_without_mutation(self):
+        suite.ledger(self.state, self.observation('old'), now=1000000)
+        path = self.state / 'flakes.jsonl'
+        original = path.read_bytes().rstrip(b'\n')
+        path.write_bytes(original)
+        run = self.synthetic_suite(recovered=True)
+        with patch.object(run, 'execute'), patch.object(suite, 'integrity'):
+            code = run.run()
+        result = json.loads((self.out / 'suite-sample-result.json').read_text())
+        self.assertEqual(code, 2)
+        self.assertEqual(result['state'], 'invalid')
+        self.assertIn('newline', result['reason'])
+        self.assertEqual(path.read_bytes(), original)
+        self.assertEqual(list((self.state / 'proposals').glob('*.json')), [])
+
+    def test_malformed_proposals_are_invalid_before_ledger_append_or_resolve(self):
+        proposal_id = 'a' * 32
+        valid = dict(id=proposal_id, file='test_a.sh', status='open', shas=['old'],
+                     run_tags=['old'], created_at=suite.utc(1000000))
+        defects = [('not-object', [], proposal_id),
+                   ('stem-mismatch', valid, 'b' * 32)]
+        for key in valid:
+            defects.append((f'missing-{key}', {k: v for k, v in valid.items() if k != key}, proposal_id))
+        for key, values in {
+                'id': [None, 7, 'A' * 32, 'g' * 32, 'a' * 31],
+                'file': [None, 7], 'status': ['unknown', None],
+                'shas': [[], 'old', [7]], 'run_tags': [[], 'old', [7]],
+                'created_at': ['not-a-date', None, 7],
+                'resolved_at': [suite.utc(1000001), None],
+        }.items():
+            for index, value in enumerate(values):
+                defects.append((f'bad-{key}-{index}', {**valid, key: value}, proposal_id))
+        for index, value in enumerate((None, 7, 'not-a-date')):
+            defects.append((f'bad-resolved-date-{index}',
+                            {**valid, 'status': 'resolved', 'resolved_at': value}, proposal_id))
+        defects.append(('missing-resolved-date', {**valid, 'status': 'resolved'}, proposal_id))
+        defects.append(('unknown-resolved-status', {**valid, 'status': 'unknown',
+                                                   'resolved_at': suite.utc(1000001)}, proposal_id))
+        for index, (label, proposal, stem) in enumerate(defects):
+            with self.subTest(defect=label):
+                run = self.synthetic_suite(str(index), recovered=True)
+                run.args.state_dir = self.base / f'state-{index}'
+                directory = run.args.state_dir / 'proposals'
+                directory.mkdir(parents=True)
+                path = directory / (stem + '.json')
+                original = json.dumps(proposal).encode()
+                path.write_bytes(original)
+                with patch.object(run, 'execute'), patch.object(suite, 'integrity'):
+                    code = run.run()
+                result = json.loads((self.out / f'suite-{index}-result.json').read_text())
+                self.assertEqual(code, 2)
+                self.assertEqual(result['state'], 'invalid')
+                self.assertFalse((run.args.state_dir / 'flakes.jsonl').exists())
+                command = ['run_suite.py', '--state-dir', str(run.args.state_dir),
+                           '--project', 'sample', '--resolve-proposal', stem]
+                with patch.dict(os.environ, self.env, clear=True), patch.object(sys, 'argv', command):
+                    with self.assertRaises((ValueError, TypeError, KeyError)):
+                        suite.main()
+                self.assertEqual(path.read_bytes(), original)
+
     def test_ledger_three_shas_replay_and_open_proposal(self):
         for sha in ('a', 'a', 'b', 'c'):
             ids = suite.ledger(self.state, self.observation(sha), now=1000000)
@@ -442,7 +620,8 @@ PY
                 patch.object(runner, 'stop_group') as stop:
             with self.assertRaises(KeyboardInterrupt):
                 runner.run_file('test_a.sh', 600, io.StringIO(), {})
-        self.assertEqual(events, [signal.SIG_BLOCK, signal.SIG_SETMASK])
+        self.assertEqual(events, [signal.SIG_BLOCK, signal.SIG_SETMASK,
+                                  signal.SIG_BLOCK, signal.SIG_SETMASK])
         stop.assert_called_once_with(child)
         child.wait.assert_not_called()
 

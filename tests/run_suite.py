@@ -20,9 +20,10 @@ from run_test_files import expected_seconds, read_weights, runner_os, timeout_ov
 
 ROOT = Path(__file__).resolve().parents[1]
 GREEN = ('passed', 'passed_after_serial_rerun')
+CANCEL_SIGNALS = {signal.SIGINT, signal.SIGTERM, signal.SIGHUP}
 
 
-def atomic_json(path, value):
+def atomic_json(path, value, *, before_replace=None):
     name = None
     try:
         with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, delete=False) as output:
@@ -31,7 +32,10 @@ def atomic_json(path, value):
             output.write('\n')
             output.flush()
             os.fsync(output.fileno())
+        if before_replace is not None:
+            before_replace()
         os.replace(name, path)
+        name = None  # The replace is the commit; do no fallible cleanup after it.
     finally:
         if name and os.path.exists(name):
             os.unlink(name)
@@ -41,15 +45,45 @@ def utc(seconds):
     return datetime.fromtimestamp(seconds, timezone.utc).isoformat()
 
 
+def read_proposal(path):
+    proposal = json.loads(path.read_text())
+    if (not isinstance(proposal, dict) or not isinstance(proposal.get('id'), str)
+            or re.fullmatch(r'[a-f0-9]{32}', proposal['id']) is None
+            or proposal['id'] != path.stem or not isinstance(proposal.get('file'), str)
+            or proposal.get('status') not in ('open', 'resolved')
+            or any(not isinstance(proposal.get(key), list) or not proposal[key]
+                   or not all(isinstance(value, str) for value in proposal[key])
+                   for key in ('shas', 'run_tags'))
+            or (proposal['status'] == 'open' and 'resolved_at' in proposal)):
+        raise ValueError(f'malformed proposal: {path.name}')
+    try:
+        datetime.fromisoformat(proposal['created_at']).timestamp()
+        if proposal['status'] == 'resolved':
+            datetime.fromisoformat(proposal['resolved_at']).timestamp()
+    except (KeyError, TypeError, ValueError, OverflowError) as error:
+        raise ValueError(f'malformed proposal timestamp: {path.name}') from error
+    return proposal
+
+
 def ledger(state, result=None, *, resolve=None, now=None):
     """Serialize append/replay/reconciliation and explicit proposal resolution."""
     now = time.time() if now is None else now
     state.mkdir(parents=True, exist_ok=True)
     with (state / 'flakes.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        path = state / 'flakes.jsonl'
+        data = path.read_bytes() if path.exists() else b''
+        if data and not data.endswith(b'\n'):
+            raise ValueError('malformed flake ledger: missing trailing newline')
+        rows = [json.loads(line) for line in data.decode().splitlines()]
+        for row in rows:
+            if (row['identity_scope'] != 'file' or row['test_name'] != row['file']
+                    or not all(isinstance(row[k], str) for k in ('file', 'sha', 'run_tag'))):
+                raise ValueError('malformed flake ledger')
+            datetime.fromisoformat(row['timestamp']).timestamp()
         proposals_dir = state / 'proposals'
+        proposals = [read_proposal(p) for p in proposals_dir.glob('*.json')]
         proposals_dir.mkdir(exist_ok=True)
-        proposals = [json.loads(p.read_text()) for p in proposals_dir.glob('*.json')]
         if resolve is not None:
             proposal = next((p for p in proposals if p['id'] == resolve), None)
             if proposal is None:
@@ -58,13 +92,6 @@ def ledger(state, result=None, *, resolve=None, now=None):
                 proposal.update(status='resolved', resolved_at=utc(now))
                 atomic_json(proposals_dir / (resolve + '.json'), proposal)
             return []
-        path = state / 'flakes.jsonl'
-        rows = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
-        for row in rows:
-            if (row['identity_scope'] != 'file' or row['test_name'] != row['file']
-                    or not all(isinstance(row[k], str) for k in ('file', 'sha', 'run_tag'))):
-                raise ValueError('malformed flake ledger')
-            datetime.fromisoformat(row['timestamp']).timestamp()
         ids = []
         for name in result['recovered']:
             if not any((r['file'], r['sha'], r['run_tag']) == (name, result['sha'], result['tag']) for r in rows):
@@ -138,11 +165,20 @@ class Suite:
         if self.cancelled:
             raise KeyboardInterrupt
 
+    def cancellation_pending(self):
+        return self.cancelled or bool(signal.sigpending() & CANCEL_SIGNALS)
+
+    def check_publication_cancelled(self):
+        if self.cancellation_pending():
+            raise KeyboardInterrupt
+
     def stop(self):
         # Signal runners, not their sessions: test groups belong to the runners.
         for child in self.active:
             if child.poll() is None:
                 child.terminate()
+        # stop_group's 1s/3s grace periods plus up to 20s inspection overrun
+        # each total 44s; allow its masked cleanup to finish before killing it.
         end = time.monotonic() + 50
         for child in self.active:
             try:
@@ -234,7 +270,7 @@ class Suite:
         result['state'] = 'passed_after_serial_rerun' if failures else 'passed'
 
     def run(self):
-        handlers = {s: signal.signal(s, self.signal) for s in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)}
+        handlers = {s: signal.signal(s, self.signal) for s in CANCEL_SIGNALS}
         try:
             with tempfile.TemporaryDirectory(prefix=f'suite-{self.args.tag}-', dir=self.args.out) as directory:
                 self.execute(Path(directory))
@@ -248,25 +284,36 @@ class Suite:
             self.result.update(state='invalid', reason=str(error))
         finally:
             self.stop()
+        mask = signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
+        path = self.args.out / f'suite-{self.args.tag}-result.json'
         try:
-            if self.result['state'] in GREEN:
-                integrity(self.result['sha'])
-            if self.cancelled:
-                self.result.update(state='cancelled', reason='signal received')
-            path = self.args.out / f'suite-{self.args.tag}-result.json'
-            atomic_json(path, self.result)
-            # A signal during publication must replace any green result too.
-            if self.cancelled and self.result['state'] != 'cancelled':
-                self.result.update(state='cancelled', reason='signal received')
-                atomic_json(path, self.result)
-        except (OSError, ValueError, subprocess.SubprocessError) as error:
-            self.result.update(state='cancelled' if self.cancelled else 'invalid', reason=str(error))
-            atomic_json(self.args.out / f'suite-{self.args.tag}-result.json', self.result)
+            try:
+                self.check_publication_cancelled()
+                if self.result['state'] in GREEN:
+                    integrity(self.result['sha'])
+                atomic_json(path, self.result, before_replace=self.check_publication_cancelled)
+            except (KeyboardInterrupt, OSError, ValueError, TypeError, subprocess.SubprocessError) as error:
+                cancelled = isinstance(error, KeyboardInterrupt) or self.cancellation_pending()
+                self.result.update(state='cancelled' if cancelled else 'invalid',
+                                   reason='signal received' if cancelled else str(error))
+                try:
+                    path.unlink(missing_ok=True)  # No stale green may survive a failed publication.
+                    atomic_json(path, self.result)
+                except (OSError, ValueError, TypeError) as failure:
+                    try:
+                        path.unlink(missing_ok=True)
+                    except OSError as removal_error:
+                        print(f'Cannot remove failed result: {removal_error}', file=sys.stderr)
+                    print(f'Cannot publish suite result: {failure}', file=sys.stderr)
+            # Successful replacement is final, including when unmasking delivers
+            # a signal held across that commit. Exit only from the published state.
+            code = (0 if self.result['state'] in GREEN else 130 if self.result['state'] == 'cancelled'
+                    else 1 if self.result['state'] == 'failed' else 2)
         finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, mask)
             for signum, handler in handlers.items():
                 signal.signal(signum, handler)
-        return 0 if self.result['state'] in GREEN else (130 if self.result['state'] == 'cancelled' else
-                                                       1 if self.result['state'] == 'failed' else 2)
+        return code
 
 
 def main():
