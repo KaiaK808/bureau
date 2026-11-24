@@ -2,6 +2,7 @@
 # Slowest successful observation per file/OS, rounded up with update_shard_weights.py.
 # Future unmeasured cells use the other OS or 60s Linux / 120s macOS.
 # Hold-answer driver: local macOS measurement, 95.21s rounded up; Linux unmeasured.
+# Local suite driver: summed isolated macOS cases, rounded with startup allowance; Linux unmeasured.
 # test_file	ubuntu_seconds	macos_seconds
 test_acceptance_insights.sh	13	30
 test_acceptance_insights_negative_controls.sh	161	275
@@ -143,6 +144,7 @@ test_review_round1.sh	219	388
 test_review_verdict_order.sh	46	108
 test_run_deadlines.sh	7	9
 test_run_shards.sh	6	10
+test_run_suite.sh	-	32
 test_session_throttle.sh	1	1
 test_shared_runtime.sh	220	323
 test_shepherd.sh	193	359

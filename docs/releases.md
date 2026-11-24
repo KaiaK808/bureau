@@ -4,7 +4,32 @@ Bureau ships a source skill and templates that are copied into adopting reposito
 
 ## Current release status
 
-This source tree contains **Bureau v3.9.0**, published **2026-11-21**, a minor release on v3.8.0. Annotated tag `v3.9.0` (tag object `f6a0d79`) points at merge commit `96f47ce` of [#162](https://github.com/KaiaK808/bureau/pull/162), merged on 2026-11-20. Its [GitHub Release](https://github.com/KaiaK808/bureau/releases/tag/v3.9.0), "Bureau v3.9.0 — Semgrep and Trivy evidence, Python bytecode fix", is published as latest. The [release notes](release-notes.md) and [changelog](../CHANGELOG.md#390---2026-11-20) cover [#158](https://github.com/KaiaK808/bureau/pull/158), [#159](https://github.com/KaiaK808/bureau/pull/159), [#160](https://github.com/KaiaK808/bureau/pull/160), [#161](https://github.com/KaiaK808/bureau/pull/161) and [#163](https://github.com/KaiaK808/bureau/pull/163) in first-parent merge order.
+This source tree prepares **Bureau v3.9.2**, dated **2026-11-24**, a patch release on v3.9.0 with source tag `v3.9.2`. Tagging and publication remain separate maintainer operations. The [release notes](release-notes.md) and [changelog](../CHANGELOG.md#392---2026-11-24) cover [#165](https://github.com/KaiaK808/bureau/pull/165), [#166](https://github.com/KaiaK808/bureau/pull/166), [#167](https://github.com/KaiaK808/bureau/pull/167), [#168](https://github.com/KaiaK808/bureau/pull/168) and [#169](https://github.com/KaiaK808/bureau/pull/169) in first-parent merge order.
+
+The release changes implementation decision answers to require a later reply beginning with the exact `Answer: <hold-id>` line and a nonblank body, binds merge approvals to the reviewed head and target branch, and narrows Trivy ignore-comment stripping and Yarn plain-value parsing. The v3.9.0 publication record is also included. Target validation remains observational.
+
+From v3.9.0, once published, drain old drivers, preserve unfinished work and runtime records, compare installed drift, update the source and resync complete scripts and interfaces together. Resync evidence writers and readers together, reissue open implementation holds with fresh IDs while keeping them held, and obtain one fresh review for older approvals without the binding lines. Earlier Trivy receipts are remeasured once. See the upgrade and rollback steps in [From v3.9.0](migration.md#from-v390).
+
+### v3.9.2 validation record
+
+The merged release content is on main `5b0c279`. The fragments record focused offline validation with fake Linear, GitHub and providers. Live scanner and adopter qualification remain separate checks. The release branch's own suites and CI remain to be run by the maintainer.
+
+| Release check | Result / reference |
+|---|---|
+| Independent release review | TBD |
+| macOS gate suite and tested ref | TBD |
+| Remote gate suite and tested ref | TBD |
+| Release CI jobs, runs and results | TBD |
+| Final candidate/tag tested-tree comparison | TBD |
+| Manual live injection sample and adopter qualification | TBD |
+
+The live-service and deployment qualification limits, observational target check and pre-existing intermittent dispatcher shutdown test failure are recorded in the [release validation](release-notes.md#validation) and [known limitations](release-notes.md#known-limitations). See the [release verification procedure](#verify-the-tested-release-trees).
+
+## Previous stable releases
+
+### v3.9.0
+
+**Bureau v3.9.0**, published **2026-11-21**, is a minor release on v3.8.0. Annotated tag `v3.9.0` (tag object `f6a0d79`) points at merge commit `96f47ce` of [#162](https://github.com/KaiaK808/bureau/pull/162), merged on 2026-11-20. Its [GitHub Release](https://github.com/KaiaK808/bureau/releases/tag/v3.9.0), "Bureau v3.9.0 — Semgrep and Trivy evidence, Python bytecode fix", remains the latest published release until v3.9.2 is published. The [release notes](release-notes-v3.9.0.md) and [changelog](../CHANGELOG.md#390---2026-11-20) cover [#158](https://github.com/KaiaK808/bureau/pull/158), [#159](https://github.com/KaiaK808/bureau/pull/159), [#160](https://github.com/KaiaK808/bureau/pull/160), [#161](https://github.com/KaiaK808/bureau/pull/161) and [#163](https://github.com/KaiaK808/bureau/pull/163) in first-parent merge order.
 
 The release adds opt-in offline Semgrep CE evidence in code review, opt-in offline Trivy dependency and configuration evidence in QA, a fix for installed helper bytecode in shell stage commits, and a merge gate that holds instead of passing when the commit-status read fails ([#163](https://github.com/KaiaK808/bureau/pull/163), merge commit `31d14b7`). Both scanners start off, run under network denial when scanning, and offer advisory and blocking modes. Image scanning is outside this release. The v3.8.0 publication record is also included.
 
@@ -16,16 +41,14 @@ The merged release content is on main `31d14b7`. The fragments record local fixt
 
 | Release check | Result / reference |
 |---|---|
-| Independent release review | Codex, read-only, five rounds. Rounds 1 to 3 requested documentation changes (9, 11 and 9 findings), each fixed. Round 2 also found two Trivy parsing defects in merged scanner code; they are listed as known limitations below. A maintainer-approved fourth round, limited to the round 3 fixes, found two P3s, fixed by hand in `d8eaf20`. A fifth review, limited to the added commit-status read entry, requested two wording corrections (the exit `2` statement now keeps decided blockers at `25`; the PR list gained [#163](https://github.com/KaiaK808/bureau/pull/163)), fixed by hand in `764fd9a` without a further round. |
+| Independent release review | Codex, read-only, five rounds. Rounds 1 to 3 requested documentation changes (9, 11 and 9 findings), each fixed. Round 2 also found two Trivy parsing defects in merged scanner code; they are recorded in the [v3.9.0 known limitations](release-notes-v3.9.0.md#known-limitations). A maintainer-approved fourth round, limited to the round 3 fixes, found two P3s, fixed by hand in `d8eaf20`. A fifth review, limited to the added commit-status read entry, requested two wording corrections (the exit `2` statement now keeps decided blockers at `25`; the PR list gained [#163](https://github.com/KaiaK808/bureau/pull/163)), fixed by hand in `764fd9a` without a further round. |
 | macOS gate suite and tested ref | `764fd9a`, two shards: 196 of 196 on the first pass, no reruns (2026-11-20). An earlier run on the superseded candidate `d8eaf20` timed out once in `test_semgrep_pipeline.sh` at the 600-second floor under host load. |
 | Remote gate suite and tested ref | `openclaw-01`, exactly `764fd9a`, two shards: 196 of 196 on the first pass, no reruns (2026-11-20). |
 | Release CI jobs, runs and results | All `test` workflow runs passed on the first attempt, with no reruns. [#162](https://github.com/KaiaK808/bureau/pull/162) at `764fd9a`: pull-request [run 44734275670](https://github.com/KaiaK808/bureau/actions/runs/44734275670) and release-branch push [run 44734267517](https://github.com/KaiaK808/bureau/actions/runs/44734267517). Main at `96f47ce`: [run 44758796565](https://github.com/KaiaK808/bureau/actions/runs/44758796565). Tag `v3.9.0` at `96f47ce`: [run 44776516076](https://github.com/KaiaK808/bureau/actions/runs/44776516076). Earlier candidate `d8eaf20`: pull-request [run 44475835038](https://github.com/KaiaK808/bureau/actions/runs/44475835038) and push [run 44475801193](https://github.com/KaiaK808/bureau/actions/runs/44475801193), both green. |
 | Final candidate/tag tested-tree comparison | `python3 scripts/release_verify.py 764fd9a v3.9.0` passed: `templates/`, `tests/` and `scripts/` are tree-identical between the tested candidate and the tag. Candidate `764fd9a` and the tag's commit `96f47ce` have the identical tree (`ae6310256d09`). |
 | Manual live injection sample and adopter qualification | No result recorded for v3.9.0. |
 
-The real-engine and deployment qualification limits are recorded in the [release validation](release-notes.md#validation) and [known limitations](release-notes.md#known-limitations). See the [release verification procedure](#verify-the-tested-release-trees).
-
-## Previous stable releases
+The real-engine and deployment qualification limits are recorded in the [release validation](release-notes-v3.9.0.md#validation) and [known limitations](release-notes-v3.9.0.md#known-limitations). See the [release verification procedure](#verify-the-tested-release-trees).
 
 ### v3.8.0
 
