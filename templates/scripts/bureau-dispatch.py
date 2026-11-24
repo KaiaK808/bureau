@@ -22,6 +22,15 @@ r = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(r)
 SHUTDOWN_SETTLE_SECONDS = 5.0
 
+
+def shutdown_settle_seconds():
+    """Let gated tests outwait their parent without unbounding shutdown."""
+    raw = os.environ.get('BUREAU_TEST_DISPATCH_SETTLE_SECONDS', '')
+    if re.fullmatch(r'[0-9]{1,3}', raw) and 1 <= int(raw) <= 600:
+        return float(raw)
+    return SHUTDOWN_SETTLE_SECONDS
+
+
 # Every policy read uses the installed runtime, never a ticket's scripts.
 SOURCE = '''source "$1/bureau-config.sh"
 if [ -f "${BUREAU_ENV_FILE:-}" ]; then bureau_load_env --export "$BUREAU_ENV_FILE"; fi
@@ -76,7 +85,7 @@ class Helpers:
 
     def uncertain(self, child, reason):
         self.termination_failure = dict(group=child.pid, reason='dispatcher helper termination uncertain', detail=str(reason))
-        print('dispatch: ' + self.termination_failure['reason'] + ': ' + str(reason), file=sys.stderr)
+        r.note('dispatch: ' + self.termination_failure['reason'] + ': ' + str(reason))
         # The unfinished helper record was fsynced before Popen. No write here
         # is needed to make uncertainty survive a restart or a full filesystem.
 
@@ -187,7 +196,7 @@ def spec_start(repo, issue):
                    if key not in counted and leases.get('issue:' + key, {}).get('run_id') == run}
         if cap and issue not in counted and issue not in pending and len(counted | pending.keys()) >= cap:
             r.save(path, pending)
-            print('Spec gate: atomic admission waits for capacity', file=sys.stderr)
+            r.note('Spec gate: atomic admission waits for capacity')
             return 28
         run = os.environ.get('BUREAU_RUN_ID')
         if cap:
@@ -308,7 +317,7 @@ class Dispatcher:
             r.git(self.repo, 'worktree', 'remove', str(workspace))
             registry.unlink(missing_ok=True)
         except (OSError, subprocess.CalledProcessError):
-            print('dispatch: retaining worktree ' + str(workspace), file=sys.stderr)
+            r.note('dispatch: retaining worktree ' + str(workspace))
 
     def reap(self):
         for issue, (child, workspace, output) in list(self.lanes.items()):
@@ -333,7 +342,8 @@ class Dispatcher:
         # has yet to mark its leases. Observe both under one shared deadline;
         # never release ownership or signal a process to make it settle.
         pending = dict(self.runs)
-        deadline = time.monotonic() + SHUTDOWN_SETTLE_SECONDS
+        settle_seconds = shutdown_settle_seconds()
+        deadline = time.monotonic() + settle_seconds
         while pending:
             try:
                 with locked(self.store.root / 'guard', nonblocking=True):
@@ -350,8 +360,8 @@ class Dispatcher:
             if not pending or remaining <= 0: break
             time.sleep(min(.05, remaining))
         for run, issue in sorted(pending.items()):
-            print(f'dispatch: human_hold: run {run} ({issue}) did not settle within '
-                  f'{SHUTDOWN_SETTLE_SECONDS:g} s; ownership retained', file=sys.stderr)
+            r.note(f'dispatch: human_hold: run {run} ({issue}) did not settle within '
+                   f'{settle_seconds:g} s; ownership retained')
 
     def launch(self, issue, stage):
         # One final authoritative shell read, then runtime admission and atomic
@@ -511,13 +521,13 @@ def main():
                 os.execvpe(command[0], command, {**os.environ, 'BUREAU_POLLER_LOCKED': '1'})
             return Dispatcher(repo, args, lock.fileno()).run(cancelled=lambda: stopped)
     except Stop as exc:
-        if exc.output: print('dispatch: ' + exc.output, file=sys.stderr)
+        if exc.output: r.note('dispatch: ' + exc.output)
         return exc.code
     except BlockingIOError:
-        print('dispatch: another dispatcher or stage poller owns this common Git directory', file=sys.stderr)
+        r.note('dispatch: another dispatcher or stage poller owns this common Git directory')
         return 21
     except (ValueError, OSError, KeyError, subprocess.CalledProcessError) as exc:
-        print('dispatch: ' + str(exc), file=sys.stderr)
+        r.note('dispatch: ' + str(exc))
         return 24
 
 
