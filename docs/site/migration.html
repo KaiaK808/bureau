@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="4ff77dafda307b8d2ad7309a376585fba258f4eaaa3a4f2d3a6b1f8f5293d39f">
+<meta name="bureau-source-sha256" content="22cf18ed88bb628ea658cc71a9d4f9405e9c829e412204d9a774d10ea45acd86">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -28,13 +28,15 @@ href="https://github.com/KaiaK808/bureau">KaiaK808/bureau</a> source:
 legacy untagged installations, v2.0.0 installations, the v3 release
 candidates, v3.0.0, v3.0.1, v3.0.2, the v3.1 release candidates, v3.1.0,
 the v3.2 release candidate, v3.2.0, v3.2.1, the v3.3 release candidates,
-v3.3.0, v3.4.0, v3.4.1, v3.5.0, v3.5.1, v3.6.0, v3.7.0 and v3.8.0 to
-<strong>Bureau v3.9.0</strong>, dated 2026-11-20, published on
-2026-11-21 as the latest <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.9.0">GitHub
-Release</a>. The commands below require the selected release's source
-skill. See the <a href="release-notes.html">v3.9.0 release notes</a>, the
+v3.3.0, v3.4.0, v3.4.1, v3.5.0, v3.5.1, v3.6.0, v3.7.0, v3.8.0 and
+v3.9.0 to <strong>Bureau v3.9.2</strong>, dated 2026-11-24, in release
+preparation. Tagging and publication remain separate maintainer
+operations. The commands below require the selected release's source
+skill. See the <a href="release-notes.html">v3.9.2 release notes</a>, the
 previous stable <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.9.0">v3.9.0
+release</a> and its <a href="release-notes-v3.9.0.html">release notes</a>,
+the earlier <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.8.0">v3.8.0
 release</a> and its <a href="release-notes-v3.8.0.html">release notes</a>,
 the earlier <a
@@ -94,8 +96,9 @@ href="#upgrade-to-v35">Upgrade to v3.5</a>, <a
 href="#upgrade-to-v351">Upgrade to v3.5.1</a>, <a
 href="#upgrade-to-v36">Upgrade to v3.6</a>, <a
 href="#upgrade-to-v37">Upgrade to v3.7</a>, <a
-href="#upgrade-to-v38">Upgrade to v3.8</a> and <a
-href="#upgrade-to-v39">Upgrade to v3.9</a>.</p>
+href="#upgrade-to-v38">Upgrade to v3.8</a>, <a
+href="#upgrade-to-v39">Upgrade to v3.9</a> and <a
+href="#upgrade-to-v392">Upgrade to v3.9.2</a>.</p>
 <h2 id="implementation-decision-holds">Implementation decision
 holds</h2>
 <p>Drain old drivers and preserve unfinished work. Compare installed
@@ -144,14 +147,15 @@ installed commit.</p>
 <code>KaiaK808/bureau</code> repository (HTTPS or SSH). Preserve local
 source changes before continuing; do not reset the skill clone. Use a
 clean checkout to select the published release's exact tag
-(<code>v3.9.0</code> for this release, <code>v3.8.0</code> for the
-previous stable release, <code>v3.7.0</code>, <code>v3.6.0</code>,
+(<code>v3.9.2</code> once published for this release,
+<code>v3.9.0</code> for the previous stable release,
+<code>v3.8.0</code>, <code>v3.7.0</code>, <code>v3.6.0</code>,
 <code>v3.5.1</code>, <code>v3.5.0</code>, <code>v3.4.1</code>,
 <code>v3.4.0</code>, <code>v3.3.0</code>, <code>v3.2.1</code>,
 <code>v3.2.0</code>, <code>v3.1.0</code>, <code>v3.0.2</code>,
 <code>v3.0.1</code>, <code>v3.0.0</code> or <code>v2.0.0</code> for an
 earlier one):</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.9.0 <span class="co"># or v3.8.0, v3.7.0, v3.6.0, v3.5.1, v3.5.0, v3.4.1, v3.4.0, v3.3.0, v3.2.1, v3.2.0, v3.1.0, v3.0.2, v3.0.1, v3.0.0, v2.0.0</span></span>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.9.2 <span class="co"># once published, or v3.9.0, v3.8.0, v3.7.0, v3.6.0, v3.5.1, v3.5.0, v3.4.1, v3.4.0, v3.3.0, v3.2.1, v3.2.0, v3.1.0, v3.0.2, v3.0.1, v3.0.0, v2.0.0</span></span>
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> fetch origin tag <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> switch <span class="at">--detach</span> <span class="st">&quot;refs/tags/</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
 <span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> rev-parse HEAD</span></code></pre></div>
@@ -171,15 +175,95 @@ directory, keep it intact and install a separate official clone from the
 loaded skill entry point should move before replacing any link. Do not
 merge unrelated histories or change the old checkout's remote as an
 upgrade shortcut.</p>
+<h2 id="upgrade-to-v392">Upgrade to v3.9.2</h2>
+<p><strong>v3.9.2</strong>, dated <strong>2026-11-24</strong>, is a
+patch release on v3.9.0, in release preparation. Its <a
+href="release-notes.html">release notes</a> cover the merged changes,
+configuration, validation and limitations. Tagging and publication
+remain separate maintainer operations. Configuration schema versions,
+keys and defaults, the v3 exit vocabulary, Spec Kit 1.2.2 and the
+current-workspace prepare/finish protocol remain.</p>
+<h3 id="from-v390">From v3.9.0</h3>
+<p>Apply these steps once v3.9.2 is published. All release changes are
+merged.</p>
+<ol type="1">
+<li><p>Drain old drivers and stop all shepherds, queue loops,
+dispatchers and supervisors. Preserve unfinished work, local commits,
+customized assets, user instructions, Spec Kit assets and constitution,
+and shared runtime records.</p></li>
+<li><p>Compare installed drift, reconcile local incident fixes and
+record the previous source commit for rollback. Select the published
+<code>v3.9.2</code> tag using <a href="#select-the-source-release">the
+source-update steps</a> and refresh skill discovery.</p></li>
+<li><p>Follow the <a
+href="#before-changing-an-adopting-repository">pre-upgrade inventory and
+backup steps</a>, including <code>.bureau-install.json</code> and
+<code>.gitignore</code>. Preview the <strong>complete scripts scope
+together with interfaces</strong> from each adopting repository root.
+Set <code>BUREAU_TARGET</code> to the target already installed:
+<code>claude</code>, <code>codex</code> or <code>both</code>.</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_TARGET</span><span class="op">=</span>claude</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> <span class="st">&quot;</span><span class="va">$BUREAU_TARGET</span><span class="st">&quot;</span> <span class="at">--scope</span> scripts <span class="at">--scope</span> interfaces</span></code></pre></div>
+<p>Review every conflict and preserve customizations. For each approved
+replacement, add a path-specific option such as
+<code>--overwrite scripts/merge-pipeline.sh</code> and preview again.
+Apply once there are no unresolved conflicts, including the same
+approved <code>--overwrite</code> options on apply.
+<code>--update</code> edits configuration only.</p>
+<div class="sourceCode" id="cb4"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> <span class="st">&quot;</span><span class="va">$BUREAU_TARGET</span><span class="st">&quot;</span> <span class="at">--scope</span> scripts <span class="at">--scope</span> interfaces <span class="at">--apply</span></span></code></pre></div></li>
+<li><p>Resync evidence writers and readers together. Older readers do
+not understand the new optional <code>reviewed_head</code> round field;
+legacy records still use matching receipts. Older approvals without the
+new binding lines need one fresh review. Target validation remains
+observational: a retarget after the final read can change the merge
+destination, and the post-merge check detects it.</p></li>
+<li><p>Before re-enabling dispatch, reissue each open implementation
+hold with a fresh runtime ID and its still-open questions, including
+tickets whose label was already removed. Keep each ticket held during
+reissue and ask humans to repost earlier decisions as a later reply
+beginning with the exact <code>Answer: &lt;hold-id&gt;</code> line and a
+nonblank body. This changes what counts as an answer. Completed holds
+stay as they are. See <a
+href="#implementation-decision-holds">Implementation decision holds</a>
+for the publication helper and restart procedure.</p></li>
+<li><p>Expect earlier Trivy receipts to be remeasured once because
+parser and neutralization identities change. Unrecognised inline-ignore
+shapes and unsupported Yarn plain values reduce coverage. Configuration,
+commands, evidence format and exits for Trivy remain unchanged.</p></li>
+<li><p>Run
+<code>python3 scripts/bureau-doctor.py --mode background</code> for a
+background installation or
+<code>python3 scripts/bureau-doctor.py --mode app</code> for an app-only
+installation. Reconcile holds, then restart all drivers together. If
+dispatch was paused for the upgrade, run
+<code>python3 scripts/bureau-runtime.py unpause</code> after restart and
+hold reissue. Qualify a representative ticket before leaving dispatch
+unattended; live adopter qualification remains pending.</p></li>
+</ol>
+<p><strong>From earlier versions.</strong> Apply <a
+href="#upgrade-to-v39">Upgrade to v3.9</a> and the cumulative steps it
+references first, then this upgrade. The v3.9.0 publication record
+itself needs only a source checkout update.</p>
+<p><strong>Rollback to v3.9.0.</strong> Stop drivers and reconcile
+unfinished writers, local commits and holds. Follow the <a
+href="#restore-the-pre-upgrade-installation">restore procedure</a> to
+restore the complete v3.9.0 asset set, compatible configuration and
+installer records from the private backup. Use the saved inventory to
+identify upgrade additions and preserve later work. Keep runtime and
+scan records for inspection. Prior commits, pushes, comments, labels and
+state moves persist through rollback.</p>
 <h2 id="upgrade-to-v39">Upgrade to v3.9</h2>
 <p><strong>v3.9.0</strong>, dated <strong>2026-11-20</strong>, is a
-minor release on v3.8.0, published on <strong>2026-11-21</strong> as the
-latest <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.9.0">GitHub
-Release</a>. Its <a href="release-notes.html">release notes</a> cover the
-merged changes, configuration, validation and limitations. This upgrade
-uses the existing configuration schema versions, v3 exit vocabulary,
-Spec Kit 1.2.2 and current-workspace prepare/finish protocol.</p>
+minor release on v3.8.0, published on <strong>2026-11-21</strong> as a
+<a href="https://github.com/KaiaK808/bureau/releases/tag/v3.9.0">GitHub
+Release</a>. Its <a href="release-notes-v3.9.0.html">release notes</a>
+cover the merged changes, configuration, validation and limitations.
+This upgrade uses the existing configuration schema versions, v3 exit
+vocabulary, Spec Kit 1.2.2 and current-workspace prepare/finish
+protocol.</p>
 <h3 id="from-v380">From v3.8.0</h3>
 <p>Apply these steps to upgrade from v3.8.0.</p>
 <ol type="1">
@@ -197,9 +281,9 @@ backup steps</a> and use this preview for the <strong>complete scripts
 scope</strong>. Run it from the root of each adopting repository, with
 <code>BUREAU_TARGET</code> set to the target already installed:
 <code>claude</code>, <code>codex</code> or <code>both</code>.</p>
-<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_TARGET</span><span class="op">=</span>claude</span>
-<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
-<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> <span class="st">&quot;</span><span class="va">$BUREAU_TARGET</span><span class="st">&quot;</span> <span class="at">--scope</span> scripts</span></code></pre></div>
+<div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_TARGET</span><span class="op">=</span>claude</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> <span class="st">&quot;</span><span class="va">$BUREAU_TARGET</span><span class="st">&quot;</span> <span class="at">--scope</span> scripts</span></code></pre></div>
 <p>Include <code>.bureau-install.json</code> and <code>.gitignore</code>
 in the private backup. Review each conflict and preserve customizations.
 For each approved replacement, add a path-specific option such as
@@ -207,9 +291,9 @@ For each approved replacement, add a path-specific option such as
 scripts-only preview again. Apply once the preview has no unresolved
 conflicts. Include the same <code>--overwrite</code> options on
 apply.</p>
-<div class="sourceCode" id="cb4"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> <span class="st">&quot;</span><span class="va">$BUREAU_TARGET</span><span class="st">&quot;</span> <span class="at">--scope</span> scripts <span class="at">--apply</span></span></code></pre></div></li>
+<div class="sourceCode" id="cb6"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> <span class="st">&quot;</span><span class="va">$BUREAU_TARGET</span><span class="st">&quot;</span> <span class="at">--scope</span> scripts <span class="at">--apply</span></span></code></pre></div></li>
 <li><p>Remove <code>qa.trivy.image_archive_command</code> from existing
 configurations, including entries set to <code>null</code>. Runtime and
 doctor reject the key even when Trivy is disabled. Semgrep and Trivy
@@ -321,8 +405,8 @@ decision script, workflow and policy to the default branch. Require
 <code>bureau/human-approval</code> in branch protection. The scope is
 separate from existing default scopes; preview, then apply using the
 actual loaded source skill root:</p>
-<div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--scope</span> approval</span>
-<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--scope</span> approval <span class="at">--apply</span></span></code></pre></div>
+<div class="sourceCode" id="cb8"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--scope</span> approval</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--scope</span> approval <span class="at">--apply</span></span></code></pre></div>
 <p>The approval status is an exact-commit accident guard. Only created
 comments trigger it; edited comments do not count, a new push has no
 status, and refused commands leave statuses untouched. Doctor does not
@@ -1948,10 +2032,10 @@ native hook-name mapping and the helper guidance below.</p>
 branch, including numeric feature branches, <code>codex/*</code> and
 detached checkouts, resolve the issue's exact approved spec folder and
 always pass both variables:</p>
-<div class="sourceCode" id="cb14"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="va">SPECIFY_FEATURE</span><span class="op">=</span>NNN-approved-feature <span class="dt">\</span></span>
-<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="va">SPECIFY_FEATURE_DIRECTORY</span><span class="op">=</span>specs/NNN-approved-feature <span class="dt">\</span></span>
-<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> .specify/scripts/bash/check-prerequisites.sh <span class="at">--json</span> <span class="at">--paths-only</span></span></code></pre></div>
+<div class="sourceCode" id="cb16"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="va">SPECIFY_FEATURE</span><span class="op">=</span>NNN-approved-feature <span class="dt">\</span></span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="va">SPECIFY_FEATURE_DIRECTORY</span><span class="op">=</span>specs/NNN-approved-feature <span class="dt">\</span></span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> .specify/scripts/bash/check-prerequisites.sh <span class="at">--json</span> <span class="at">--paths-only</span></span></code></pre></div>
 <p>Replace both example values with the real approved feature and
 configured specs path. Use the same pair for every helper that consumes
 an existing feature. Fresh worktrees lack the ignored
@@ -2023,9 +2107,9 @@ href="stage-protocol.html">ownership/recovery protocol</a>.</li>
 conflicts</h2>
 <p>Run the helper from the refreshed source, with the adopting
 repository as the current directory:</p>
-<div class="sourceCode" id="cb15"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
-<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> both <span class="at">--scope</span> interfaces <span class="at">--scope</span> scripts</span></code></pre></div>
+<div class="sourceCode" id="cb17"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> both <span class="at">--scope</span> interfaces <span class="at">--scope</span> scripts</span></code></pre></div>
 <p>Preview writes nothing. Exit code <code>3</code> means at least one
 asset conflict. Even with <code>--apply</code>, <strong>one unresolved
 conflict prevents every file in that asset batch from being
@@ -2064,11 +2148,11 @@ unpacked archive or a copy inside another repository, is recorded as
 repository's commit is never used. A preview or an apply stopped by a
 conflict writes no source. The manifest stays at version <code>1</code>:
 installers without source recording still read it.</p>
-<div class="sourceCode" id="cb16"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;sources&quot;</span><span class="er">:</span> <span class="fu">{</span></span>
-<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;scripts&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;git&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;tag&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.1.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;describe&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.1.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;commit&quot;</span><span class="fu">:</span> <span class="st">&quot;&lt;40-character SHA&gt;&quot;</span><span class="fu">,</span> <span class="dt">&quot;dirty&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">}</span></span>
-<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span><span class="er">,</span></span>
-<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;sources_files_sha256&quot;</span><span class="er">:</span> <span class="st">&quot;&lt;sha256 of the files map&gt;&quot;</span></span></code></pre></div>
+<div class="sourceCode" id="cb18"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;sources&quot;</span><span class="er">:</span> <span class="fu">{</span></span>
+<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;scripts&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;git&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;tag&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.1.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;describe&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.1.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;commit&quot;</span><span class="fu">:</span> <span class="st">&quot;&lt;40-character SHA&gt;&quot;</span><span class="fu">,</span> <span class="dt">&quot;dirty&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">}</span></span>
+<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span><span class="er">,</span></span>
+<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;sources_files_sha256&quot;</span><span class="er">:</span> <span class="st">&quot;&lt;sha256 of the files map&gt;&quot;</span></span></code></pre></div>
 <table>
 <thead>
 <tr>
@@ -2131,11 +2215,11 @@ do not describe an incomplete scripts upgrade as a working new
 runtime.</li>
 </ul>
 <p>Example for a single reviewed script replacement:</p>
-<div class="sourceCode" id="cb17"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
-<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> both <span class="at">--scope</span> interfaces <span class="at">--scope</span> scripts <span class="dt">\</span></span>
-<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--overwrite</span> scripts/qa-pipeline.sh</span>
-<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a><span class="co"># After reviewing this preview, repeat the same command with --apply.</span></span></code></pre></div>
+<div class="sourceCode" id="cb19"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> both <span class="at">--scope</span> interfaces <span class="at">--scope</span> scripts <span class="dt">\</span></span>
+<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--overwrite</span> scripts/qa-pipeline.sh</span>
+<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a><span class="co"># After reviewing this preview, repeat the same command with --apply.</span></span></code></pre></div>
 <p>Other conflicts still block that example. Repeat
 <code>--overwrite</code> only for each reviewed path in the selected
 scope. There is no blanket force, skip-conflicts or automatic merge
@@ -2167,9 +2251,9 @@ migration</h2>
 <code>.bureau.json</code> or <code>.env</code>. Configuration version
 <code>2</code> is a schema version, not a Bureau release number. To
 adopt it, preview and then apply:</p>
-<div class="sourceCode" id="cb18"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> migrate <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span></span>
-<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> migrate <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--apply</span></span></code></pre></div>
+<div class="sourceCode" id="cb20"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> migrate <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span></span>
+<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> migrate <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--apply</span></span></code></pre></div>
 <p>Migration retains existing IDs, labels, models, switches and
 extension keys. It makes the existing Claude runner default explicit
 when absent and adds <code>agents.model_compatibility: "v1"</code> when

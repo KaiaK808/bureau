@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="dd694d759979249e5f361061d165bd82dc2b1940ea3ad4be69602b07a26b24a7">
+<meta name="bureau-source-sha256" content="044555a834b17e68c236c8cc9124d94b8044375542af595f3ad9288a9a40d6f3">
 <title>release-notes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -16,119 +16,106 @@
 <a href="index.html">Quickstart</a><a href="configuration.html">Configuration</a><a href="provider-runtime.html">Providers</a><a href="stage-protocol.html">Stage protocol</a><a href="operator-cheatsheet.html">Operator guide</a><a href="exit-codes.html">Exit codes</a><a href="recipes.html">Recipes</a><a href="troubleshooting.html">Troubleshooting</a><a href="migration.html">Upgrade and rollback</a><a href="releases.html">Releases</a><a href="codex-acceptance.html">Acceptance record</a><a href="token-efficiency.html">Optional efficiency settings</a>
 </nav></aside>
 <main class="bhb-main"><h1
-id="bureau-v390--semgrep-and-trivy-evidence-python-bytecode-fix">Bureau
-v3.9.0 — Semgrep and Trivy evidence, Python bytecode fix</h1>
-<p><strong>Published release · 2026-11-21 · source tag
-<code>v3.9.0</code>.</strong> The <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.9.0">GitHub
-Release</a>, "Bureau v3.9.0 — Semgrep and Trivy evidence, Python
-bytecode fix", is published as latest. Annotated tag <code>v3.9.0</code>
-(tag object <code>f6a0d79</code>) points at merge commit
-<code>96f47ce</code> of <a
-href="https://github.com/KaiaK808/bureau/pull/162">#162</a>, merged on
-2026-11-20. v3.9.0 is a minor release on <a
-href="release-notes-v3.8.0.html">v3.8.0</a>.</p>
+id="bureau-v392--decision-answers-merge-approval-binding-and-trivy-parsing">Bureau
+v3.9.2 — Decision answers, merge approval binding and Trivy parsing</h1>
+<p><strong>Release preparation · 2026-11-24 · source tag
+<code>v3.9.2</code>.</strong> v3.9.2 is a patch release on <a
+href="release-notes-v3.9.0.html">v3.9.0</a>. Tagging and GitHub Release
+publication remain separate maintainer operations.</p>
 <p>The release includes <a
-href="https://github.com/KaiaK808/bureau/pull/158">#158</a>, <a
-href="https://github.com/KaiaK808/bureau/pull/159">#159</a>, <a
-href="https://github.com/KaiaK808/bureau/pull/160">#160</a>, <a
-href="https://github.com/KaiaK808/bureau/pull/161">#161</a> and <a
-href="https://github.com/KaiaK808/bureau/pull/163">#163</a> in
+href="https://github.com/KaiaK808/bureau/pull/165">#165</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/166">#166</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/167">#167</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/168">#168</a> and <a
+href="https://github.com/KaiaK808/bureau/pull/169">#169</a> in
 first-parent merge order. All changes are merged. The <a
-href="../../CHANGELOG.md#390---2026-11-20">changelog</a> collects the five
+href="../../CHANGELOG.md#392---2026-11-24">changelog</a> collects the four
 release fragments.</p>
-<h2 id="what-changed-since-v380">What changed since v3.8.0</h2>
-<h3 id="optional-semgrep-ce-evidence-in-code-review">Optional Semgrep CE
-evidence in code review</h3>
-<p>Independent specialists finish their first pass before all review
-roles receive the bounded Semgrep projection in the late step. Semgrep
-scans offline under network denial. Bureau loads the bundled
-<code>bureau-semgrep-rules.yml</code> from the installed runtime and
-reads any configured extra rules and
-<code>.bureau/semgrep-ignore.json</code> suppressions from the pinned PR
-base. Bureau verifies a private copy of the Semgrep packages against a
-shipped manifest before probing the interpreter and re-hashes the copy
-before each scan side. Once Bureau has loaded the rules and validated
-the base suppressions, an empty set of eligible files on both sides
-passes as <code>not_applicable</code> without checking scanner
-prerequisites. A configured <code>extra_rules</code> file missing from
-the pinned base yields <code>not_measured</code> even with an empty
-eligible set.</p>
-<p>In advisory mode, Bureau reports the evidence and skips the scanner's
-verdict floor. On a fresh review, any Semgrep projection, including
-<code>not_applicable</code>, triggers one late provider call per
-specialist after the independent passes. Malformed supplemental output
-ends the stage with exit 22. Blocking mode holds approval on new
-findings at or above the configured severity and on unavailable or
-incomplete measurements. Existing BLOCK verdicts and review caps still
-apply. With blocking enabled, Bureau's automatic merge pipeline rechecks
-the receipt against the head and base.</p>
-<h3 id="optional-trivy-evidence-in-qa">Optional Trivy evidence in
-QA</h3>
-<p>Trivy scans dependencies and configuration on the final QA head,
-including repositories without a test harness. This release excludes
-image scanning. The stage runs a verified private copy of the binary
-offline under network denial, checks the external database cache for
-integrity and freshness, and uses Trivy's embedded configuration checks.
-Database downloads occur in a separate operator refresh. Expiring
-exceptions come from the pinned base and the scan ignores head-native
-suppressions.</p>
-<p>With Trivy enabled, live QA without a test harness runs
-<code>git push origin HEAD</code> even when there is no QA merge to
-publish. A rejected push exits 18 before Trivy evidence or ticket
-routing, including in advisory mode. A failed PR lookup or base fetch
-while pinning the scan base also exits 18 before scanning. Once the scan
-step runs, advisory mode reports the result and QA continues. Blocking
-mode holds for a human on qualifying new findings, measurement gaps or
-coverage gaps without an active exception. After a failed base scan,
-unclassified head findings still count toward the severity floor, even
-if every coverage gap has a file exception. With Trivy enabled in
-blocking mode, Bureau's automatic merge pipeline requires a valid
-final-head receipt even without a QA state. With
-<code>agents.merge_mode: "manual"</code> and no QA state, a human can
-merge without a Trivy receipt.</p>
-<h3 id="scanner-receipts-and-merge-freshness">Scanner receipts and merge
-freshness</h3>
-<p>Both scanners write immutable evidence attempts and add a retention
-reference for each PR that produces or reuses one. Open consuming PRs
-keep referenced attempts beyond the newest 20. An unknown PR inventory
-keeps all referenced attempts.</p>
-<p>For scanners enabled in blocking mode, Bureau's automatic merge
-pipeline checks the receipts and fetches the base again before the
-existing just-in-time merge gates. A final read checks the PR base name
-and live branch tip before the head-pinned merge. If either changes, the
-merge retries with exit 2 even when the final gates pass. The ticket
-checkpoint remains the last step before merge.</p>
-<h3 id="python-bytecode-in-stage-commits">Python bytecode in stage
-commits</h3>
-<p>Stages suppress installed Bureau helper bytecode and exclude the
-Bureau cache from shell stage commits. The installer adds the literal
-<code>scripts/__pycache__/</code> ignore rule and preserves existing
-rules. Staging and doctor match the exact path components and existing
-aliases of the same directory. A separate application's
-<code>Scripts/__pycache__/</code> remains eligible for ordinary staging
-on a case-sensitive filesystem.</p>
-<h3 id="merge-gate-holds-on-an-unreadable-commit-status-read">Merge gate
-holds on an unreadable commit-status read</h3>
-<p>When <code>agents.merge_require_green_ci</code> is on, Bureau's CI
-merge gate reads check runs and legacy commit statuses for the PR head.
-Before this release, a failed status read counted as an empty status
-list, so green check runs could pass the gate while statuses, possibly a
-failing required context, were never read. A failed status read now
-prevents green CI regardless of
-<code>agents.merge_min_required_checks</code>, and the gate line names
-the failed read and the head SHA. If no decided blocker takes
-precedence, the dedicated merge stage, the inline merge after review and
-the just-in-time recheck end with <code>2</code> and retry later.
-Decided check-run blockers, such as a failed check or an overdue queued
-check, keep <code>25</code>, and
-<code>merge_require_green_ci: false</code> still switches the check off.
-This behaviour had been present since v3.1.0.</p>
-<h3 id="v380-publication-record">v3.8.0 publication record</h3>
+<h2 id="what-changed-since-v390">What changed since v3.9.0</h2>
+<h3 id="exact-answers-to-implementation-decision-holds">Exact answers to
+implementation decision holds</h3>
+<p>For humans answering implementation questions, this changes what
+counts as an answer: only a later Linear reply starting with the exact
+<code>Answer: &lt;hold-id&gt;</code> line, followed by a nonblank body,
+answers the hold. Earlier prose and completion footers cannot release a
+new hold. Every matching decision and its questions reach implementation
+through retries and QA rework. CRLF and CR replies preserve their body,
+and decision waits release on the next poll or restart.</p>
+<p>Admission covers dispatcher-launched Shepherd and rejects failed or
+empty startup route reads before ownership or labels. Dispatcher
+reconciliation retries read-only admission failures without Linear
+mutations. Ticks and read/move handlers preserve exit 24. Admission,
+overlap preflight and preparation share complete paginated
+canonical-branch resolution across Shepherd, dispatcher, queue and
+direct workers. Hold questions and app summaries lose private metadata
+before the runtime adds the ID and copyable instructions. A time cap
+before the first pass still labels and summarizes the halt.</p>
+<h3
+id="merge-approvals-bound-to-the-reviewed-head-and-target-branch">Merge
+approvals bound to the reviewed head and target branch</h3>
+<p>Both automatic merge routes bind <code>APPROVE</code> and
+<code>AUTO_APPROVE</code> to the reviewed head and target branch on both
+gate passes. The gate still selects the newest PR comment containing the
+<code>Code Review v2</code> heading through
+<code>gh pr view --json comments</code>. Target branch names may contain
+backticks, and the target SHA may advance. Each pass checks base
+freshness against the same PR snapshot used for the approval binding.
+Bureau authenticates the newest visible review in complete gate
+snapshots and atomically pins the head.</p>
+<p>Bureau prepares the merge message before the final checks,
+unconditionally re-reads the approved target, checks ticket
+authorization immediately before merge, and checks merged state, merge
+commit and target afterward. A wrong target or an outcome that remains
+uncertain logs an error, posts a Linear comment and holds with
+<code>needs-human</code> and exit 25. An uncertain result gets one fresh
+reconciliation read; rollback and automatic merge retry are excluded
+from that response.</p>
+<p>A stale approval returns to Build Review with exit 20 and a
+<code>refreshed</code> report even if earlier gate comments cannot be
+read. Shepherd uses <code>agents.max_review_rounds</code> as a separate
+stale-handoff limit per run, counted after the move to Build Review is
+confirmed. Human holds take effect immediately during confirmation; a
+move still invisible after one bounded polling budget returns quiet
+retry 2. Stale approvals preserve the dispatcher's base-refresh
+allowance.</p>
+<p>The inline route reviews and cleans up against the PR's advertised
+head, including same-named fork branches, force-pushes and deleted or
+pruned branches. A failed cleanup fetch uses the pinned review base and
+returns quiet retry 2. The acceptance brief credits a verdict only to
+its separately recorded reviewed head, and Shepherd preserves post-merge
+reconciliation reports.</p>
+<p>Target validation stays observational. GitHub has no expected-base
+merge option, so a retarget after the final read can still change the
+destination. The post-merge check detects that outcome; destination
+selection remains subject to that race.</p>
+<h3
+id="narrower-trivy-inline-ignore-stripping-and-yarn-parsing">Narrower
+Trivy inline-ignore stripping and Yarn parsing</h3>
+<p>For repositories using Trivy QA, Bureau strips ignore comments only
+in explicitly recognised per-file shapes with fully classified prefixes.
+Every other marker line stays byte-identical and reduces coverage with
+<code>inline ignore format not recognised</code>. YAML node properties,
+block scalars and flow collections, HCL interpolation and heredocs,
+Bicep multi-line strings and other unrecognised constructs also preserve
+all later marker lines. Dockerfiles retain every marker from the first
+<code>&lt;&lt;</code> through end of file without parsing delimiters.
+Ordinary supported comments, string and data bytes, whitespace and
+LF/CRLF handling are preserved.</p>
+<p>Yarn plain values now use an explicit character and leading-form
+allow-list for tool-written tokens, compact ranges, protocol references,
+URLs, hashes and checksums, booleans, cache keys, bin paths and platform
+conditions. Unsupported leading forms, <code>: </code> and
+<code> #</code> reduce coverage with
+<code>lockfile format not recognised</code>. Quoted values and
+recognised Yarn v1/Berry metadata keep their existing handling. Parser
+and neutralization identities change, so earlier receipts are remeasured
+once.</p>
+<h3 id="v390-publication-record">v3.9.0 publication record</h3>
 <p>The source-only record captures the published tag and merge commit,
-GitHub Release, CI results including one tag rerun, tested-tree
-comparison and decision to skip the manual live injection sample. See
-the <a href="release-notes-v3.8.0.html">v3.8.0 release notes</a>.</p>
+GitHub Release, release review rounds, both gate suites, CI results
+passing on the first attempt without reruns and the tested-tree
+comparison. See the unchanged <a href="release-notes-v3.9.0.html">v3.9.0
+release notes</a>.</p>
 <h2 id="new-files">New files</h2>
 <table>
 <thead>
@@ -139,188 +126,120 @@ the <a href="release-notes-v3.8.0.html">v3.8.0 release notes</a>.</p>
 </thead>
 <tbody>
 <tr>
-<td><code>templates/scripts/bureau-semgrep.py</code>,
-<code>bureau-semgrep.sh</code>, <code>bureau-semgrep-rules.yml</code>,
-<code>bureau-semgrep-lock.txt</code>,
-<code>bureau-semgrep-manifest-*.json</code></td>
-<td>Complete scripts resync for code review, the blocking merge recheck,
-and the locked scanner packages and platform manifests.</td>
+<td><code>templates/scripts/bureau-hold-context.py</code></td>
+<td>Complete scripts resync together with interfaces for implementation
+decision context.</td>
 </tr>
 <tr>
-<td><code>templates/scripts/bureau-trivy.py</code>,
-<code>bureau-trivy.sh</code>, <code>bureau-trivy-pins.json</code></td>
-<td>Complete scripts resync for QA, the blocking merge recheck and
-binary pins.</td>
-</tr>
-<tr>
-<td><code>templates/scripts/bureau-scan.py</code>,
-<code>bureau-scan-nonet.sb</code></td>
-<td>Shared scan and receipt support and the macOS network-denial
-profile.</td>
-</tr>
-<tr>
-<td><code>scripts/semgrep_pin.py</code></td>
-<td>Source-only generator for Semgrep wheel manifests.</td>
-</tr>
-<tr>
-<td><code>tests/test_semgrep*.sh</code>,
-<code>tests/test_trivy*.sh</code>,
-<code>tests/test_python_bytecode.sh</code></td>
+<td><code>tests/hold_answers_test.py</code>,
+<code>tests/test_hold_answers.sh</code>,
+<code>tests/test_inline_merge_regressions.sh</code></td>
 <td>Repository-only regression entry points.</td>
 </tr>
 <tr>
-<td><code>docs/release-notes-v3.8.0.md</code></td>
+<td><code>docs/release-notes-v3.9.0.md</code></td>
 <td>Unchanged archive of the previous release notes.</td>
 </tr>
 </tbody>
 </table>
 <h2 id="configuration-and-exit-code-changes">Configuration and exit-code
 changes</h2>
-<p>Semgrep runs in the background review pipeline and Trivy runs in the
-background QA pipeline. The app's
-<code>prepare</code>/<code>finish</code> flow runs neither scanner, so
-enabling either in advisory or blocking mode has no effect there.
-Semgrep and Trivy are off until enabled. Set the appropriate
-<code>enabled</code> key to boolean <code>true</code> and select
-<code>advisory</code> for the first adoption. Blocking is a separate
-opt-in through <code>mode</code>. See <a
-href="configuration.html#reviewsemgrep">Semgrep configuration</a> and <a
-href="configuration.html#qatrivy">Trivy configuration</a>.</p>
+<p>Configuration keys, defaults, commands and the v3 exit vocabulary
+stay unchanged. Semgrep and Trivy retain their existing opt-in settings.
+The answer rule and approval binding apply when their respective runtime
+paths run.</p>
 <table>
 <thead>
 <tr>
-<th>Key</th>
-<th>Default / action</th>
-<th>Effect</th>
+<th>Behaviour</th>
+<th>Action / result</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>review.semgrep.enabled</code>,
-<code>review.semgrep.mode</code></td>
-<td><code>false</code>, <code>advisory</code></td>
-<td>Enables offline Semgrep CE in background review. Blocking also
-rechecks before merge.</td>
+<td>Implementation decision answers</td>
+<td>Reissue open holds with fresh IDs and obtain later replies beginning
+with the exact <code>Answer: &lt;hold-id&gt;</code> line and a nonblank
+body. Completed holds stay as they are.</td>
 </tr>
 <tr>
-<td><code>BUREAU_SEMGREP_VENV</code></td>
-<td>Operator-supplied venv or shared-state fallback</td>
-<td>Selects the pinned Semgrep environment for the matching platform and
-interpreter.</td>
+<td>Older approvals without binding lines</td>
+<td>One fresh review is required.</td>
 </tr>
 <tr>
-<td><code>qa.trivy.enabled</code>, <code>qa.trivy.mode</code></td>
-<td><code>false</code>, <code>advisory</code></td>
-<td>Enables offline Trivy in background QA. Blocking also rechecks
-before merge.</td>
+<td>Review evidence</td>
+<td>Resync evidence writers and readers together. Older readers do not
+understand the new optional <code>reviewed_head</code> round field;
+legacy records still use matching receipts.</td>
 </tr>
 <tr>
-<td><code>BUREAU_TRIVY_BIN</code>, <code>qa.trivy.cache_dir</code></td>
-<td>Operator-supplied binary or shared-state fallback, plus an external
-cache directory</td>
-<td>Supplies the pinned executable and its separately refreshed
-databases.</td>
-</tr>
-<tr>
-<td><code>qa.trivy.image_archive_command</code></td>
-<td>Remove from existing configurations</td>
-<td>Runtime and doctor reject this key, including with <code>null</code>
-or with Trivy disabled.</td>
+<td>Trivy receipts</td>
+<td>Earlier receipts are remeasured once because parser and
+neutralization identities change.</td>
 </tr>
 </tbody>
 </table>
-<p>A shell stage that reaches its commit step with a staged Bureau cache
-change, including the cleanup deletion, stops with exit 24 and leaves
-the index untouched. See <a href="exit-codes.html">exit codes</a>.</p>
-<p>The CI merge gate no longer passes when the commit-status read fails,
-where it could merge before. If no decided blocker takes precedence, the
-merge ends with <code>2</code> (not yet decided) and retries; decided
-blockers keep <code>25</code>. No configuration key changes.</p>
+<p>A stale approval uses existing exit 20 and returns to Build Review. A
+wrong-target or still-uncertain merge outcome holds with exit 25. A
+definitive blocker such as a merge conflict also returns 25 when the
+base name is missing; a failed read with only undecided blockers returns
+2. See <a href="exit-codes.html">exit codes</a>.</p>
 <h2 id="upgrade-an-existing-installation">Upgrade an existing
 installation</h2>
-<p><strong>From v3.8.0.</strong> Stop every shepherd, queue loop,
-dispatcher and supervisor. Preserve unfinished work, local commits,
-customized assets, instructions, the Spec Kit constitution and shared
-runtime records. Compare installed script drift and reconcile local
-incident fixes before replacing assets. Select the published
-<code>v3.9.0</code> tag and refresh discovery. Save the <a
+<p><strong>From v3.9.0, once v3.9.2 is published.</strong> Drain old
+drivers and stop every shepherd, queue loop, dispatcher and supervisor.
+Preserve unfinished work, local commits, customized assets, user
+instructions, Spec Kit assets and constitution, and shared runtime
+records. Compare installed drift and reconcile local incident fixes.
+Record the previous source commit and save the <a
 href="migration.html#before-changing-an-adopting-repository">pre-upgrade
 inventory and private backup</a>, including
-<code>.bureau-install.json</code> and <code>.gitignore</code> in the
-backup. Use the <a href="migration.html#from-v380">v3.9.0 scripts-only
-preview and apply commands</a> in every adopting repository with its
-existing target selection. Resolve conflicts before applying.
-<code>--update</code> edits configuration only.</p>
-<p>To set up Semgrep for background review, create a standard-library
-venv with the supported CPython and install Semgrep CE
-<strong>1.183.0</strong> from the shipped wheel-only hash lock. Set
-<code>BUREAU_SEMGREP_VENV</code> or use the shared-state fallback.
-Qualify network isolation on the deployment host, then enable
-<code>review.semgrep.enabled</code> with
-<code>review.semgrep.mode</code> set to <code>advisory</code>. See <a
-href="configuration.html#reviewsemgrep">Semgrep installation</a>.</p>
-<p>To set up Trivy for background QA, provide the verified
-<strong>0.76.1</strong> binary. Use the shared-state fallback or export
-the absolute binary path as <code>BUREAU_TRIVY_BIN</code> in the refresh
-shell and the stage launcher's environment before restarting drivers.
-Bureau's <code>.env</code> loader ignores this key. Select an absolute
-<code>qa.trivy.cache_dir</code> outside the repository and refresh it
-separately while it is empty or already Bureau-managed. Qualify host
-network isolation, then enable <code>qa.trivy.enabled</code> with
-<code>qa.trivy.mode</code> set to <code>advisory</code>. See <a
-href="configuration.html#qatrivy">Trivy installation and refresh</a>.</p>
-<p>In the resynced repository, run
-<code>python3 scripts/bureau-doctor.py --mode background</code> for a
-background installation or
+<code>.bureau-install.json</code> and <code>.gitignore</code>. Select
+the published <code>v3.9.2</code> tag and refresh discovery.</p>
+<p>Use the <a href="migration.html#from-v390">v3.9.2 preview and apply
+commands</a> in each adopting repository with its existing target
+selection. Resync the <strong>complete scripts scope together with
+interfaces</strong>, including evidence writers and readers. Resolve
+conflicts before applying. <code>--update</code> edits configuration
+only.</p>
+<p>Before re-enabling dispatch, reissue every open implementation hold
+with a fresh ID and its still-open questions, including tickets whose
+label was already removed. Keep each ticket held and ask humans to
+repost earlier decisions as later replies beginning with the exact
+<code>Answer: &lt;hold-id&gt;</code> line and a nonblank body. Completed
+holds stay as they are. Obtain one fresh review for older approvals
+without the binding lines. Expect earlier Trivy receipts to be
+remeasured once.</p>
+<p>Run <code>python3 scripts/bureau-doctor.py --mode background</code>
+for a background installation or
 <code>python3 scripts/bureau-doctor.py --mode app</code> for an app-only
-installation. Reconcile holds. If doctor reports a tracked
-<code>scripts/__pycache__/</code>, run its printed cleanup command for
-the matched literal directories once and commit the removal. The ignore
-entry takes effect for untracked files. After any scanner setup, restart
-all drivers together so they load the new scripts. If you paused
-dispatch for the upgrade, run
-<code>python3 scripts/bureau-runtime.py unpause</code> after the
-restart. See <a href="migration.html#from-v380">From v3.8.0</a> and <a
-href="troubleshooting.html#tracked-python-bytecode">tracked Python
-bytecode</a>.</p>
-<p><strong>From earlier versions.</strong> Apply the migration guide's
-cumulative steps through <a href="migration.html#upgrade-to-v38">v3.8</a>
-first. The v3.8.0 publication record itself needs only a source checkout
-update.</p>
+installation and reconcile holds. Restart all drivers together. If
+dispatch was paused for the upgrade, run
+<code>python3 scripts/bureau-runtime.py unpause</code> after restart and
+hold reissue. Qualify a representative ticket before leaving dispatch
+unattended. Live adopter qualification remains pending.</p>
+<p><strong>From earlier versions.</strong> Apply the cumulative steps
+through <a href="migration.html#upgrade-to-v39">v3.9.0</a> first, then
+this upgrade. The v3.9.0 publication record itself needs only a source
+checkout update.</p>
 <h2 id="compatibility-and-rollback">Compatibility and rollback</h2>
-<p>Configuration schema versions 1 and 2, the v3 exit vocabulary, Bash
-3.2+, Python 3.9+, Node 18+ for the shared scheduler, Spec Kit 1.2.2 and
-the current-workspace prepare/finish protocol apply. The scanners have
-their own platform prerequisites when enabled.</p>
-<table>
-<thead>
-<tr>
-<th>Scanner</th>
-<th>Shipped platform pins</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Semgrep CE 1.183.0</td>
-<td>macOS arm64 with CPython 3.14 and Linux x86_64 with CPython 3.12. An
-eligible scan with another interpreter reports unavailable.</td>
-</tr>
-<tr>
-<td>Trivy 0.76.1</td>
-<td>Linux x86_64 and macOS arm64 binary pins.</td>
-</tr>
-</tbody>
-</table>
+<p>Configuration schema versions 1 and 2, Bash 3.2+, Python 3.9+, Node
+18+ for the shared scheduler, Spec Kit 1.2.2 and the current-workspace
+prepare/finish protocol apply. Scanner platform prerequisites remain as
+documented in the <a
+href="release-notes-v3.9.0.html#compatibility-and-rollback">v3.9.0
+compatibility record</a>. Writers and readers of review evidence need a
+coordinated resync because of the optional <code>reviewed_head</code>
+round field; legacy records still use matching receipts.</p>
 <p>For rollback, stop drivers and reconcile unfinished writers, local
 commits and holds. Follow the <a
 href="migration.html#restore-the-pre-upgrade-installation">restore
-procedure</a> to restore the complete v3.8.0 asset set, compatible
-configuration and installer records, and remove confirmed scanner
-additions as described there. Retain runtime and scanner records for
-inspection. Prior commits, pushes, comments, labels and state moves
-persist through rollback.</p>
+procedure</a> to restore the complete v3.9.0 asset set, compatible
+configuration and installer records from the private backup. Retain
+runtime and scanner records for inspection. Prior commits, pushes,
+comments, labels and state moves persist through rollback.</p>
 <h2 id="validation">Validation</h2>
-<p>The merged content baseline is main <code>31d14b7</code>. The merged
+<p>The merged content baseline is main <code>5b0c279</code>. The merged
 changes follow first-parent merge order.</p>
 <table>
 <thead>
@@ -332,49 +251,49 @@ changes follow first-parent merge order.</p>
 </thead>
 <tbody>
 <tr>
-<td><a href="https://github.com/KaiaK808/bureau/pull/158">#158</a></td>
-<td><code>917214e</code></td>
-<td>v3.8.0 publication record</td>
+<td><a href="https://github.com/KaiaK808/bureau/pull/165">#165</a></td>
+<td><code>b49eb97</code></td>
+<td>Narrower Trivy ignore-comment stripping and Yarn plain-value
+parsing</td>
 </tr>
 <tr>
-<td><a href="https://github.com/KaiaK808/bureau/pull/159">#159</a></td>
-<td><code>0e1dce2</code></td>
-<td>Optional Semgrep CE review evidence and blocking merge recheck</td>
+<td><a href="https://github.com/KaiaK808/bureau/pull/166">#166</a></td>
+<td><code>888f92a</code></td>
+<td>Repository-only shard-weight rows for two scanner test files</td>
 </tr>
 <tr>
-<td><a href="https://github.com/KaiaK808/bureau/pull/160">#160</a></td>
-<td><code>10d4c60</code></td>
-<td>Optional Trivy QA evidence from a verified pinned binary</td>
+<td><a href="https://github.com/KaiaK808/bureau/pull/167">#167</a></td>
+<td><code>f1caef0</code></td>
+<td>v3.9.0 publication record</td>
 </tr>
 <tr>
-<td><a href="https://github.com/KaiaK808/bureau/pull/161">#161</a></td>
-<td><code>b65f8cf</code></td>
-<td>Keep installed Bureau bytecode out of shell stage commits</td>
+<td><a href="https://github.com/KaiaK808/bureau/pull/168">#168</a></td>
+<td><code>f82ef56</code></td>
+<td>Exact implementation hold answers and decision context through
+retries</td>
 </tr>
 <tr>
-<td><a href="https://github.com/KaiaK808/bureau/pull/163">#163</a></td>
-<td><code>31d14b7</code></td>
-<td>Hold the CI merge gate when the commit-status read fails</td>
+<td><a href="https://github.com/KaiaK808/bureau/pull/169">#169</a></td>
+<td><code>5b0c279</code></td>
+<td>Merge approval binding, stale handoffs and reviewed-head
+attribution</td>
 </tr>
 </tbody>
 </table>
-<p>The merge gate fix has CI helper and merge-stage tests, including
-fail-before controls against the previous runtime. The fragments record
-offline Semgrep fixtures and negative controls for the private runtime,
-review, receipt reuse and merge freshness. An earlier maintainer run of
-Semgrep 1.183.0 on macOS arm64 under network denial covered every rule
-fixture, a hostile <code>.semgrepignore</code> and inline
-<code>nosemgrep</code>.</p>
-<p>Offline Trivy tests used a fake binary to cover the scanner boundary,
-cache, coverage and parser controls, QA placement, the disabled baseline
-and merge races. The bytecode fix used local fixtures for stage entry
-points, review evidence, provider gates, filesystem-specific directory
-cases and a tracked Latin-1 shell POST, without a model or network. See
-the <a href="../../CHANGELOG.md#390---2026-11-20">fragment validation in
-the changelog</a>.</p>
-<p>The release review, both gate suites, the release CI and the final
-candidate/tag tree comparison are recorded below. No manual live
-injection sample or adopter qualification is recorded.</p>
+<p>The fragments record local hold-answer fixtures with fake Linear and
+providers. Merge and review validation uses focused offline tests with
+fake GitHub responses and private reverted copies, including worker and
+Shepherd retries, final-read withdrawal and acceptance attribution. Live
+GitHub behaviour remains unverified offline.</p>
+<p>Trivy validation records offline parser and pipeline regressions,
+fail-before checks against the previous revision, realistic Yarn
+v1/Berry locks including CRLF, Python compilation and changelog
+validation. Live scanner and adopter qualification are excluded. The
+v3.9.0 publication facts are maintainer-supplied. See the <a
+href="../../CHANGELOG.md#392---2026-11-24">fragment validation in the
+changelog</a>.</p>
+<p>The release branch's own validation remains to be run by the
+maintainer:</p>
 <table>
 <thead>
 <tr>
@@ -385,92 +304,53 @@ injection sample or adopter qualification is recorded.</p>
 <tbody>
 <tr>
 <td>Independent release review</td>
-<td>Codex, read-only, five rounds. Rounds 1 to 3 requested documentation
-changes (9, 11 and 9 findings), each fixed. Round 2 also found two Trivy
-parsing defects in merged scanner code; they are listed as known
-limitations below. A maintainer-approved fourth round, limited to the
-round 3 fixes, found two P3s, fixed by hand in <code>d8eaf20</code>. A
-fifth review, limited to the added commit-status read entry, requested
-two wording corrections (the exit <code>2</code> statement now keeps
-decided blockers at <code>25</code>; the PR list gained <a
-href="https://github.com/KaiaK808/bureau/pull/163">#163</a>), fixed by
-hand in <code>764fd9a</code> without a further round.</td>
+<td>TBD</td>
 </tr>
 <tr>
 <td>macOS gate suite and tested ref</td>
-<td><code>764fd9a</code>, two shards: 196 of 196 on the first pass, no
-reruns (2026-11-20). An earlier run on the superseded candidate
-<code>d8eaf20</code> timed out once in
-<code>test_semgrep_pipeline.sh</code> at the 600-second floor under host
-load.</td>
+<td>TBD</td>
 </tr>
 <tr>
 <td>Remote gate suite and tested ref</td>
-<td><code>openclaw-01</code>, exactly <code>764fd9a</code>, two shards:
-196 of 196 on the first pass, no reruns (2026-11-20).</td>
+<td>TBD</td>
 </tr>
 <tr>
 <td>Release CI jobs, runs and results</td>
-<td>All <code>test</code> workflow runs passed on the first attempt,
-with no reruns. <a
-href="https://github.com/KaiaK808/bureau/pull/162">#162</a> at
-<code>764fd9a</code>: pull-request <a
-href="https://github.com/KaiaK808/bureau/actions/runs/44734275670">run
-44734275670</a> and release-branch push <a
-href="https://github.com/KaiaK808/bureau/actions/runs/44734267517">run
-44734267517</a>. Main at <code>96f47ce</code>: <a
-href="https://github.com/KaiaK808/bureau/actions/runs/44758796565">run
-44758796565</a>. Tag <code>v3.9.0</code> at <code>96f47ce</code>: <a
-href="https://github.com/KaiaK808/bureau/actions/runs/44776516076">run
-44776516076</a>. Earlier candidate <code>d8eaf20</code>: pull-request <a
-href="https://github.com/KaiaK808/bureau/actions/runs/44475835038">run
-44475835038</a> and push <a
-href="https://github.com/KaiaK808/bureau/actions/runs/44475801193">run
-44475801193</a>, both green.</td>
+<td>TBD</td>
 </tr>
 <tr>
 <td>Final candidate/tag tested-tree comparison</td>
-<td><code>python3 scripts/release_verify.py 764fd9a v3.9.0</code>
-passed: <code>templates/</code>, <code>tests/</code> and
-<code>scripts/</code> are tree-identical between the tested candidate
-and the tag. Candidate <code>764fd9a</code> and the tag's commit
-<code>96f47ce</code> have the identical tree
-(<code>ae6310256d09</code>).</td>
+<td>TBD</td>
 </tr>
 <tr>
 <td>Manual live injection sample and adopter qualification</td>
-<td>No result recorded for v3.9.0.</td>
+<td>TBD</td>
 </tr>
 </tbody>
 </table>
-<p>See <a href="releases.html#verify-the-tested-release-trees">release
-tree verification</a> for the comparison procedure. The manual live
-injection sample remains a separate release-checklist item.</p>
+<p>Before publication, record the exact tested refs and results and run
+<a href="releases.html#verify-the-tested-release-trees">release tree
+verification</a>. The manual live injection sample remains a separate
+release-checklist item.</p>
 <h2 id="known-limitations">Known limitations</h2>
 <ul>
-<li>Real-engine validation of Semgrep's private-copy boundary, Linux
-isolation on deployment hosts and adopting-repository qualification
-remain pending.</li>
-<li>The separate GitHub-hosted Ubuntu Trivy job remains pending after
-offline implementation. It needs network access to download the pinned
-archive and refresh a cache. It verifies the archive and
-extracted-binary hashes before refresh and qualifies filesystem flags
-under <code>unshare</code>. Pinned-engine flag behavior, platform
-isolation and adopter compatibility still need a networked CI or
-maintainer run.</li>
-<li>Trivy reports reduced coverage for lockfile forms its consistency
-parsers reject or for non-canonical manifest and lockfile names. In
-blocking mode, each affected file needs an active base coverage
-exception to waive its gap.</li>
-<li>Inline-ignore stripping can truncate an IaC line at <code>//</code>
-inside a quoted string before a trailing <code>trivy:ignore:</code>
-comment, so Trivy can receive altered configuration text.</li>
-<li>Bureau's Yarn consistency parser rejects indented comments and skips
-other indented body lines, so unsupported syntax in those lines can pass
-without a Bureau coverage warning.</li>
-<li>The writer of the historical adopter cache remains unknown.</li>
-<li>No manual live injection sample or adopter qualification is recorded
-for v3.9.0.</li>
+<li>Target validation is observational. A retarget after the final read
+can still change the merge destination; the post-merge check detects it.
+GitHub provides no expected-base merge option.</li>
+<li>Live GitHub behaviour, the Linear editor round-trip, live scanner
+behaviour and adopting-repository qualification remain unverified by the
+offline validation recorded in the fragments.</li>
+<li>Trivy preserves unrecognised inline-ignore shapes and reports
+reduced coverage. The conservative Dockerfile rule retains every marker
+from the first <code>&lt;&lt;</code> through end of file; unsupported
+Yarn plain values also reduce coverage.</li>
+<li>The dispatcher shutdown test can fail intermittently because the
+run's leases are marked interrupted a few milliseconds after the
+dispatcher exits. This path predates this release and remains unchanged
+in v3.9.2.</li>
+<li>The release branch's own macOS and remote suites, CI, tested refs
+and final tree comparisons remain <code>TBD</code> until the maintainer
+runs them.</li>
 </ul></main>
 </div>
 </body>
