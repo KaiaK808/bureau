@@ -4,6 +4,8 @@ When the user requests `--update`:
 
 Resolve the secrets file as the stages do: non-empty process `BUREAU_ENV_FILE`, otherwise `repo.env_file`, otherwise `.env` next to `.bureau.json`. A relative process override counts from that JSON file's directory; `repo.env_file` must be absolute or start with `~/`. Do not create a checkout `.env` when the installation uses an external file. Moving outside blocks the conventional checkout path only; it does not stop a process with the user's permissions from discovering and reading the file. See [migration](../docs/migration.md#move-the-secrets-file-outside-the-checkout).
 
+For a v3.9.2 upgrade from v3.9.0, drain old drivers, compare installed drift and resync the complete scripts scope together with interfaces, including evidence writers and readers. Reissue open implementation holds with fresh IDs while keeping them held; answers require a later reply beginning with the exact `Answer: <hold-id>` line and a nonblank body. Older approvals without binding lines need one fresh review, and earlier Trivy receipts are remeasured once. Target validation remains observational. See the [v3.9.2 upgrade steps](../docs/migration.md#from-v390) for preview, apply and rollback.
+
 For a v3.9.0 upgrade, remove `qa.trivy.image_archive_command` if present. See the [v3.9.0 upgrade steps](../docs/migration.md#from-v380) for the source tag, scripts resync and tracked-cache cleanup.
 
 1. **Show current effective config first.** Run `bash scripts/bureau-status.sh --config` and display the output. This surfaces both `.bureau.json` values and the env-only knobs (`BUREAU_IMPL_*`, `BUREAU_SUPERVISOR_*`, `LINEAR_API_KEY` set/unset, etc.) the user might want to change.
