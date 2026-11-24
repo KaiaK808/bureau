@@ -20,6 +20,7 @@ SCRIPTS = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location('dispatch_runtime', SCRIPTS / 'bureau-runtime.py')
 r = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(r)
+SHUTDOWN_SETTLE_SECONDS = 5.0
 
 # Every policy read uses the installed runtime, never a ticket's scripts.
 SOURCE = '''source "$1/bureau-config.sh"
@@ -211,6 +212,7 @@ class Dispatcher:
         self.helpers = Helpers(repo, self.store.root)
         self.lanes = {}
         self.ready = {}
+        self.runs = {}
         self.path = self.store.root / 'dispatch-skips.json'
         self.journal = self.store.root / 'dispatch-lanes'
         self.skips = r.read(self.path, {})
@@ -314,9 +316,42 @@ class Dispatcher:
             if code is None: continue
             child.wait()
             output.close()
+            self.remember_run(issue)
             del self.lanes[issue]
             ready = self.ready.pop(issue)
             self.reconcile_lane(self.journal / (ready.name + '.json'))
+
+    def remember_run(self, issue):
+        # Only journals for handles launched here confer membership. Keep the
+        # identity after reap removes the journal; never use stored group IDs.
+        row = r.read(self.journal / (self.ready[issue].name + '.json'), {})
+        if row.get('run_id'):
+            self.runs[row['run_id']] = issue
+
+    def settle_shutdown(self):
+        # A direct lane can exit while an inner wrapper still owns a hold or
+        # has yet to mark its leases. Observe both under one shared deadline;
+        # never release ownership or signal a process to make it settle.
+        pending = dict(self.runs)
+        deadline = time.monotonic() + SHUTDOWN_SETTLE_SECONDS
+        while pending:
+            try:
+                with locked(self.store.root / 'guard', nonblocking=True):
+                    leases = r.read(self.store.leases, {})
+                    pending = {run: issue for run, issue in pending.items()
+                               if r.pg.process_holds(self.store.root, run)
+                               or any(lease['run_id'] == run and not lease.get('interrupted')
+                                      for lease in leases.values())}
+            except (OSError, ValueError, KeyError):
+                # A busy guard or unreadable coordination cannot prove that
+                # ownership settled. Retry without extending the deadline.
+                pass
+            remaining = deadline - time.monotonic()
+            if not pending or remaining <= 0: break
+            time.sleep(min(.05, remaining))
+        for run, issue in sorted(pending.items()):
+            print(f'dispatch: human_hold: run {run} ({issue}) did not settle within '
+                  f'{SHUTDOWN_SETTLE_SECONDS:g} s; ownership retained', file=sys.stderr)
 
     def launch(self, issue, stage):
         # One final authoritative shell read, then runtime admission and atomic
@@ -428,9 +463,11 @@ printf "%s %s %s %s" "$BUREAU_PARALLEL_LANES" "$BUREAU_POLL_INTERVAL" '''
             self.stop()
             # Runtime owns nested shutdown/grace and preservation. Do not kill
             # its wrapper early or consult process records from an old run.
-            for child, _, output in self.lanes.values():
+            for issue, (child, _, output) in self.lanes.items():
                 child.wait()
                 output.close()
+                self.remember_run(issue)
+            self.settle_shutdown()
         return 130
 
 
