@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="52ffb1868c8e40db7244366a6cdec59fb568ebf139eb4d41a07f86baf1d9a991">
+<meta name="bureau-source-sha256" content="70a2add7b0ce36547ba58e01c7b4f9b2bd628e0afb4976537f07fbfd8b7edb5a">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -24,17 +24,92 @@ update and an adopting-repository resync are separate steps, so a
 release must document both the changes and the required operator
 actions.</p>
 <h2 id="current-release-status">Current release status</h2>
-<p>This source tree contains <strong>Bureau v3.9.0</strong>, published
-<strong>2026-11-21</strong>, a minor release on v3.8.0. Annotated tag
+<p>This source tree prepares <strong>Bureau v3.9.2</strong>, dated
+<strong>2026-11-24</strong>, a patch release on v3.9.0 with source tag
+<code>v3.9.2</code>. Tagging and publication remain separate maintainer
+operations. The <a href="release-notes.html">release notes</a> and <a
+href="../../CHANGELOG.md#392---2026-11-24">changelog</a> cover <a
+href="https://github.com/KaiaK808/bureau/pull/165">#165</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/166">#166</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/167">#167</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/168">#168</a> and <a
+href="https://github.com/KaiaK808/bureau/pull/169">#169</a> in
+first-parent merge order.</p>
+<p>The release changes implementation decision answers to require a
+later reply beginning with the exact
+<code>Answer: &lt;hold-id&gt;</code> line and a nonblank body, binds
+merge approvals to the reviewed head and target branch, and narrows
+Trivy ignore-comment stripping and Yarn plain-value parsing. The v3.9.0
+publication record is also included. Target validation remains
+observational.</p>
+<p>From v3.9.0, once published, drain old drivers, preserve unfinished
+work and runtime records, compare installed drift, update the source and
+resync complete scripts and interfaces together. Resync evidence writers
+and readers together, reissue open implementation holds with fresh IDs
+while keeping them held, and obtain one fresh review for older approvals
+without the binding lines. Earlier Trivy receipts are remeasured once.
+See the upgrade and rollback steps in <a
+href="migration.html#from-v390">From v3.9.0</a>.</p>
+<h3 id="v392-validation-record">v3.9.2 validation record</h3>
+<p>The merged release content is on main <code>5b0c279</code>. The
+fragments record focused offline validation with fake Linear, GitHub and
+providers. Live scanner and adopter qualification remain separate
+checks. The release branch's own suites and CI remain to be run by the
+maintainer.</p>
+<table>
+<thead>
+<tr>
+<th>Release check</th>
+<th>Result / reference</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Independent release review</td>
+<td>TBD</td>
+</tr>
+<tr>
+<td>macOS gate suite and tested ref</td>
+<td>TBD</td>
+</tr>
+<tr>
+<td>Remote gate suite and tested ref</td>
+<td>TBD</td>
+</tr>
+<tr>
+<td>Release CI jobs, runs and results</td>
+<td>TBD</td>
+</tr>
+<tr>
+<td>Final candidate/tag tested-tree comparison</td>
+<td>TBD</td>
+</tr>
+<tr>
+<td>Manual live injection sample and adopter qualification</td>
+<td>TBD</td>
+</tr>
+</tbody>
+</table>
+<p>The live-service and deployment qualification limits, observational
+target check and pre-existing intermittent dispatcher shutdown test
+failure are recorded in the <a
+href="release-notes.html#validation">release validation</a> and <a
+href="release-notes.html#known-limitations">known limitations</a>. See the
+<a href="#verify-the-tested-release-trees">release verification
+procedure</a>.</p>
+<h2 id="previous-stable-releases">Previous stable releases</h2>
+<h3 id="v390">v3.9.0</h3>
+<p><strong>Bureau v3.9.0</strong>, published
+<strong>2026-11-21</strong>, is a minor release on v3.8.0. Annotated tag
 <code>v3.9.0</code> (tag object <code>f6a0d79</code>) points at merge
 commit <code>96f47ce</code> of <a
 href="https://github.com/KaiaK808/bureau/pull/162">#162</a>, merged on
 2026-11-20. Its <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.9.0">GitHub
 Release</a>, "Bureau v3.9.0 — Semgrep and Trivy evidence, Python
-bytecode fix", is published as latest. The <a
-href="release-notes.html">release notes</a> and <a
-href="../../CHANGELOG.md#390---2026-11-20">changelog</a> cover <a
+bytecode fix", remains the latest published release until v3.9.2 is
+published. The <a href="release-notes-v3.9.0.html">release notes</a> and
+<a href="../../CHANGELOG.md#390---2026-11-20">changelog</a> cover <a
 href="https://github.com/KaiaK808/bureau/pull/158">#158</a>, <a
 href="https://github.com/KaiaK808/bureau/pull/159">#159</a>, <a
 href="https://github.com/KaiaK808/bureau/pull/160">#160</a>, <a
@@ -76,8 +151,9 @@ recorded.</p>
 <td>Independent release review</td>
 <td>Codex, read-only, five rounds. Rounds 1 to 3 requested documentation
 changes (9, 11 and 9 findings), each fixed. Round 2 also found two Trivy
-parsing defects in merged scanner code; they are listed as known
-limitations below. A maintainer-approved fourth round, limited to the
+parsing defects in merged scanner code; they are recorded in the <a
+href="release-notes-v3.9.0.html#known-limitations">v3.9.0 known
+limitations</a>. A maintainer-approved fourth round, limited to the
 round 3 fixes, found two P3s, fixed by hand in <code>d8eaf20</code>. A
 fifth review, limited to the added commit-status read entry, requested
 two wording corrections (the exit <code>2</code> statement now keeps
@@ -133,11 +209,11 @@ and the tag. Candidate <code>764fd9a</code> and the tag's commit
 </tbody>
 </table>
 <p>The real-engine and deployment qualification limits are recorded in
-the <a href="release-notes.html#validation">release validation</a> and <a
-href="release-notes.html#known-limitations">known limitations</a>. See the
-<a href="#verify-the-tested-release-trees">release verification
+the <a href="release-notes-v3.9.0.html#validation">release validation</a>
+and <a href="release-notes-v3.9.0.html#known-limitations">known
+limitations</a>. See the <a
+href="#verify-the-tested-release-trees">release verification
 procedure</a>.</p>
-<h2 id="previous-stable-releases">Previous stable releases</h2>
 <h3 id="v380">v3.8.0</h3>
 <p><strong>Bureau v3.8.0</strong>, published
 <strong>2026-11-14</strong>, is a minor release on v3.7.0. Annotated tag
