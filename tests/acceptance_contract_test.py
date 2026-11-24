@@ -425,7 +425,7 @@ T006 in prose.
         self.cli(code=22)
         self.write_inputs(tasks='')
         self.cli(code=22)
-        for arguments in ([], ['validate'], ['unknown'], ['--help'],
+        for arguments in ([], ['validate'], ['unknown'],
                           ['validate', str(self.paths['contract']), '--spec', str(self.paths['spec'])],
                           ['validate', str(self.paths['contract']), '--spec', str(self.paths['spec']),
                            '--tasks', str(self.paths['tasks']), '--unknown']):
@@ -436,6 +436,18 @@ T006 in prose.
         self.write_inputs(raw=b'!' * (MODULE['MAX_BYTES'] + 1))
         self.paths['tasks'].unlink()
         self.cli(code=2)
+
+    def test_help_is_plain_usage_and_exits_zero(self):
+        # Every shipped entry point answers --help with exit 0; help is usage text, never a report.
+        for arguments in (['--help'], ['-h'], ['validate', '--help']):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run([sys.executable, '-I', '-B', str(SCRIPT), *arguments],
+                                        cwd=self.directory, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(result.stderr, '')
+                self.assertTrue(result.stdout.startswith('usage: bureau-acceptance-contract.py'), result.stdout)
+                self.assertIn('Enforcement is not active.', result.stdout)
+                self.assertNotIn('well_formed', result.stdout)
 
     def test_malformed_json(self):
         for raw in (b'', b'{', b'{} trailing', b'\xff', b'{"schema_version":NaN}',

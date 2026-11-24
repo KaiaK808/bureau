@@ -223,7 +223,8 @@ def emit(code, validator):
 
 def main(argv=None):
     validator = Validator()
-    parser = Parser(add_help=False, allow_abbrev=False)
+    parser = Parser(prog='bureau-acceptance-contract.py', allow_abbrev=False,
+                    description='Validate an acceptance contract declaration offline. ' + SCOPE)
     parser.add_argument('command', choices=['validate'])
     parser.add_argument('contract')
     parser.add_argument('--spec', required=True)
