@@ -531,6 +531,9 @@ def execute(policy, command, *, repo, stdout, stderr=None, timeout=None, clock=N
 
 
 if __name__ == '__main__':
+    if sys.argv[1:] in (['--help'], ['-h']):
+        print('usage: bureau-test-wrapper.py --envelope DIRECTORY -- COMMAND [ARG ...]')
+        sys.exit(0)
     if len(sys.argv) < 5 or sys.argv[1] != '--envelope' or sys.argv[3] != '--':
         sys.exit(24)
     sys.exit(envelope(Path(sys.argv[2]), sys.argv[4:]))
