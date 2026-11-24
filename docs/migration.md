@@ -8,7 +8,31 @@ This guide upgrades installations from the official [KaiaK808/bureau](https://gi
 
 Drain old drivers and preserve unfinished work. Compare installed script drift before resyncing the complete scripts scope together with interfaces; `/bureau-init --update` changes configuration only. Do not mix old drivers, the new hold reader, posting helpers and app interfaces. No configuration keys or defaults change.
 
-Before re-enabling dispatch, reissue each open implementation decision hold with a fresh runtime ID and its still-open questions, including tickets whose `needs-human` label was already removed. Keep these tickets held during reissue. Use the dedicated `post_implementation_hold` helper in `scripts/bureau-config.sh` with the ticket, canonical branch, question body and a fresh publication key. Ask humans to repost earlier decisions as a new comment beginning with the exact copyable `Answer: <hold-id>` line and a nonblank body below it, then remove `needs-human` and restart Build. Completed holds stay as they are; old prose and completion footers do not release new holds.
+Before re-enabling dispatch, reissue each open implementation decision hold with a fresh runtime ID and its still-open questions, including tickets whose `needs-human` label was already removed. Keep these tickets held during reissue, with drivers stopped and `needs-human` applied. Completed holds stay as they are.
+
+Run this recipe from the adopting repository root after resyncing scripts and interfaces. Replace the three input assignments first: `ISSUE` is the ticket identifier, `QUESTIONS` contains its still-open questions, and `PUBLICATION_KEY` is a fresh key chosen for this reissue. Save these inputs privately before the first attempt. The command starts Bash, sources the installed library and loads the resolved `BUREAU_ENV_FILE`; the library resolves this path from an existing override, `repo.env_file`, or `.env` beside the selected `.bureau.json`. The secrets file must be readable and supply a valid `LINEAR_API_KEY`. The recipe copies that key as the stage scripts do, checks Linear access and resolves the canonical branch through `get_issue_branch`.
+
+```sh
+bash <<'BASH'
+set -euo pipefail
+source scripts/bureau-config.sh
+bureau_load_env --export "$BUREAU_ENV_FILE"
+bureau_secret_copy API_KEY LINEAR_API_KEY
+precondition_linear
+
+ISSUE='<issue-identifier>'
+QUESTIONS='Replace with the still-open questions.'
+PUBLICATION_KEY='<unique-reissue-key>'
+BRANCH=$(get_issue_branch "$ISSUE")
+if [ -z "$BRANCH" ] || [[ "$BRANCH" == *" "* ]] || [[ ${#BRANCH} -gt 200 ]]; then
+  printf '%s\n' 'Canonical branch unavailable; keep the ticket held.' >&2
+  exit 12
+fi
+post_implementation_hold "$ISSUE" "$BRANCH" "$QUESTIONS" "$PUBLICATION_KEY"
+BASH
+```
+
+The helper reserves the fresh hold ID and body before posting and prints the published comment on success. For a failed or uncertain post, retry with the same `ISSUE`, `BRANCH`, `QUESTIONS` and `PUBLICATION_KEY`, preserving the shared hold record. The same publication key and branch reuse the reserved ID and body; changed questions require a new reissue with a fresh key. If branch resolution changes, stop and reconcile the hold before starting a new reissue. Keep the ticket held until publication succeeds. Ask humans to repost earlier decisions as a new comment beginning with the exact copyable `Answer: <hold-id>` line from the published comment and a nonblank body below it, then remove `needs-human` and restart Build. Earlier prose and completion footers leave the new hold unanswered.
 
 Answered decisions remain visible through retries and QA rework until a new hold or branch supersedes them. Unanswered holds return `25` before ownership or state changes; incomplete history, pending publication, a changed prompt snapshot or unusable answer context returns `24`. Local validation uses fake Linear and providers; the Linear editor round-trip and live adopters remain unqualified.
 
@@ -67,7 +91,7 @@ Apply these steps once v3.9.2 is published. All release changes are merged.
    ```
 
 4. Resync evidence writers and readers together. Older readers do not understand the new optional `reviewed_head` round field; legacy records still use matching receipts. Older approvals without the new binding lines need one fresh review. Target validation remains observational: a retarget after the final read can change the merge destination, and the post-merge check detects it.
-5. Before re-enabling dispatch, reissue each open implementation hold with a fresh runtime ID and its still-open questions, including tickets whose label was already removed. Keep each ticket held during reissue and ask humans to repost earlier decisions as a later reply beginning with the exact `Answer: <hold-id>` line and a nonblank body. This changes what counts as an answer. Completed holds stay as they are. See [Implementation decision holds](#implementation-decision-holds) for the publication helper and restart procedure.
+5. Before re-enabling dispatch, reissue each open implementation hold with a fresh runtime ID and its still-open questions, including tickets whose label was already removed. Keep each ticket held during reissue and ask humans to repost earlier decisions as a later reply beginning with the exact `Answer: <hold-id>` line and a nonblank body. This changes what counts as an answer. Completed holds stay as they are. Follow the [Bash hold-reissue recipe](#implementation-decision-holds), including its publication-key retry rule and restart procedure.
 6. Expect earlier Trivy receipts to be remeasured once because parser and neutralization identities change. Unrecognised inline-ignore shapes and unsupported Yarn plain values reduce coverage. Configuration, commands, evidence format and exits for Trivy remain unchanged.
 7. Run `python3 scripts/bureau-doctor.py --mode background` for a background installation or `python3 scripts/bureau-doctor.py --mode app` for an app-only installation. Reconcile holds, then restart all drivers together. If dispatch was paused for the upgrade, run `python3 scripts/bureau-runtime.py unpause` after restart and hold reissue. Qualify a representative ticket before leaving dispatch unattended; live adopter qualification remains pending.
 

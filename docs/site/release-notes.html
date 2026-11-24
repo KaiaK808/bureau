@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="044555a834b17e68c236c8cc9124d94b8044375542af595f3ad9288a9a40d6f3">
+<meta name="bureau-source-sha256" content="f629f06fdb30fdf89854311430ad0c98e56f033c61fc0b209dd0afe993a29d2d">
 <title>release-notes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -207,7 +207,9 @@ with a fresh ID and its still-open questions, including tickets whose
 label was already removed. Keep each ticket held and ask humans to
 repost earlier decisions as later replies beginning with the exact
 <code>Answer: &lt;hold-id&gt;</code> line and a nonblank body. Completed
-holds stay as they are. Obtain one fresh review for older approvals
+holds stay as they are. Follow the <a
+href="migration.html#implementation-decision-holds">Bash hold-reissue
+recipe and retry rule</a>. Obtain one fresh review for older approvals
 without the binding lines. Expect earlier Trivy receipts to be
 remeasured once.</p>
 <p>Run <code>python3 scripts/bureau-doctor.py --mode background</code>

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="22cf18ed88bb628ea658cc71a9d4f9405e9c829e412204d9a774d10ea45acd86">
+<meta name="bureau-source-sha256" content="ce9aadfdfdb88ed1bfc344ecf20a9d55d72e015123265065d3d9e6963ffeca2a">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -109,15 +109,52 @@ app interfaces. No configuration keys or defaults change.</p>
 <p>Before re-enabling dispatch, reissue each open implementation
 decision hold with a fresh runtime ID and its still-open questions,
 including tickets whose <code>needs-human</code> label was already
-removed. Keep these tickets held during reissue. Use the dedicated
-<code>post_implementation_hold</code> helper in
-<code>scripts/bureau-config.sh</code> with the ticket, canonical branch,
-question body and a fresh publication key. Ask humans to repost earlier
-decisions as a new comment beginning with the exact copyable
-<code>Answer: &lt;hold-id&gt;</code> line and a nonblank body below it,
-then remove <code>needs-human</code> and restart Build. Completed holds
-stay as they are; old prose and completion footers do not release new
-holds.</p>
+removed. Keep these tickets held during reissue, with drivers stopped
+and <code>needs-human</code> applied. Completed holds stay as they
+are.</p>
+<p>Run this recipe from the adopting repository root after resyncing
+scripts and interfaces. Replace the three input assignments first:
+<code>ISSUE</code> is the ticket identifier, <code>QUESTIONS</code>
+contains its still-open questions, and <code>PUBLICATION_KEY</code> is a
+fresh key chosen for this reissue. Save these inputs privately before
+the first attempt. The command starts Bash, sources the installed
+library and loads the resolved <code>BUREAU_ENV_FILE</code>; the library
+resolves this path from an existing override,
+<code>repo.env_file</code>, or <code>.env</code> beside the selected
+<code>.bureau.json</code>. The secrets file must be readable and supply
+a valid <code>LINEAR_API_KEY</code>. The recipe copies that key as the
+stage scripts do, checks Linear access and resolves the canonical branch
+through <code>get_issue_branch</code>.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> <span class="op">&lt;&lt;&#39;BASH&#39;</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="st">set -euo pipefail</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="st">source scripts/bureau-config.sh</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="st">bureau_load_env --export &quot;$BUREAU_ENV_FILE&quot;</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="st">bureau_secret_copy API_KEY LINEAR_API_KEY</span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="st">precondition_linear</span></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a><span class="st">ISSUE=&#39;&lt;issue-identifier&gt;&#39;</span></span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a><span class="st">QUESTIONS=&#39;Replace with the still-open questions.&#39;</span></span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a><span class="st">PUBLICATION_KEY=&#39;&lt;unique-reissue-key&gt;&#39;</span></span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a><span class="st">BRANCH=$(get_issue_branch &quot;$ISSUE&quot;)</span></span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a><span class="st">if [ -z &quot;$BRANCH&quot; ] || [[ &quot;$BRANCH&quot; == *&quot; &quot;* ]] || [[ ${#BRANCH} -gt 200 ]]; then</span></span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a><span class="st">  printf &#39;%s\n&#39; &#39;Canonical branch unavailable; keep the ticket held.&#39; &gt;&amp;2</span></span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a><span class="st">  exit 12</span></span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a><span class="st">fi</span></span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a><span class="st">post_implementation_hold &quot;$ISSUE&quot; &quot;$BRANCH&quot; &quot;$QUESTIONS&quot; &quot;$PUBLICATION_KEY&quot;</span></span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a><span class="op">BASH</span></span></code></pre></div>
+<p>The helper reserves the fresh hold ID and body before posting and
+prints the published comment on success. For a failed or uncertain post,
+retry with the same <code>ISSUE</code>, <code>BRANCH</code>,
+<code>QUESTIONS</code> and <code>PUBLICATION_KEY</code>, preserving the
+shared hold record. The same publication key and branch reuse the
+reserved ID and body; changed questions require a new reissue with a
+fresh key. If branch resolution changes, stop and reconcile the hold
+before starting a new reissue. Keep the ticket held until publication
+succeeds. Ask humans to repost earlier decisions as a new comment
+beginning with the exact copyable <code>Answer: &lt;hold-id&gt;</code>
+line from the published comment and a nonblank body below it, then
+remove <code>needs-human</code> and restart Build. Earlier prose and
+completion footers leave the new hold unanswered.</p>
 <p>Answered decisions remain visible through retries and QA rework until
 a new hold or branch supersedes them. Unanswered holds return
 <code>25</code> before ownership or state changes; incomplete history,
@@ -132,11 +169,11 @@ unqualified.</p>
 installed elsewhere. Check the loaded skill location; do not pull the
 adopting project's repository by mistake.</p>
 <p>In a terminal, inspect the source checkout:</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_SOURCE</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.claude/skills/bureau-init&quot;</span> <span class="co"># replace with the actual loaded skill path</span></span>
-<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> status <span class="at">--short</span> <span class="at">--branch</span></span>
-<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> remote <span class="at">-v</span></span>
-<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> describe <span class="at">--tags</span> <span class="at">--always</span> <span class="at">--dirty</span></span>
-<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> rev-parse HEAD</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_SOURCE</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.claude/skills/bureau-init&quot;</span> <span class="co"># replace with the actual loaded skill path</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> status <span class="at">--short</span> <span class="at">--branch</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> remote <span class="at">-v</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> describe <span class="at">--tags</span> <span class="at">--always</span> <span class="at">--dirty</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> rev-parse HEAD</span></code></pre></div>
 <p>For a Codex-only install, the entry point may be
 <code>~/.agents/skills/bureau-init</code> or a configured skill
 directory. Follow its link to the actual source clone. Record the
@@ -155,10 +192,10 @@ clean checkout to select the published release's exact tag
 <code>v3.2.0</code>, <code>v3.1.0</code>, <code>v3.0.2</code>,
 <code>v3.0.1</code>, <code>v3.0.0</code> or <code>v2.0.0</code> for an
 earlier one):</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.9.2 <span class="co"># once published, or v3.9.0, v3.8.0, v3.7.0, v3.6.0, v3.5.1, v3.5.0, v3.4.1, v3.4.0, v3.3.0, v3.2.1, v3.2.0, v3.1.0, v3.0.2, v3.0.1, v3.0.0, v2.0.0</span></span>
-<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> fetch origin tag <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
-<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> switch <span class="at">--detach</span> <span class="st">&quot;refs/tags/</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
-<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> rev-parse HEAD</span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_RELEASE</span><span class="op">=</span>v3.9.2 <span class="co"># once published, or v3.9.0, v3.8.0, v3.7.0, v3.6.0, v3.5.1, v3.5.0, v3.4.1, v3.4.0, v3.3.0, v3.2.1, v3.2.0, v3.1.0, v3.0.2, v3.0.1, v3.0.0, v2.0.0</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> fetch origin tag <span class="st">&quot;</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> switch <span class="at">--detach</span> <span class="st">&quot;refs/tags/</span><span class="va">$BUREAU_RELEASE</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">&quot;</span> rev-parse HEAD</span></code></pre></div>
 <p>Stop if fetching fails, especially if an existing local tag conflicts
 with the remote; do not force-replace it. Compare the resulting commit
 with the commit recorded in the GitHub Release and record it for
@@ -202,18 +239,18 @@ backup steps</a>, including <code>.bureau-install.json</code> and
 together with interfaces</strong> from each adopting repository root.
 Set <code>BUREAU_TARGET</code> to the target already installed:
 <code>claude</code>, <code>codex</code> or <code>both</code>.</p>
-<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_TARGET</span><span class="op">=</span>claude</span>
-<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
-<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> <span class="st">&quot;</span><span class="va">$BUREAU_TARGET</span><span class="st">&quot;</span> <span class="at">--scope</span> scripts <span class="at">--scope</span> interfaces</span></code></pre></div>
+<div class="sourceCode" id="cb4"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_TARGET</span><span class="op">=</span>claude</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> <span class="st">&quot;</span><span class="va">$BUREAU_TARGET</span><span class="st">&quot;</span> <span class="at">--scope</span> scripts <span class="at">--scope</span> interfaces</span></code></pre></div>
 <p>Review every conflict and preserve customizations. For each approved
 replacement, add a path-specific option such as
 <code>--overwrite scripts/merge-pipeline.sh</code> and preview again.
 Apply once there are no unresolved conflicts, including the same
 approved <code>--overwrite</code> options on apply.
 <code>--update</code> edits configuration only.</p>
-<div class="sourceCode" id="cb4"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> <span class="st">&quot;</span><span class="va">$BUREAU_TARGET</span><span class="st">&quot;</span> <span class="at">--scope</span> scripts <span class="at">--scope</span> interfaces <span class="at">--apply</span></span></code></pre></div></li>
+<div class="sourceCode" id="cb5"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> <span class="st">&quot;</span><span class="va">$BUREAU_TARGET</span><span class="st">&quot;</span> <span class="at">--scope</span> scripts <span class="at">--scope</span> interfaces <span class="at">--apply</span></span></code></pre></div></li>
 <li><p>Resync evidence writers and readers together. Older readers do
 not understand the new optional <code>reviewed_head</code> round field;
 legacy records still use matching receipts. Older approvals without the
@@ -226,9 +263,9 @@ tickets whose label was already removed. Keep each ticket held during
 reissue and ask humans to repost earlier decisions as a later reply
 beginning with the exact <code>Answer: &lt;hold-id&gt;</code> line and a
 nonblank body. This changes what counts as an answer. Completed holds
-stay as they are. See <a
-href="#implementation-decision-holds">Implementation decision holds</a>
-for the publication helper and restart procedure.</p></li>
+stay as they are. Follow the <a
+href="#implementation-decision-holds">Bash hold-reissue recipe</a>,
+including its publication-key retry rule and restart procedure.</p></li>
 <li><p>Expect earlier Trivy receipts to be remeasured once because
 parser and neutralization identities change. Unrecognised inline-ignore
 shapes and unsupported Yarn plain values reduce coverage. Configuration,
@@ -281,9 +318,9 @@ backup steps</a> and use this preview for the <strong>complete scripts
 scope</strong>. Run it from the root of each adopting repository, with
 <code>BUREAU_TARGET</code> set to the target already installed:
 <code>claude</code>, <code>codex</code> or <code>both</code>.</p>
-<div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_TARGET</span><span class="op">=</span>claude</span>
-<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
-<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> <span class="st">&quot;</span><span class="va">$BUREAU_TARGET</span><span class="st">&quot;</span> <span class="at">--scope</span> scripts</span></code></pre></div>
+<div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_TARGET</span><span class="op">=</span>claude</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> <span class="st">&quot;</span><span class="va">$BUREAU_TARGET</span><span class="st">&quot;</span> <span class="at">--scope</span> scripts</span></code></pre></div>
 <p>Include <code>.bureau-install.json</code> and <code>.gitignore</code>
 in the private backup. Review each conflict and preserve customizations.
 For each approved replacement, add a path-specific option such as
@@ -291,9 +328,9 @@ For each approved replacement, add a path-specific option such as
 scripts-only preview again. Apply once the preview has no unresolved
 conflicts. Include the same <code>--overwrite</code> options on
 apply.</p>
-<div class="sourceCode" id="cb6"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
-<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> <span class="st">&quot;</span><span class="va">$BUREAU_TARGET</span><span class="st">&quot;</span> <span class="at">--scope</span> scripts <span class="at">--apply</span></span></code></pre></div></li>
+<div class="sourceCode" id="cb7"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> <span class="st">&quot;</span><span class="va">$BUREAU_TARGET</span><span class="st">&quot;</span> <span class="at">--scope</span> scripts <span class="at">--apply</span></span></code></pre></div></li>
 <li><p>Remove <code>qa.trivy.image_archive_command</code> from existing
 configurations, including entries set to <code>null</code>. Runtime and
 doctor reject the key even when Trivy is disabled. Semgrep and Trivy
@@ -405,8 +442,8 @@ decision script, workflow and policy to the default branch. Require
 <code>bureau/human-approval</code> in branch protection. The scope is
 separate from existing default scopes; preview, then apply using the
 actual loaded source skill root:</p>
-<div class="sourceCode" id="cb8"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--scope</span> approval</span>
-<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--scope</span> approval <span class="at">--apply</span></span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--scope</span> approval</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--scope</span> approval <span class="at">--apply</span></span></code></pre></div>
 <p>The approval status is an exact-commit accident guard. Only created
 comments trigger it; edited comments do not count, a new push has no
 status, and refused commands leave statuses untouched. Doctor does not
@@ -2032,10 +2069,10 @@ native hook-name mapping and the helper guidance below.</p>
 branch, including numeric feature branches, <code>codex/*</code> and
 detached checkouts, resolve the issue's exact approved spec folder and
 always pass both variables:</p>
-<div class="sourceCode" id="cb16"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="va">SPECIFY_FEATURE</span><span class="op">=</span>NNN-approved-feature <span class="dt">\</span></span>
-<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="va">SPECIFY_FEATURE_DIRECTORY</span><span class="op">=</span>specs/NNN-approved-feature <span class="dt">\</span></span>
-<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> .specify/scripts/bash/check-prerequisites.sh <span class="at">--json</span> <span class="at">--paths-only</span></span></code></pre></div>
+<div class="sourceCode" id="cb17"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="va">SPECIFY_FEATURE</span><span class="op">=</span>NNN-approved-feature <span class="dt">\</span></span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="va">SPECIFY_FEATURE_DIRECTORY</span><span class="op">=</span>specs/NNN-approved-feature <span class="dt">\</span></span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> .specify/scripts/bash/check-prerequisites.sh <span class="at">--json</span> <span class="at">--paths-only</span></span></code></pre></div>
 <p>Replace both example values with the real approved feature and
 configured specs path. Use the same pair for every helper that consumes
 an existing feature. Fresh worktrees lack the ignored
@@ -2107,9 +2144,9 @@ href="stage-protocol.html">ownership/recovery protocol</a>.</li>
 conflicts</h2>
 <p>Run the helper from the refreshed source, with the adopting
 repository as the current directory:</p>
-<div class="sourceCode" id="cb17"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
-<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> both <span class="at">--scope</span> interfaces <span class="at">--scope</span> scripts</span></code></pre></div>
+<div class="sourceCode" id="cb18"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
+<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> both <span class="at">--scope</span> interfaces <span class="at">--scope</span> scripts</span></code></pre></div>
 <p>Preview writes nothing. Exit code <code>3</code> means at least one
 asset conflict. Even with <code>--apply</code>, <strong>one unresolved
 conflict prevents every file in that asset batch from being
@@ -2148,11 +2185,11 @@ unpacked archive or a copy inside another repository, is recorded as
 repository's commit is never used. A preview or an apply stopped by a
 conflict writes no source. The manifest stays at version <code>1</code>:
 installers without source recording still read it.</p>
-<div class="sourceCode" id="cb18"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;sources&quot;</span><span class="er">:</span> <span class="fu">{</span></span>
-<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;scripts&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;git&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;tag&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.1.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;describe&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.1.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;commit&quot;</span><span class="fu">:</span> <span class="st">&quot;&lt;40-character SHA&gt;&quot;</span><span class="fu">,</span> <span class="dt">&quot;dirty&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">}</span></span>
-<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span><span class="er">,</span></span>
-<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;sources_files_sha256&quot;</span><span class="er">:</span> <span class="st">&quot;&lt;sha256 of the files map&gt;&quot;</span></span></code></pre></div>
+<div class="sourceCode" id="cb19"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;sources&quot;</span><span class="er">:</span> <span class="fu">{</span></span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;scripts&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;git&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;tag&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.1.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;describe&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.1.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;commit&quot;</span><span class="fu">:</span> <span class="st">&quot;&lt;40-character SHA&gt;&quot;</span><span class="fu">,</span> <span class="dt">&quot;dirty&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">}</span></span>
+<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span><span class="er">,</span></span>
+<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;sources_files_sha256&quot;</span><span class="er">:</span> <span class="st">&quot;&lt;sha256 of the files map&gt;&quot;</span></span></code></pre></div>
 <table>
 <thead>
 <tr>
@@ -2215,11 +2252,11 @@ do not describe an incomplete scripts upgrade as a working new
 runtime.</li>
 </ul>
 <p>Example for a single reviewed script replacement:</p>
-<div class="sourceCode" id="cb19"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
-<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> both <span class="at">--scope</span> interfaces <span class="at">--scope</span> scripts <span class="dt">\</span></span>
-<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--overwrite</span> scripts/qa-pipeline.sh</span>
-<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a><span class="co"># After reviewing this preview, repeat the same command with --apply.</span></span></code></pre></div>
+<div class="sourceCode" id="cb20"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
+<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> both <span class="at">--scope</span> interfaces <span class="at">--scope</span> scripts <span class="dt">\</span></span>
+<span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--overwrite</span> scripts/qa-pipeline.sh</span>
+<span id="cb20-4"><a href="#cb20-4" aria-hidden="true" tabindex="-1"></a><span class="co"># After reviewing this preview, repeat the same command with --apply.</span></span></code></pre></div>
 <p>Other conflicts still block that example. Repeat
 <code>--overwrite</code> only for each reviewed path in the selected
 scope. There is no blanket force, skip-conflicts or automatic merge
@@ -2251,9 +2288,9 @@ migration</h2>
 <code>.bureau.json</code> or <code>.env</code>. Configuration version
 <code>2</code> is a schema version, not a Bureau release number. To
 adopt it, preview and then apply:</p>
-<div class="sourceCode" id="cb20"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> migrate <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span></span>
-<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> migrate <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--apply</span></span></code></pre></div>
+<div class="sourceCode" id="cb21"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> migrate <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span></span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> migrate <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--apply</span></span></code></pre></div>
 <p>Migration retains existing IDs, labels, models, switches and
 extension keys. It makes the existing Claude runner default explicit
 when absent and adds <code>agents.model_compatibility: "v1"</code> when
