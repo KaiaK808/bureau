@@ -15,7 +15,7 @@ Do NOT file public issues for security vulnerabilities — see [SECURITY.md](SEC
 ## Send a PR
 
 - **Branch from `main`.** No forks-of-forks tangles.
-- **Run the tests before you push.** `bash tests/run.sh` must pass. See `AGENTS.md` for the harness structure and the CI coverage below.
+- **Run the tests before you push.** `bash tests/run.sh` must pass. See `AGENTS.md` for the harness structure and the CI coverage below. On a local machine, `python3 tests/run_suite.py --out DIR --tag TAG --project KEY` runs the same suite and reruns eligible failed files once, serially; see [the harness documentation](tests/README.md#local-full-suite-and-serial-reruns). Hosted CI and direct `tests/run.sh` calls never retry.
 - **One focused change per PR.** Rebrand + genericize + hero image was three PRs, not one. This is the norm.
 - **PR body follows the existing recent pattern** — Summary, What changed, Test plan, After merge. Look at any of the merged PRs for the shape.
 - **No new dependencies without a plan.** The shared runtime uses Bash, stdlib Python and a small JavaScript scheduler; keep dependencies explicit and minimal.
@@ -47,6 +47,8 @@ Refresh weights from complete successful timing artifacts and recalculate the
 workflow's estimate when changing the manifest. The 56-entry manifest currently
 estimates 89.98 macOS runner-minutes, including four minutes of setup across two
 jobs; hosted queue time is separate.
+
+`test_run_suite.sh` is deliberately outside the focused manifest although it exercises signals: the orchestrator refuses to run in hosted CI, so its macOS coverage comes from local full runs and the full macOS CI on `main`.
 
 ## Releases
 
