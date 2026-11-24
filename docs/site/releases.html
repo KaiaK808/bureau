@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="70a2add7b0ce36547ba58e01c7b4f9b2bd628e0afb4976537f07fbfd8b7edb5a">
+<meta name="bureau-source-sha256" content="a9cad9d6f00ea36824e80cc557d381b5ee7906ce51cb8b4da3e11cb6c3fe62aa">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -24,10 +24,16 @@ update and an adopting-repository resync are separate steps, so a
 release must document both the changes and the required operator
 actions.</p>
 <h2 id="current-release-status">Current release status</h2>
-<p>This source tree prepares <strong>Bureau v3.9.2</strong>, dated
-<strong>2026-11-24</strong>, a patch release on v3.9.0 with source tag
-<code>v3.9.2</code>. Tagging and publication remain separate maintainer
-operations. The <a href="release-notes.html">release notes</a> and <a
+<p>This source tree contains <strong>Bureau v3.9.2</strong>, published
+<strong>2026-11-24</strong>, a patch release on v3.9.0. Annotated tag
+<code>v3.9.2</code> (tag object <code>ccc3a09</code>) points at merge
+commit <code>8b342bc</code> of <a
+href="https://github.com/KaiaK808/bureau/pull/172">#172</a>, merged on
+2026-11-24. Its <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.9.2">GitHub
+Release</a>, "Bureau v3.9.2 — Decision answers, merge approval binding
+and Trivy parsing", is published as latest. The <a
+href="release-notes.html">release notes</a> and <a
 href="../../CHANGELOG.md#392---2026-11-24">changelog</a> cover <a
 href="https://github.com/KaiaK808/bureau/pull/165">#165</a>, <a
 href="https://github.com/KaiaK808/bureau/pull/166">#166</a>, <a
@@ -42,20 +48,23 @@ merge approvals to the reviewed head and target branch, and narrows
 Trivy ignore-comment stripping and Yarn plain-value parsing. The v3.9.0
 publication record is also included. Target validation remains
 observational.</p>
-<p>From v3.9.0, once published, drain old drivers, preserve unfinished
-work and runtime records, compare installed drift, update the source and
-resync complete scripts and interfaces together. Resync evidence writers
-and readers together, reissue open implementation holds with fresh IDs
-while keeping them held, and obtain one fresh review for older approvals
-without the binding lines. Earlier Trivy receipts are remeasured once.
-See the upgrade and rollback steps in <a
-href="migration.html#from-v390">From v3.9.0</a>.</p>
+<p>From v3.9.0, drain old drivers, preserve unfinished work and runtime
+records, compare installed drift, update the source and resync complete
+scripts and interfaces together. Resync evidence writers and readers
+together, reissue open implementation holds with fresh IDs while keeping
+them held, and obtain one fresh review for older approvals without the
+binding lines. Earlier Trivy receipts are remeasured once. See the
+upgrade and rollback steps in <a href="migration.html#from-v390">From
+v3.9.0</a>.</p>
 <h3 id="v392-validation-record">v3.9.2 validation record</h3>
 <p>The merged release content is on main <code>5b0c279</code>. The
 fragments record focused offline validation with fake Linear, GitHub and
-providers. Live scanner and adopter qualification remain separate
-checks. The release branch's own suites and CI remain to be run by the
-maintainer.</p>
+providers. The maintainer-supplied release review, both gate suites,
+release CI and final candidate/tag tree comparison are recorded below.
+The release PR changed documentation only: <code>templates/</code>,
+<code>tests/</code> and <code>scripts/</code> are tree-identical to
+<code>5b0c279</code>. Live scanner and adopter qualification remain
+separate checks.</p>
 <table>
 <thead>
 <tr>
@@ -66,27 +75,57 @@ maintainer.</p>
 <tbody>
 <tr>
 <td>Independent release review</td>
-<td>TBD</td>
+<td>Codex, read-only, three rounds on the release PR. Round 1 returned
+an approval without evidence and is not counted as a check. Round 2
+found one P2: the hold-reissue upgrade step had no runnable procedure,
+fixed in <code>6be88f5</code>. Round 3 approved <code>6be88f5</code>
+with file and line evidence for every check.</td>
 </tr>
 <tr>
 <td>macOS gate suite and tested ref</td>
-<td>TBD</td>
+<td><code>5b0c279</code>, two shards: 198 of 198 on the first pass, no
+reruns (2026-11-24).</td>
 </tr>
 <tr>
 <td>Remote gate suite and tested ref</td>
-<td>TBD</td>
+<td><code>openclaw-01</code>, exactly <code>5b0c279</code>, two shards:
+198 of 198 on the first pass, no reruns (2026-11-24).</td>
 </tr>
 <tr>
 <td>Release CI jobs, runs and results</td>
-<td>TBD</td>
+<td><a href="https://github.com/KaiaK808/bureau/pull/172">#172</a> at
+<code>6be88f5</code>: pull-request <a
+href="https://github.com/KaiaK808/bureau/actions/runs/45410048890">run
+45410048890</a> and release-branch push <a
+href="https://github.com/KaiaK808/bureau/actions/runs/45410033730">run
+45410033730</a>, all jobs passed on the first attempt. The main push <a
+href="https://github.com/KaiaK808/bureau/actions/runs/45436105597">run
+45436105597</a> on <code>8b342bc</code> was cancelled by the next push
+to main (<a
+href="https://github.com/KaiaK808/bureau/pull/170">#170</a>). Main on
+the following commit <code>a7c66d8</code>: <a
+href="https://github.com/KaiaK808/bureau/actions/runs/45436229543">run
+45436229543</a>, also cancelled by the next push to main (<a
+href="https://github.com/KaiaK808/bureau/pull/171">#171</a>); the tag
+run below covers the same commit as the release merge. Tag
+<code>v3.9.2</code>: <a
+href="https://github.com/KaiaK808/bureau/actions/runs/45436172742">run
+45436172742</a>, passed on the first attempt.</td>
 </tr>
 <tr>
 <td>Final candidate/tag tested-tree comparison</td>
-<td>TBD</td>
+<td><code>python3 scripts/release_verify.py 5b0c279 v3.9.2</code>
+passed: <code>templates/</code>, <code>tests/</code> and
+<code>scripts/</code> are tree-identical between the tested candidate
+and the tag. The reviewed release candidate <code>6be88f5</code> and the
+tag's commit <code>8b342bc</code> have the identical tree
+(<code>c0c2ed57</code>).</td>
 </tr>
 <tr>
 <td>Manual live injection sample and adopter qualification</td>
-<td>TBD</td>
+<td>Manual live injection sample: not run for v3.9.2. Adopter
+qualification: none recorded yet; one adopting installation is scheduled
+to resync later.</td>
 </tr>
 </tbody>
 </table>
@@ -107,9 +146,9 @@ href="https://github.com/KaiaK808/bureau/pull/162">#162</a>, merged on
 2026-11-20. Its <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.9.0">GitHub
 Release</a>, "Bureau v3.9.0 — Semgrep and Trivy evidence, Python
-bytecode fix", remains the latest published release until v3.9.2 is
-published. The <a href="release-notes-v3.9.0.html">release notes</a> and
-<a href="../../CHANGELOG.md#390---2026-11-20">changelog</a> cover <a
+bytecode fix", is now the previous stable release. The <a
+href="release-notes-v3.9.0.html">release notes</a> and <a
+href="../../CHANGELOG.md#390---2026-11-20">changelog</a> cover <a
 href="https://github.com/KaiaK808/bureau/pull/158">#158</a>, <a
 href="https://github.com/KaiaK808/bureau/pull/159">#159</a>, <a
 href="https://github.com/KaiaK808/bureau/pull/160">#160</a>, <a
