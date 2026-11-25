@@ -261,9 +261,16 @@ class MergePipelineTests(unittest.TestCase):
         self.merge_cases(('head-before-scan-hold',))
 
     def test_disabled_and_advisory_gh_git_calls_match_disabled_baseline(self):
+        # Shared with Trivy: exactly one local charter lookup, no new gh calls.
         golden = json.loads((ROOT/'tests/fixtures/semgrep-disabled-merge.json').read_text())
         for value in self.merge_cases(('off', 'disabled', 'advisory')):
             self.assertEqual({key:value[key] for key in golden}, golden)
+
+    def test_not_enrolled_charter_git_gh_calls_match_baseline_for_both_flags(self):
+        golden = json.loads((ROOT/'tests/fixtures/semgrep-disabled-merge.json').read_text())
+        for value in self.merge_cases(('charter-disabled', 'charter-enabled')):
+            self.assertEqual({key: value[key] for key in golden}, golden)
+            self.assertFalse(value['charter_state'])
 
     def merge_cases(self, cases):
         values = []
@@ -285,6 +292,7 @@ case=os.environ['SEMGREP_CASE']
 if case=='off': config={}
 if case=='disabled': config['review']['semgrep']['enabled']=False
 if case=='advisory': config['review']['semgrep']['mode']='advisory'
+if case.startswith('charter-'): config=dict(agents=dict(merge_charter=dict(enabled=case=='charter-enabled')))
 (repo/'.bureau.json').write_text(json.dumps(config))
 def git(*args):return subprocess.check_output(['git','-C',str(repo),*args],text=True).strip()
 (repo/'a.js').write_text('const safe = 1;\n');git('add','a.js');git('commit','-qm','test: safe head');git('push','-q','origin','test-branch')
@@ -356,6 +364,7 @@ if case=='head-before-scan-hold':
             collect.write_text(r'''import json,os,pathlib,re,sys
 repo=pathlib.Path(sys.argv[1]);gh=pathlib.Path(os.environ['PR2_GH'])
 value=dict(code=os.environ['LAST_RC'],stdout=os.environ['LAST_STDOUT'],stderr=os.environ['LAST_STDERR'],
+    charter_state=(repo/'.git/bureau/charter').exists(),
     merged=(gh/'merge_calls.log').exists(),receipts=[json.loads(p.read_text()) for p in (repo/'.git/bureau/scans/semgrep').glob('*/*/receipt.json')],
     gh_calls=(repo/'gh_calls.log').read_text() if (repo/'gh_calls.log').exists() else '',
     git_calls=(repo/'git_calls.log').read_text() if (repo/'git_calls.log').exists() else '',
@@ -385,7 +394,7 @@ pathlib.Path(os.environ['SEMGREP_RESULT']).write_text(json.dumps(value))
                     self.assertEqual(proc.returncode,0,proc.stdout+proc.stderr)
                     value=json.loads(result.read_text())
                     values.append(value)
-                    expected = '0' if case in ('exact','off','disabled','advisory') else '25'
+                    expected = '0' if case in ('exact','off','disabled','advisory','charter-disabled','charter-enabled') else '25'
                     concurrent = case.endswith(('during-scan','after-gates','during-final-fetch','during-gates'))
                     if case.startswith(('base-','head-','retarget-')) and concurrent: expected = '2'
                     if case == 'retarget-after-gates': expected = '20'
@@ -418,7 +427,7 @@ pathlib.Path(os.environ['SEMGREP_RESULT']).write_text(json.dumps(value))
                         self.assertEqual(value['mark']['outcome'], 'blocked')
                         self.assertEqual(value['mark']['head'], value['receipts'][0]['head'])
                         self.assertEqual(value['mark']['head'], value['scanned']['head'])
-                    elif case in ('off','disabled','advisory'):
+                    elif case in ('off','disabled','advisory','charter-disabled','charter-enabled'):
                         self.assertTrue(value['merged']);self.assertEqual(value['receipts'],[])
                     elif case!='exact':
                         self.assertNotIn('gh\tpr\tmerge',value['gh_calls']);self.assertIn('semgrep:',value['stdout'])

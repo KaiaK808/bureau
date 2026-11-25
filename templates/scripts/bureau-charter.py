@@ -155,44 +155,6 @@ def common_dir(repo):
     return (Path(repo) / value).resolve(strict=True)
 
 
-def local_common_dir(repo):
-    """Resolve checkout metadata without starting Git, including linked worktrees."""
-    root = Path(repo).resolve(strict=True)
-    for parent in (root, *root.parents):
-        marker = parent / '.git'
-        try:
-            marker.lstat()
-        except FileNotFoundError:
-            continue
-        mode = marker.stat().st_mode
-        if stat.S_ISDIR(mode):
-            gitdir = marker.resolve(strict=True)
-        elif stat.S_ISREG(mode):
-            value = marker.read_text(encoding='utf-8').rstrip('\r\n')
-            if not value.startswith('gitdir: ') or not value[8:] or '\n' in value or '\r' in value:
-                raise ValueError('charter Git directory marker is invalid')
-            gitdir = (parent / value[8:]).resolve(strict=True)
-        else:
-            raise ValueError('charter Git directory marker is invalid')
-        mode = gitdir.stat().st_mode
-        if not stat.S_ISDIR(mode) or not mode & 0o111 or not os.access(gitdir, os.X_OK):
-            raise ValueError('charter Git directory is unreadable')
-        shared = gitdir / 'commondir'
-        try:
-            shared.lstat()
-        except FileNotFoundError:
-            common = gitdir
-        else:
-            value = shared.read_text(encoding='utf-8').rstrip('\r\n')
-            if not value or '\n' in value or '\r' in value:
-                raise ValueError('charter Git common directory marker is invalid')
-            common = (gitdir / value).resolve(strict=True)
-        if not (gitdir / 'HEAD').is_file() or not all((common / name).is_dir() for name in ('objects', 'refs')):
-            raise ValueError('charter Git metadata is incomplete')
-        return common
-    raise ValueError('charter Git common directory is unavailable')
-
-
 def enrollment_path(repo, common=None):
     return (common_dir(repo) if common is None else common) / 'bureau' / 'charter' / 'enrollment.json'
 
@@ -204,6 +166,8 @@ def checked_enrollment_path(repo, common=None):
         try:
             mode = entry.lstat().st_mode
         except FileNotFoundError:
+            if entry == path.parent.parent.parent:
+                raise ValueError('charter Git common directory is unavailable') from None
             return path
         if stat.S_ISLNK(mode):
             raise ValueError('charter enrollment must not use symlinks')
@@ -638,7 +602,7 @@ def main(argv=None):
     for name in ('enroll', 'unenroll', 'pin', 'policy'):
         commands.add_parser(name)
     status = commands.add_parser('status')
-    status.add_argument('--local', action='store_true', help='Resolve shared Git metadata without running Git')
+    status.add_argument('--common-dir', help='Common directory already resolved by Git; skip the Git lookup')
     check = commands.add_parser('gate')
     check.add_argument('--pin', required=True)
     check.add_argument('--base', required=True)
@@ -648,7 +612,11 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.command == 'status':
-            common = local_common_dir(args.repo) if args.local else None
+            common = None
+            if args.common_dir is not None:
+                if not args.common_dir:
+                    raise ValueError('charter Git common directory is unavailable')
+                common = args.repo / args.common_dir
             print('not-enrolled' if enrollment(args.repo, common) is None else 'enrolled')
             return 0
         if args.command == 'unenroll':

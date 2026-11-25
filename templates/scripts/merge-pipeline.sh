@@ -226,12 +226,16 @@ fi
 MERGE_PUBLISHER_POLICY=$(python3 -I -B "$(dirname "$0")/bureau-merge-review.py" policy "$(_bureau_gh_owner_repo)") \
   || MERGE_PUBLISHER_POLICY='{"kind":"read","message":"publisher policy could not be read"}'
 
-# Probe shared local metadata without Git or service calls. Unenrolled
-# installations do not load policy or create files, even with an enabled block.
+# Resolve enrollment authority with one local Git read, then inspect only its
+# record. Unenrolled installations add no service calls, policy reads or files.
+_BUREAU_MERGE_CHARTER_COMMON=""
+export -n _BUREAU_MERGE_CHARTER_COMMON
+_BUREAU_MERGE_CHARTER_COMMON=$(bureau_common_dir) || _BUREAU_MERGE_CHARTER_COMMON=""
 charter_enrolled() {
   # 0 enrolled, 1 confirmed absent; every other result is indeterminate.
   local state
-  state=$(python3 -I -B "$(dirname "$0")/bureau-charter.py" --repo "$PWD" status --local 2>/dev/null) || return 25
+  [ -n "$_BUREAU_MERGE_CHARTER_COMMON" ] || return 25
+  state=$(python3 -I -B "$(dirname "$0")/bureau-charter.py" --repo "$PWD" status --common-dir "$_BUREAU_MERGE_CHARTER_COMMON" 2>/dev/null) || return 25
   case "$state" in
     enrolled) return 0 ;;
     not-enrolled) return 1 ;;
@@ -959,10 +963,10 @@ _merge_pr() {
       message_args=(--subject "$MERGE_SUBJECT" --body "$MERGE_BODY")
       ;;
   esac
-  bureau_ticket_checkpoint "$ISSUE"
   # GitHub pins the head, but offers no expected-base option.
   # Enrolled charters retain B from classification independently of scanner and
-  # up-to-date toggles. Read the live tip after all other service calls.
+  # up-to-date toggles. Read and validate the live tip after the final gates;
+  # only the ticket kill-switch checkpoint follows before the pinned merge.
   if [ "$SCAN_RECHECK" = true ] || [ -n "$CHARTER_BASE" ]; then
     # baseRef.target is the live branch tip; the PR's stored baseRefOid can lag.
     _merge_base_json=$(gh api graphql \
@@ -982,16 +986,17 @@ _merge_pr() {
   if [ "$_merge_base_ref" != "$APPROVED_BASE" ]; then
     refresh_stale_approval "approval_binding: $(approval_target_mismatch "$APPROVED_BASE" "$_merge_base_ref" "$MERGE_HEAD"); fresh Build Review required"
   fi
-  if [ -n "$CHARTER_BASE" ]; then
-    [ "$_merge_base_oid" = "$CHARTER_BASE" ] \
-      || merge_target_retry "target branch tip changed since classification"
-  fi
   if [ "$SCAN_RECHECK" = true ]; then
     [ "$_merge_base_ref" = "$SCANNED_BASE_REF" ] \
       || scanner_merge_retry "$_scan_tool: PR base ref changed during scan or gate recheck"
     [ "$_merge_base_oid" = "$SCANNED_BASE" ] \
       || scanner_merge_retry "$_scan_tool: PR base commit changed during scan or gate recheck"
   fi
+  if [ -n "$CHARTER_BASE" ]; then
+    [ "$_merge_base_oid" = "$CHARTER_BASE" ] \
+      || merge_target_retry "target branch tip changed since classification"
+  fi
+  bureau_ticket_checkpoint "$ISSUE"
   if _merge_output=$(gh pr merge "$PR_NUMBER" "--$BUREAU_MERGE_STRATEGY" --match-head-commit "$MERGE_HEAD" ${message_args[@]+"${message_args[@]}"} 2>&1); then
     [ -z "$_merge_output" ] || printf '%s\n' "$_merge_output"
     return 0

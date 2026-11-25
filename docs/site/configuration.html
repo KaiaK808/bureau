@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="413dc54dd2859fb266b43517a29d02006eb1640fd8dc07f2f88d923ef896f906">
+<meta name="bureau-source-sha256" content="f0325c5b94923a60b7f055cc5ca434c77635b889b593741a3309b33af9450039">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1902,13 +1902,14 @@ spec-admission lock serializes the authoritative reservation and Spec
 move for every updated driver, including pending moves absent from
 lagging snapshots.</p>
 <h3 id="merge-charter-foundation">Merge charter foundation</h3>
-<p>The charter is off by default. Omission or
-<code>enabled: false</code> in an unenrolled repository adds no Git,
-GitHub CLI or network calls, charter files or merge blockers. An enabled
-block alone also activates no gate: enrollment is an explicit maintainer
-operation outside the checkout, never a side effect of installation,
-migration or scripts resync. Doctor validates explicit declarations even
-while disabled.</p>
+<p>The charter is off by default. An unenrolled merge run adds one local
+<code>git rev-parse --git-common-dir</code> read to locate enrollment,
+with no additional GitHub CLI or network calls, charter files or policy
+gates. This also applies when the declaration is omitted or has
+<code>enabled: false</code>. An enabled block alone activates no gate:
+enrollment is an explicit maintainer operation outside the checkout,
+never a side effect of installation, migration or scripts resync. Doctor
+validates explicit declarations even while disabled.</p>
 <div class="sourceCode" id="cb10"><pre
 class="sourceCode json"><code class="sourceCode json"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
 <span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
@@ -2010,15 +2011,17 @@ merge. Exceptions dominate queue waits and stale-approval re-review.
 Both merge paths execute these same gates, in addition to all existing
 requirements.</p>
 <p>The just-in-time evaluation retains the exact target SHA B used for
-classification. After ticket checkpoints and other service reads, the
-final live <code>baseRef.target.oid</code> must still equal B; an
-advance, rewind or unreadable target retries with
-<code>charter-retry</code> and exit <code>2</code> before merging. This
-check applies to every enrolled merge, including when blocking scanners
-are off or <code>merge_require_up_to_date</code> is false. The existing
-<code>--match-head-commit</code> still pins H. GitHub provides an atomic
-expected-head precondition; the target check remains a separate API read
-because the merge call has no expected-base option.</p>
+classification. After the final gates, one live
+<code>baseRef.target.oid</code> read must still equal B; an advance,
+rewind or unreadable target retries with <code>charter-retry</code> and
+exit <code>2</code> before merging. Target comparison is the last gate
+before the ticket kill-switch checkpoint and head-pinned merge call.
+This check applies to every enrolled merge, including when blocking
+scanners are off or <code>merge_require_up_to_date</code> is false. The
+existing <code>--match-head-commit</code> still pins H. GitHub provides
+an atomic expected-head precondition; the target check remains a
+separate API read because the merge call has no expected-base
+option.</p>
 <p>Before enrolling, compare installed script drift, resync the complete
 scripts scope and restart drivers. Use trusted installed scripts,
 outside the PR's control. A maintainer must first publish a sanitized
@@ -2054,15 +2057,23 @@ submodule recursion disabled regardless of checkout
 unreadable or non-searchable shared-state directory, an invalid
 enrollment record or a failed common-directory resolution blocks merging
 with <code>charter-policy</code>, exit <code>25</code> and the human
-handoff. The merge probe reads <code>.git</code> and
-<code>commondir</code> metadata directly from the filesystem, including
-linked worktrees and separate Git directories, without starting Git or a
-service. The offline <code>status</code> command prints
-<code>enrolled</code> or <code>not-enrolled</code> on success;
-<code>status --local</code> uses the merge probe's filesystem resolution
-instead of a Git lookup. Unrecognized or unreadable metadata returns
-<code>25</code> and never confirms absence. Both forms retain the same
-enrollment parent-directory validation.</p>
+handoff. The merge stage calls <code>bureau_common_dir</code> once,
+caches its Git-resolved directory in an unexported shell variable and
+passes it to <code>status --common-dir</code> at the initial probe and
+both gate passes; the probe only reads enrollment under that directory
+and retains enrollment parent-directory validation, including symlink
+rejection. Git determines repository authority for normal checkouts,
+linked worktrees, separate Git directories, bare repositories and
+submodules. No filesystem repository discovery remains. The earlier
+configuration lookup can be skipped with explicit
+<code>BUREAU_CONFIG</code>, and evidence children do not return their
+common-directory result to the shell, so the probe needs its own local
+read. Both frozen scanner call baselines include that lookup in its
+actual position; existing GitHub calls and their order are unchanged.
+The offline <code>status</code> command prints <code>enrolled</code> or
+<code>not-enrolled</code> on success; without <code>--common-dir</code>
+it asks Git for the directory itself. Failed lookups and unusable
+enrollment return <code>25</code> and never confirm absence.</p>
 <p>Both initial and just-in-time merge evaluations use the same pinned D
 and revalidate the live default branch. Enrolled policy that is missing,
 disabled, malformed or unreadable refuses with

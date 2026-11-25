@@ -257,10 +257,11 @@ if fix in ('target', 'both'):
     merge = scripts / 'merge-pipeline.sh'
     source = merge.read_text()
     start = '  # GitHub pins the head, but offers no expected-base option.\n'
-    end = '  if _merge_output=$(gh pr merge "$PR_NUMBER" '
+    end = '  bureau_ticket_checkpoint "$ISSUE"\n  if _merge_output=$(gh pr merge "$PR_NUMBER" '
     assert source.count(start) == 1 and source.count(end) == 1, 'final target check anchors missing or ambiguous'
     first = source.index(start)
     last = source.index(end, first)
+    # Keep the final withdrawal checkpoint and head-pinned merge call intact.
     source = source[:first] + source[last:]
     # Remove the observational target check too in this private unsafe copy.
     start = '  [ "$MERGED_TARGET" = "$APPROVED_BASE" ] \\\n'
