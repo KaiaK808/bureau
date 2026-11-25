@@ -25,14 +25,15 @@ queue_case() {
   populate_happy_fixtures "$sb"
   python3 -I -B "$REPO_ROOT/tests/charter_queue_git_test.py" --prepare "$sb" "$name" "$mutation" || return 3
   case "$name" in
-    clean|cycle|worktree-only) expected=0; reads=2 ;;
+    clean|cycle|worktree-only|target-stable) expected=0; reads=2 ;;
     unenrolled) expected=0; reads=0 ;;
     label-missing|wrong-cycle|unassigned-cycle|approval-read-failed) expected=2; class=charter-queue ;;
     jit-approval) expected=2; class=charter-queue; reads=2 ;;
+    target-rewind) expected=2; class=charter-retry; reads=2 ;;
     label) class=data ;;
     jit-exception) class=data; reads=2 ;;
     exception-read-failed|partial-labels|paginated-labels|partial-error|missing-cycle) class=charter-unclassified ;;
-    unreadable-input|truncated-input|ambiguous) class=charter-unclassified; reads=0 ;;
+    unreadable-input|truncated-input|ambiguous|shallow) class=charter-unclassified; reads=0 ;;
   esac
   if [ "$mode" = inline ]; then
     (
@@ -51,6 +52,10 @@ queue_case() {
     return 1
   fi
   [ "$(cat "$sb/stub_data/linear-reads" 2>/dev/null || echo 0)" = "$reads" ] || return 1
+  case "$name" in
+    target-stable) [ "$(cat "$sb/stub_data/final-target-tip")" = "$(jq -r .baseRefOid "$sb/stub_data/pr_view.json")" ] || return 1 ;;
+    target-rewind) [ "$(cat "$sb/stub_data/final-target-tip")" = "$(cat "$sb/stub_data/default_commit")" ] || return 1 ;;
+  esac
   if [ "$expected" = 0 ]; then
     [ -s "$sb/stub_data/merge_calls.log" ] || return 1
     [ ! -s "$sb/stub_data/handoff.log" ] || return 1
@@ -78,22 +83,27 @@ queue_case() {
 }
 
 for mode in dedicated inline; do
-  for name in clean cycle label-missing wrong-cycle unassigned-cycle missing-cycle approval-read-failed exception-read-failed partial-labels paginated-labels partial-error path label renamed copied deleted multiple precedence stale-exception unreadable-input truncated-input ambiguous worktree-only unenrolled jit-approval jit-exception; do
+  for name in clean cycle label-missing wrong-cycle unassigned-cycle missing-cycle approval-read-failed exception-read-failed partial-labels paginated-labels partial-error path label renamed copied deleted multiple precedence stale-exception unreadable-input truncated-input ambiguous shallow worktree-only unenrolled jit-approval jit-exception target-stable target-rewind; do
     if queue_case "$name" "$mode"; then echo "PASS queue $name/$mode"; else FAILS=$((FAILS + 1)); fi
   done
 done
 # Baseline first, then remove one enforcement step from a private fixture copy.
 # Setup errors (3) cannot masquerade as a rejected negative control (1).
-for item in queue:label-missing queue:wrong-cycle path:path label:label classes:multiple rename:renamed rename:copied deleted:deleted read:exception-read-failed unclassified:truncated-input ambiguous:ambiguous priority:precedence stale:stale-exception outcome:label-missing dedicated-handoff:label inline-handoff:label ticket:clean credentials:clean enrollment:unenrolled; do
+for item in queue:label-missing queue:wrong-cycle path:path label:label classes:multiple rename:renamed rename:copied deleted:deleted read:exception-read-failed unclassified:truncated-input ambiguous:ambiguous shallow:shallow target-tip:target-rewind target-tip-inline:target-rewind priority:precedence stale:stale-exception outcome:label-missing dedicated-handoff:label inline-handoff:label ticket:clean credentials:clean enrollment:unenrolled; do
   mutation="${item%%:*}"; name="${item#*:}"; mode=dedicated
-  [ "$mutation" != inline-handoff ] || mode=inline
+  case "$mutation" in inline-handoff|target-tip-inline) mode=inline ;; esac
   if queue_case "$name" "$mode"; then
-    if queue_case "$name" "$mode" "$mutation"; then
+    # A rejected mutant deliberately fails the same assertions as its baseline.
+    # Keep that diagnostic private unless setup fails; only the outer result
+    # should say PASS or FAIL for a negative control.
+    control_log="$SANDBOX_ROOT/queue-control.log"
+    if queue_case "$name" "$mode" "$mutation" > "$control_log" 2>&1; then
       echo "FAIL queue negative control survived: $item"; FAILS=$((FAILS + 1))
+      cat "$control_log"
     else
       rc=$?
       if [ "$rc" = 1 ]; then echo "PASS queue negative control rejected: $item"
-      else echo "FAIL queue control setup: $item"; FAILS=$((FAILS + 1)); fi
+      else echo "FAIL queue control setup: $item"; cat "$control_log"; FAILS=$((FAILS + 1)); fi
     fi
   else echo "FAIL queue control baseline: $item"; FAILS=$((FAILS + 1)); fi
 done

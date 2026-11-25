@@ -336,9 +336,33 @@ def parse_changes(raw):
     return paths
 
 
+def require_complete_history(repo, base, head):
+    shallow = git(repo, 'rev-parse', '--is-shallow-repository')
+    if shallow.stderr or shallow.stdout.strip() != b'false':
+        raise ValueError('charter comparison requires a non-shallow repository')
+    # Fetching B and H proves object identity, not complete ancestry. Walk both
+    # histories to their roots before trusting any merge base, including when
+    # the endpoints themselves are present in a damaged object store.
+    walk = git(repo, 'rev-list', '--parents', base, head, '--')
+    if walk.stderr:
+        raise ValueError('charter ancestry could not be read completely')
+    ancestry = {}
+    for row in walk.stdout.splitlines():
+        fields = [commit(value.decode('ascii')) for value in row.split()]
+        if not fields or fields[0] in ancestry:
+            raise ValueError('invalid charter ancestry')
+        ancestry[fields[0]] = fields[1:]
+    if base not in ancestry or head not in ancestry or any(parent not in ancestry for parents in ancestry.values() for parent in parents):
+        raise ValueError('charter ancestry is incomplete')
+
+
 def changed_paths(repo, base, head):
     commit(base); commit(head)
-    bases = git(repo, 'merge-base', '--all', base, head).stdout.splitlines()
+    require_complete_history(repo, base, head)
+    comparison = git(repo, 'merge-base', '--all', base, head)
+    if comparison.stderr:
+        raise ValueError('charter merge base reported uncertain ancestry')
+    bases = comparison.stdout.splitlines()
     if len(bases) != 1:
         raise ValueError('charter comparison needs exactly one merge base')
     ancestor = commit(bases[0].decode())
@@ -461,7 +485,7 @@ def selector_gates(policy, paths, read_issue):
     return 0, ''
 
 
-def gate(repo, source, pin, base_branch, head, issue=None):
+def gate(repo, source, pin, base_branch, head, issue=None, target_pin=None):
     try:
         snapshot = load_policy(repo, source, pin)
         if snapshot['kind'] == 'not-enrolled':
@@ -486,6 +510,8 @@ def gate(repo, source, pin, base_branch, head, issue=None):
             return 2, 'charter-retry: default-branch policy changed during evaluation; retry with a fresh pin'
     except (ValueError, OSError):
         return 25, 'charter-unreadable: default-branch policy could not be revalidated'
+    if code == 0 and target_pin is not None:
+        target_pin.update(branch=base_branch, commit=base)
     return code, message
 
 
@@ -618,6 +644,7 @@ def main(argv=None):
     check.add_argument('--base', required=True)
     check.add_argument('--head', required=True)
     check.add_argument('--issue')
+    check.add_argument('--emit-target', action='store_true', help='print the classified target pin on success for the final live-tip check')
     args = parser.parse_args(argv)
     try:
         if args.command == 'status':
@@ -634,9 +661,12 @@ def main(argv=None):
             return 0
         source = GitHub(args.repo, args.github)
         if args.command == 'gate':
-            code, message = gate(args.repo, source, read_json(args.pin), args.base, args.head, args.issue)
+            target_pin = {}
+            code, message = gate(args.repo, source, read_json(args.pin), args.base, args.head, args.issue, target_pin)
             if message:
                 print(message)
+            elif code == 0 and args.emit_target:
+                print(json.dumps(target_pin, sort_keys=True))
             return code
         if args.command == 'pin':
             value = source.pin()

@@ -2,13 +2,14 @@
 """Pure-Python queue, snapshot and path protocol checks; no real processes."""
 import copy
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
 import subprocess
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 SOURCE = Path(__file__).resolve().parents[1] / 'templates/scripts/bureau-charter.py'
 spec = importlib.util.spec_from_file_location('charter', SOURCE)
@@ -214,6 +215,103 @@ class ProtocolTests(unittest.TestCase):
             with patch.object(charter.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1, answer, b'')):
                 with self.assertRaises(ValueError):
                     charter.issue_snapshot(Path('.'), ISSUE, False)
+
+
+class TargetPinTests(unittest.TestCase):
+    def test_pin_keeps_the_classified_target_when_linear_read_moves_it(self):
+        base, moved, head = 'b' * 40, 'c' * 40, 'a' * 40
+        def observe(module):
+            source = Mock()
+            source.tip.return_value = base
+            source.revalidate.return_value = True
+            def read(*args):
+                source.tip.return_value = moved
+                return dict(labels=['approved'], cycle_id=None)
+            target = {}
+            with patch.object(module, 'load_policy', return_value=dict(kind='ok', policy=policy(approved_queue=dict(label='approved')))), \
+                    patch.object(module, 'changed_paths', return_value=['ordinary.txt']) as changes, \
+                    patch.object(module, 'issue_snapshot', side_effect=read):
+                self.assertEqual(module.gate(Path('.'), source, {}, 'release', head, ISSUE, target), (0, ''))
+            changes.assert_called_once_with(Path('.'), base, head)
+            self.assertEqual(target, dict(branch='release', commit=base))
+            self.assertNotEqual(target['commit'], source.tip.return_value)
+        observe(charter)
+        with self.assertRaises(AssertionError):
+            observe(mutated('target_pin.update(branch=base_branch, commit=base)', 'pass'))
+
+    def test_cli_emits_the_pin_only_when_requested_and_successful(self):
+        target = dict(branch='release', commit='b' * 40)
+        def gate(*args):
+            args[-1].update(target)
+            return 0, ''
+        args = ['--repo', '.', '--github', 'owner/repository', 'gate', '--pin', '{}', '--base', 'release', '--head', 'a' * 40]
+        for emit in (False, True):
+            output = io.StringIO()
+            with patch.object(charter, 'gate', side_effect=gate), patch('sys.stdout', output):
+                self.assertEqual(charter.main(args + (['--emit-target'] if emit else [])), 0)
+            self.assertEqual(json.loads(output.getvalue()) if emit else output.getvalue(), target if emit else '')
+        output = io.StringIO()
+        with patch.object(charter, 'gate', return_value=(2, 'charter-queue: waiting')), patch('sys.stdout', output):
+            self.assertEqual(charter.main(args + ['--emit-target']), 2)
+        self.assertEqual(output.getvalue(), 'charter-queue: waiting\n')
+
+
+class HistoryTests(unittest.TestCase):
+    base, head, ancestor, root = 'b' * 40, 'a' * 40, 'c' * 40, 'd' * 40
+
+    def history(self):
+        return ('%s %s\n%s %s\n%s %s\n%s\n' % (self.base, self.ancestor, self.head, self.ancestor,
+                self.ancestor, self.root, self.root)).encode()
+
+    def git_read(self, shallow=b'false\n', walk=None, walk_error=False, warning=b'', merge_warning=b''):
+        def read(repo, *args, **kwargs):
+            if args == ('rev-parse', '--is-shallow-repository'):
+                return subprocess.CompletedProcess([], 0, shallow, b'')
+            if args == ('rev-list', '--parents', self.base, self.head, '--'):
+                if walk_error:
+                    raise ValueError('missing parent object')
+                return subprocess.CompletedProcess([], 0, self.history() if walk is None else walk, warning)
+            if args == ('merge-base', '--all', self.base, self.head):
+                return subprocess.CompletedProcess([], 0, (self.root + '\n').encode(), merge_warning)
+            if args[0] == 'diff':
+                return subprocess.CompletedProcess([], 0, b'M\0ordinary.txt\0', b'')
+            raise AssertionError('unexpected ancestry operation: ' + repr(args))
+        return read
+
+    def test_complete_ancestry_allows_classification(self):
+        with patch.object(charter, 'git', side_effect=self.git_read()) as read:
+            self.assertEqual(charter.changed_paths(Path('.'), self.base, self.head), ['ordinary.txt'])
+        self.assertEqual([call.args[1] for call in read.call_args_list], ['rev-parse', 'rev-list', 'merge-base', 'diff'])
+
+    def test_shallow_or_unproven_ancestry_is_unclassified_before_selectors(self):
+        variants = [dict(shallow=b'true\n'), dict(shallow=b''), dict(shallow=b'unknown\n'), dict(walk_error=True),
+                    dict(walk=b''), dict(walk=(self.base + '\n').encode()),
+                    dict(walk=('%s %s\n%s\n' % (self.base, self.root, self.head)).encode()),
+                    dict(walk=b'invalid-commit\n'), dict(walk=self.history() * 2), dict(warning=b'incomplete traversal')]
+        for options in variants:
+            def observe(module):
+                source = Mock()
+                source.tip.return_value = self.base
+                with patch.object(module, 'load_policy', return_value=dict(kind='ok', policy=policy())), \
+                        patch.object(module, 'git', side_effect=self.git_read(**options)), \
+                        patch.object(module, 'issue_snapshot') as ticket:
+                    code, message = module.gate(Path('.'), source, {}, 'release', self.head, ISSUE)
+                self.assertEqual(code, 25)
+                self.assertTrue(message.startswith('charter-unclassified:'), message)
+                ticket.assert_not_called()
+            with self.subTest(options=options):
+                observe(charter)
+                with self.assertRaises(AssertionError):
+                    observe(mutated('    require_complete_history(repo, base, head)\n', ''))
+
+    def test_merge_base_warnings_cannot_authorize_classification(self):
+        def observe(module):
+            with patch.object(module, 'git', side_effect=self.git_read(merge_warning=b'uncertain merge base')):
+                with self.assertRaisesRegex(ValueError, 'uncertain ancestry'):
+                    module.changed_paths(Path('.'), self.base, self.head)
+        observe(charter)
+        with self.assertRaises(AssertionError):
+            observe(mutated('    if comparison.stderr:\n', '    if False:\n'))
 
 
 if __name__ == '__main__':

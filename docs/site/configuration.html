@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="09468b4ae628d9e7753c5285409359c1179090154d749ebd3bf30c0205b3739e">
+<meta name="bureau-source-sha256" content="413dc54dd2859fb266b43517a29d02006eb1640fd8dc07f2f88d923ef896f906">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1990,21 +1990,35 @@ read, the result is class <code>unclassified</code>
 handoff. Approval cannot waive an exception.</p>
 <p>Exception selectors come exclusively from trusted policy at D. The
 evaluator pins PR head H and the live target branch tip B, fetches and
-verifies both commits, requires exactly one merge base and classifies
-the complete NUL-delimited
+verifies both commits, requires a non-shallow repository and walks both
+histories to their roots before accepting exactly one merge base. It
+then classifies the complete NUL-delimited
 <code>git diff --name-status -z --find-renames &lt;merge-base(B,H)&gt; H --</code>
 output. Copy detection is also enabled, including unchanged sources.
 Deleted paths and both rename/copy endpoints participate; a renamed-away
-protected path still requires a human. Diff warnings, object/fetch
-failures, ambiguous merge bases, malformed or truncated change records
-and undecodable paths require class <code>unclassified</code> and
-<code>25</code>. Working-tree changes are never classification inputs. A
-path match or an exact ticket-label match holds with
-<code>charter-exception</code>, exit <code>25</code>, names every
-matching configured class and requires a maintainer to inspect and
+protected path still requires a human. Shallow history anywhere in the
+repository, including a fetched comparison range, requires class
+<code>unclassified</code> and <code>25</code>; restore complete history
+before retrying. Missing ancestry, traversal or merge-base warnings,
+diff warnings, object/fetch failures, ambiguous merge bases, malformed
+or truncated change records and undecodable paths also require
+<code>unclassified</code> and <code>25</code>. Working-tree changes are
+never classification inputs. A path match or an exact ticket-label match
+holds with <code>charter-exception</code>, exit <code>25</code>, names
+every matching configured class and requires a maintainer to inspect and
 merge. Exceptions dominate queue waits and stale-approval re-review.
 Both merge paths execute these same gates, in addition to all existing
 requirements.</p>
+<p>The just-in-time evaluation retains the exact target SHA B used for
+classification. After ticket checkpoints and other service reads, the
+final live <code>baseRef.target.oid</code> must still equal B; an
+advance, rewind or unreadable target retries with
+<code>charter-retry</code> and exit <code>2</code> before merging. This
+check applies to every enrolled merge, including when blocking scanners
+are off or <code>merge_require_up_to_date</code> is false. The existing
+<code>--match-head-commit</code> still pins H. GitHub provides an atomic
+expected-head precondition; the target check remains a separate API read
+because the merge call has no expected-base option.</p>
 <p>Before enrolling, compare installed script drift, resync the complete
 scripts scope and restart drivers. Use trusted installed scripts,
 outside the PR's control. A maintainer must first publish a sanitized

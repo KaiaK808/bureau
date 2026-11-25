@@ -42,7 +42,15 @@ def build_history(repo, case):
     protected.write_text(''.join('protected fixture line %d\n' % n for n in range(40)))
     git(repo, 'add', '.bureau.json', 'auth/entry.txt'); git(repo, 'commit', '-m', 'chore: queue policy')
     default = git(repo, 'rev-parse', 'HEAD')
-    git(repo, 'checkout', '-B', 'feat/test', default)
+    if case == 'shallow':
+        return shallow_history(repo, default)
+    target = default
+    if case in ('target-stable', 'target-rewind'):
+        git(repo, 'checkout', '-b', 'release', default)
+        protected.write_text(protected.read_text() + 'protected target change\n')
+        git(repo, 'add', 'auth/entry.txt'); git(repo, 'commit', '-m', 'feat: protected target')
+        target = git(repo, 'rev-parse', 'HEAD')
+    git(repo, 'checkout', '-B', 'feat/test', target)
     (repo / 'ordinary.txt').write_text('queue candidate\n')
     if case in ('path', 'multiple', 'precedence', 'stale-exception'):
         protected.write_text(protected.read_text() + 'protected change\n')
@@ -63,9 +71,38 @@ def build_history(repo, case):
         head = git(repo, 'commit-tree', tree, '-p', right, '-p', left, '-m', 'head merge')
         git(repo, 'update-ref', 'refs/heads/main', default)
         git(repo, 'checkout', '-B', 'feat/test', head)
-    git(repo, 'push', 'origin', 'main', 'feat/test', '--force')
+    git(repo, 'push', 'origin', 'main', 'feat/test', *(['release'] if case in ('target-stable', 'target-rewind') else []), '--force')
     git(repo, 'update-ref', 'refs/remotes/origin/main', default)
     return default, head
+
+
+def shallow_history(repo, root):
+    """L -> R -> X, B = merge(X, L), H descends from R and reverts R."""
+    protected = repo / 'auth/entry.txt'
+    original = protected.read_text()
+    git(repo, 'checkout', '-b', 'side', root)
+    protected.write_text(original + 'protected ancestor change\n')
+    git(repo, 'add', 'auth/entry.txt'); git(repo, 'commit', '-m', 'feat: protected ancestor')
+    ancestor = git(repo, 'rev-parse', 'HEAD')
+    (repo / 'ordinary.txt').write_text('side change\n')
+    git(repo, 'add', 'ordinary.txt'); git(repo, 'commit', '-m', 'feat: side change')
+    boundary = git(repo, 'rev-parse', 'HEAD')
+    tree = git(repo, 'rev-parse', 'HEAD^{tree}')
+    base = git(repo, 'commit-tree', tree, '-p', boundary, '-p', root, '-m', 'merge: target')
+    git(repo, 'update-ref', 'refs/heads/main', base)
+    git(repo, 'checkout', '-B', 'feat/test', ancestor)
+    protected.write_text(original)
+    (repo / 'ordinary.txt').write_text('candidate change\n')
+    git(repo, 'add', 'auth/entry.txt', 'ordinary.txt'); git(repo, 'commit', '-m', 'fix: protected revert')
+    head = git(repo, 'rev-parse', 'HEAD')
+    git(repo, 'push', 'origin', 'main', 'feat/test', '--force')
+    git(repo, 'update-ref', 'refs/remotes/origin/main', base)
+    if git(repo, 'merge-base', '--all', base, head) != ancestor:
+        raise AssertionError('fixture lacks the complete protected comparison')
+    (repo / '.git/shallow').write_text(boundary + '\n')
+    if git(repo, 'merge-base', '--all', base, head) != root:
+        raise AssertionError('fixture does not reproduce the misleading shallow merge base')
+    return base, head
 
 
 def linear_value(case, second=False):
@@ -93,6 +130,10 @@ def linear_transport(args):
     count_path = state / 'linear-reads'
     count = int(count_path.read_text()) + 1 if count_path.exists() else 1
     count_path.write_text(str(count))
+    if (state / 'queue-case').read_text() == 'target-rewind' and count == 2:
+        repo = state.parent
+        origin = repo.parent / (repo.name + '-origin.git')
+        git(origin, 'update-ref', 'refs/heads/release', (state / 'default_commit').read_text().strip())
     query = json.loads(args[args.index('-d') + 1])['query']
     expected_cycle = (state / 'queue-case').read_text() in ('cycle', 'wrong-cycle', 'unassigned-cycle', 'missing-cycle')
     if ('cycle { id }' in query) != expected_cycle or 'pageInfo { hasNextPage }' not in query or 'identifier labels' not in query:
@@ -106,11 +147,33 @@ def linear_transport(args):
 
 
 def github_transport(args):
+    state = Path(os.environ['STUB_DIR']); repo = state.parent
+    case = (state / 'queue-case').read_text()
+    if args[:2] == ['api', 'graphql']:
+        fields = dict(value.split('=', 1) for value in args if '=' in value)
+        query = 'query($url:URI!){resource(url:$url){... on PullRequest{baseRefName baseRef{target{oid}}}}}'
+        if fields.get('query') != query:
+            return 3
+        data = json.loads((state / 'pr_view.json').read_text())
+        if fields.get('url') != data['url']:
+            raise AssertionError('unexpected final target URL')
+        if case in ('target-stable', 'target-rewind'):
+            origin = repo.parent / (repo.name + '-origin.git')
+            tip = git(origin, 'rev-parse', 'refs/heads/release')
+        elif case in ('unreadable-input', 'truncated-input'):
+            tip = (state / 'default_commit').read_text().strip()
+        else:
+            return 3
+        (state / 'final-target-tip').write_text(tip)
+        print(json.dumps(dict(data=dict(resource=dict(baseRefName='release', baseRef=dict(target=dict(oid=tip)))))))
+        return 0
     route = 'repos/test-owner/test-repo/commits/release'
     if args[:1] != ['api'] or route not in args:
         return 3
-    state = Path(os.environ['STUB_DIR']); repo = state.parent
-    case = (state / 'queue-case').read_text()
+    if case in ('target-stable', 'target-rewind'):
+        origin = repo.parent / (repo.name + '-origin.git')
+        print(json.dumps(dict(sha=git(origin, 'rev-parse', 'refs/heads/release'))))
+        return 0
     if case not in ('unreadable-input', 'truncated-input'):
         raise AssertionError('unexpected target read')
     # Damage the actual Git input only after trusted policy has loaded. The
@@ -177,9 +240,18 @@ def prepare(repo, case, mutation=''):
         if script.is_file() and not target.exists(): shutil.copyfile(script, target)
     (repo / 'logs').mkdir(exist_ok=True)
     data = json.loads((state / 'pr_view.json').read_text())
-    if case in ('unreadable-input', 'truncated-input'):
+    release = case in ('unreadable-input', 'truncated-input', 'target-stable', 'target-rewind')
+    if release:
         data['baseRefName'] = 'release'
-        (state / 'head-tree').write_text(git(repo, 'rev-parse', 'HEAD^{tree}'))
+        if case in ('target-stable', 'target-rewind'):
+            data['baseRefOid'] = git(repo, 'rev-parse', 'release')
+            # This supported opt-out must not disable the charter's live-tip check.
+            config = json.loads((repo / '.bureau.json').read_text())
+            config['agents']['merge_require_up_to_date'] = False
+            (repo / '.bureau.json').write_text(json.dumps(config))
+    if release:
+        if case in ('unreadable-input', 'truncated-input'):
+            (state / 'head-tree').write_text(git(repo, 'rev-parse', 'HEAD^{tree}'))
         original = (repo / 'bin/gh').rename(repo / 'bin/gh.foundation')
         wrapper = repo / 'bin/gh'
         wrapper.write_text('#!/bin/bash\npython3 -I -B ' + shlex.quote(str(Path(__file__).resolve()))
@@ -188,8 +260,10 @@ def prepare(repo, case, mutation=''):
         wrapper.chmod(0o755)
     for comment in data['comments']:
         comment['body'] = comment['body'].replace('TEAM-' + str(1), ISSUE)
-        if case in ('unreadable-input', 'truncated-input'):
+        if release:
             comment['body'] = comment['body'].replace('`main` at', '`release` at')
+        if case in ('target-stable', 'target-rewind'):
+            comment['body'] = comment['body'].replace((state / 'default_commit').read_text().strip(), data['baseRefOid'])
         if case == 'stale-exception':
             comment['body'] = comment['body'].replace(data['headRefOid'], data['baseRefOid'])
     (state / 'pr_view.json').write_text(json.dumps(data))
@@ -209,7 +283,9 @@ def prepare(repo, case, mutation=''):
             'deleted': ('paths.append(path)', "if status != 'D': paths.append(path)"),
             'rename': ("count = 2 if status[0] in 'RC' else 1", 'count = 1'),
             'read': ('if failed and label_exceptions:', 'if False:'),
-            'unclassified': ("return 25, 'charter-unclassified: ' + str(exc)", "return 0, ''"),
+            'unclassified': ("return 25, 'charter-unclassified: ' + str(exc)",
+                             "target_pin.update(branch=base_branch, commit=base) if target_pin is not None else None; return 0, ''"),
+            'shallow': ('    require_complete_history(repo, base, head)\n', ''),
             'ambiguous': ('if len(bases) != 1:', 'if not bases:'),
             'priority': ('if lines:', 'if False:'),
             'credentials': ('bureau_load_env --export "$BUREAU_ENV_FILE" >&2 || exit; ', ''),
@@ -221,6 +297,9 @@ def prepare(repo, case, mutation=''):
         elif mutation == 'inline-handoff':
             target = repo / 'inline.sh'
             old, new = ('if mark_needs_human "$ISSUE" code-review; then', 'if false; then')
+        elif mutation in ('target-tip', 'target-tip-inline'):
+            target = repo / 'scripts/merge-pipeline.sh'
+            old, new = ('[ "$_merge_base_oid" = "$CHARTER_BASE" ]', '[ true = true ]')
         elif mutation in ('outcome', 'dedicated-handoff', 'ticket', 'enrollment'):
             target = repo / 'scripts/merge-pipeline.sh'
             old, new = {
@@ -236,6 +315,26 @@ def prepare(repo, case, mutation=''):
 
 
 class SelectorGitTests(unittest.TestCase):
+    def test_shallow_merge_base_cannot_hide_a_protected_revert(self):
+        with tempfile.TemporaryDirectory(prefix='bureau-queue-shallow-', dir=tempfile.gettempdir()) as scratch:
+            repo = Path(scratch) / 'checkout'
+            base, head = build_history(repo, 'shallow')
+            # The fixture proves the complete base is R before making X shallow.
+            # Raw Git now returns L and its diff omits the protected revert.
+            root = git(repo, 'rev-parse', head + '^^')
+            self.assertEqual(git(repo, 'merge-base', '--all', base, head), root)
+            self.assertNotIn('auth/entry.txt', git(repo, 'diff', '--name-only', root, head).splitlines())
+            source = foundation.LocalGitHub(repo, base)
+            pin = source.pin(); charter.enroll(repo, source)
+            def observe(module):
+                with patch.object(module, 'issue_snapshot', return_value=dict(labels=['approved-for-merge'], cycle_id=None)):
+                    code, line = module.gate(repo, source, pin, 'main', head, ISSUE)
+                self.assertEqual(code, 25)
+                self.assertTrue(line.startswith('charter-unclassified:'), line)
+            observe(charter)
+            with self.assertRaises(AssertionError):
+                observe(foundation.mutant('    require_complete_history(repo, base, head)\n', ''))
+
     def test_changed_paths_are_root_relative_under_relative_diff_configuration(self):
         with tempfile.TemporaryDirectory(prefix='bureau-queue-relative-', dir=tempfile.gettempdir()) as scratch:
             repo = Path(scratch) / 'checkout'

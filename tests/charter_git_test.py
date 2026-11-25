@@ -276,6 +276,19 @@ def service_transport(args):
     route = next((v for v in args[1:] if v.startswith('repos/')), '')
     state = Path(os.environ['STUB_DIR'])
     default = (state / 'default_commit').read_text().strip()
+    if args[1:2] == ['graphql']:
+        fields = dict(value.split('=', 1) for value in args if '=' in value)
+        query = 'query($url:URI!){resource(url:$url){... on PullRequest{baseRefName baseRef{target{oid}}}}}'
+        if fields.get('query') != query:
+            return 3
+        data = json.loads((state / 'pr_view.json').read_text())
+        if fields.get('url') != data['url']:
+            raise AssertionError('unexpected final target URL')
+        repo = state.parent
+        origin = repo.parent / (repo.name + '-origin.git')
+        tip = git(origin, 'rev-parse', 'refs/heads/' + data['baseRefName'])
+        print(json.dumps(dict(data=dict(resource=dict(baseRefName=data['baseRefName'], baseRef=dict(target=dict(oid=tip)))))))
+        return 0
     if '--method' not in args or args[args.index('--method') + 1] != 'GET':
         return 3
     if route == 'repos/test-owner/test-repo':
