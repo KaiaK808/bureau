@@ -12,7 +12,7 @@
 #   4. PR base SHA == origin/<base-ref> HEAD     (NRSR: pr_base_is_current,
 #                                                  catches mergeStateStatus's
 #                                                  async-cache race)
-#   5. The newest "Code Review v2" comment is unedited and approves this head
+#   5. The newest authorised exact-heading review is unedited and approves this head
 #      and the current base branch (the reviewed base SHA may have advanced)
 #   6. No `needs-human`, `blocked`, or `wip` label on the PR
 #   7. Zero unresolved review threads (GraphQL: pullRequest.reviewThreads)
@@ -216,6 +216,11 @@ if [ "$PR_STATE" = "MERGED" ]; then
   exit 0
 fi
 
+# Resolve publisher authority once from a pinned default-branch commit. The same
+# snapshot is used by both evaluations, including the inline merge caller.
+MERGE_PUBLISHER_POLICY=$(python3 -I -B "$(dirname "$0")/bureau-merge-review.py" policy "$(_bureau_gh_owner_repo)") \
+  || MERGE_PUBLISHER_POLICY='{"kind":"read","message":"publisher policy could not be read"}'
+
 # Keep the mismatch diagnostic identical across gate passes and the live base
 # check so refresh_stale_approval recognizes an unchanged blocker.
 approval_target_mismatch() {
@@ -248,39 +253,18 @@ evaluate_merge_gates() {
   _merge_state=$(printf '%s' "$_pr_data" | jq -r '.mergeStateStatus // ""' 2>/dev/null || true)
   _labels_csv=$(printf '%s' "$_pr_data" | jq -r '[.labels[]?.name] | join(",")' 2>/dev/null || true)
 
-  local owner_repo owner repo unresolved verdict _review_body _review_comment _review_id _review_edit
-  local _threads_read=ok _verdict_read=ok
+  local owner_repo unresolved verdict _review_body _review_result _review_kind _review_message _threads
+  local _threads_read=ok
   owner_repo=$(_bureau_gh_owner_repo)
-  owner="${owner_repo%/*}"
-  repo="${owner_repo#*/}"
-  # An unreadable thread list used to count as zero unresolved threads.
-  if ! unresolved=$(gh api graphql \
-      -f query='query($owner:String!,$repo:String!,$num:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$num){reviewThreads(first:100){nodes{isResolved}}}}}' \
-      -f owner="$owner" -f repo="$repo" -F num="$pr" 2>/dev/null \
-      | jq -e '.data.repository.pullRequest.reviewThreads.nodes | [.[] | select(.isResolved == false)] | length' 2>/dev/null); then
-    _threads_read=failed; unresolved=0
-  fi
-  if _review_comment=$(gh pr view "$pr" --json comments \
-      --jq '[.comments[] | select(.body | test("Code Review v2"))] | sort_by(.createdAt) | last // {body:""}' 2>/dev/null) \
-      && _review_body=$(printf '%s' "$_review_comment" | jq -er '.body | strings'); then
-    verdict=$(printf '%s\n' "$_review_body" \
-      | grep -oE '\*\*Verdict\*\*[[:space:]]*:[[:space:]]*[A-Z_]+' \
-      | grep -oE 'APPROVE|AUTO_APPROVE|REQUEST_CHANGES|BLOCK' \
-      | sed -n 1p || true)
-    if [[ "$verdict" =~ ^(APPROVE|AUTO_APPROVE)$ ]]; then
-      # gh's comment projection omits lastEditedAt. Read that exact node, never
-      # another approval, and compare its body too to catch an edit between reads.
-      if ! _review_id=$(printf '%s' "$_review_comment" | jq -er '.id | strings | select(length > 0)') \
-         || ! _review_edit=$(gh api graphql \
-           -f query='query($id:ID!){node(id:$id){... on IssueComment{body lastEditedAt}}}' \
-           -f id="$_review_id" 2>/dev/null \
-           | jq -ce 'select((.errors // []) == []) | .data.node | select(has("lastEditedAt") and (.body | type == "string"))' 2>/dev/null); then
-        _verdict_read=failed
-      fi
-    fi
-  else
-    _verdict_read=failed; verdict=""
-  fi
+  _threads=$(python3 -I -B "$(dirname "$0")/bureau-merge-review.py" threads "$owner_repo" "$pr") || _threads='{}'
+  unresolved=$(printf '%s' "$_threads" | jq -er 'select(.kind == "ok") | .unresolved') \
+    || { _threads_read=failed; unresolved=0; }
+  _review_result=$(python3 -I -B "$(dirname "$0")/bureau-merge-review.py" review "$owner_repo" "$pr" "$ISSUE" "$MERGE_PUBLISHER_POLICY") \
+    || _review_result='{"kind":"read","message":"review snapshot could not be read"}'
+  _review_kind=$(printf '%s' "$_review_result" | jq -r '.kind // "read"')
+  _review_message=$(printf '%s' "$_review_result" | jq -r '.message // "review snapshot could not be read"')
+  verdict=$(printf '%s' "$_review_result" | jq -r '.verdict // ""')
+  _review_body=$(printf '%s' "$_review_result" | jq -r '.header // ""')
 
   local _block_label=""
   local _l
@@ -304,10 +288,12 @@ evaluate_merge_gates() {
     fi
     [ -z "$_block_label" ]       || _blockers+=("labels: hold label '$_block_label' on PR")
   fi
-  if [ "$_verdict_read" = failed ]; then
-    _blockers+=("verdict_read: the PR's review comments could not be read")
-  elif ! [[ "$verdict" =~ ^(APPROVE|AUTO_APPROVE)$ ]]; then
-    _blockers+=("verdict: latest Code Review v2 verdict=${verdict:-none}")
+  if [ "$_review_kind" = read ]; then
+    _blockers+=("verdict_read: $_review_message")
+  elif [ "$_review_kind" = edited ]; then
+    _blockers+=("approval_binding: $_review_message")
+  elif [ "$_review_kind" != ok ]; then
+    _blockers+=("verdict: $_review_message")
   elif [ -n "$head" ] && [ -n "$_base_ref" ]; then
     local _head_line _target_line _approved_head _binding_error=""
     local _head_pattern='^\*\*Reviewed head\*\*: `([0-9a-f]{40})`$'
@@ -329,16 +315,16 @@ evaluate_merge_gates() {
       _binding_error="${_binding_error:+$_binding_error; }Target line missing, malformed or duplicated (current head $head, base $_base_ref)"
     fi
     if [ -z "$_binding_error" ]; then
-      if [ "$(printf '%s' "$_review_edit" | jq -r '.lastEditedAt')" != null ] \
-         || [ "$(printf '%s' "$_review_edit" | jq -r '.body')" != "$_review_body" ]; then
-        _binding_error="selected approval comment was edited (approved head $_approved_head, current head $head)"
-      elif [ "$_approved_head" != "$head" ]; then
+      if [ "$_approved_head" != "$head" ]; then
         _binding_error="approved head $_approved_head differs from current head $head"
       elif [ "$_approved_base" != "$_base_ref" ]; then
         _binding_error=$(approval_target_mismatch "$_approved_base" "$_base_ref" "$head")
       fi
     fi
     [ -z "$_binding_error" ] || _blockers+=("approval_binding: $_binding_error; fresh Build Review required")
+  fi
+  if [ "$_review_kind" = ok ] && ! [[ "$verdict" =~ ^(APPROVE|AUTO_APPROVE)$ ]]; then
+    _blockers+=("verdict: latest authorised Code Review v2 verdict=${verdict:-none}; check agents.merge_publishers")
   fi
   if [ "$_threads_read" = failed ]; then
     _blockers+=("threads_read: the PR's review threads could not be read")

@@ -520,8 +520,8 @@ PY
   echo "PASS strict binding $malformed; private reverted copy merges it"
 done
 
-# Only the separate node lookup exposes the edit timestamp. The approval's
-# body and binding are unchanged, so reading it from the CLI projection fails.
+# The node edit timestamp is required even when the body and binding are unchanged.
+# Ignoring timestamps while comparing identical node bodies permits the unsafe merge.
 new_sandbox
 jq '.[0].lastEditedAt = "2026-09-29T09:01:00Z"' "$PR2_GH/comments.json" > "$PR2_GH/comments.tmp"
 mv "$PR2_GH/comments.tmp" "$PR2_GH/comments.json"
@@ -529,20 +529,20 @@ gh pr view 99 --json comments | jq -e '.comments[0] | .includesCreatedEdit and (
   || fail 'edited approval: fake gh exposed the wrong projection'
 edited_approval_refreshed() {
   gate
-  binding_refreshed && grep -q 'selected approval comment was edited' <<< "$LINES"
+  binding_refreshed && grep -q 'selected review was edited' <<< "$LINES"
 }
 edited_approval_refreshed || fail "edited approval: rc $LAST_RC outcome $OUTCOME: $LINES"
-python3 - "$SCRIPTS_DIR/merge-pipeline.sh" <<'PY'
+python3 - "$SCRIPTS_DIR/bureau-merge-review.py" <<'PY'
 from pathlib import Path
 import sys
 path = Path(sys.argv[1])
 source = path.read_text()
-old = '''"$_review_edit" | jq -r '.lastEditedAt' '''.rstrip()
+old = "selected['lastEditedAt'] is not None or reread['lastEditedAt'] is not None or reread != selected"
 assert source.count(old) == 1
-path.write_text(source.replace(old, old.replace('$_review_edit', '$_review_comment')))
+path.write_text(source.replace(old, 'reread != selected'))
 PY
-if edited_approval_refreshed; then fail 'edited approval: the projected timestamp mutation stayed green'; fi
-[ "$LAST_RC" = 0 ] && pr2_merged || fail 'edited approval: projected timestamp mutation did not reach the unsafe merge'
-echo 'PASS edited approval requires fresh review; reading lastEditedAt from the projection lets it merge in the private copy'
+if edited_approval_refreshed; then fail 'edited approval: the ignored timestamp mutation stayed green'; fi
+[ "$LAST_RC" = 0 ] && pr2_merged || fail 'edited approval: ignored timestamp mutation did not reach the unsafe merge'
+echo 'PASS edited approval requires fresh review; ignoring timestamps lets it merge in the private copy'
 
 echo 'OK test_merge_gate_switches'

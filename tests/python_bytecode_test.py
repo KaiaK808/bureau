@@ -33,6 +33,7 @@ class BytecodeTests(unittest.TestCase):
         shutil.copytree(SCRIPTS, self.scripts, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
         self.case_sensitive = not (self.repo / 'Scripts').exists()
         self.env = dict(GIT_ENV)
+        self.env['GIT_CEILING_DIRECTORIES'] = str(self.repo.parent)
         for name in list(self.env):
             if name.startswith('BUREAU_') or name in ('BASH_ENV', 'ENV', 'GIT_DIR', 'GIT_WORK_TREE',
                     'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES',

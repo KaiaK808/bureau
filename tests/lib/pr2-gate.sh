@@ -29,6 +29,7 @@
 # every other `date` call is the real one.
 
 pr2_gate_setup() {
+  export MERGE_REVIEW_FAKE="$LIB_DIR/merge-review-fake.py"
   PR2_GH="$SANDBOX/.pr2-gh"
   export PR2_GH
   mkdir -p "$PR2_GH/bin"
@@ -64,6 +65,9 @@ retarget_after_read() {
   jq --arg ref "$base" --arg oid "$sha" '.baseRefName = $ref | .baseRefOid = $oid' "$D/pr.json" > "$D/pr.json.tmp" \
     && mv "$D/pr.json.tmp" "$D/pr.json"
 }
+python3 -I -B "$MERGE_REVIEW_FAKE" "$@"
+transport_rc=$?
+[ "$transport_rc" = 3 ] || exit "$transport_rc"
 case "${1:-}:${2:-}" in
   repo:view) echo '{"nameWithOwner":"test-owner/test-repo"}' | out ;;
   pr:list)
@@ -104,6 +108,9 @@ case "${1:-}:${2:-}" in
       baseRefName) retarget_after_read final-base ;;
     esac ;;
   pr:comment)
+    if [[ "$BODY" == '## Code Review v2'* ]] && [ -e "$D/fail_review_publication" ]; then
+      echo 'HTTP 502 (review publication)' >&2; exit 1
+    fi
     jq --arg b "$BODY" --arg t "2026-09-29T10:$(printf '%02d' "$(jq length "$D/comments.json")"):00Z" \
       '. + [{id: ("comment-" + (length | tostring)), createdAt: $t, lastEditedAt: null, body: $b}]' "$D/comments.json" > "$D/comments.json.tmp" && mv "$D/comments.json.tmp" "$D/comments.json"
     if [[ "$BODY" == *'Code Review v2'* ]] && [ -s "$D/on_review_comment" ]; then
@@ -148,6 +155,12 @@ case "${1:-}:${2:-}" in
 esac
 GH
   chmod +x "$PR2_GH/bin/gh"
+  local transport
+  for transport in curl wget ssh linear; do
+    printf '#!/bin/sh\necho "DENIED real transport" >&2\nexit 97\n' > "$PR2_GH/bin/$transport"
+    chmod +x "$PR2_GH/bin/$transport"
+  done
+  export GIT_ALLOW_PROTOCOL=file
   cat > "$PR2_GH/bin/date" <<'DATE'
 #!/bin/bash
 if [ "$#" = 1 ] && [ "$1" = +%s ] && [ -n "${PR2_NOW:-}" ]; then echo "$PR2_NOW"; else exec /bin/date "$@"; fi
@@ -190,9 +203,9 @@ DATE
 # Publish exactly the binding lines emitted by the review stage, including for
 # the legacy AUTO_APPROVE verdict that the merge gate still accepts.
 pr2_approval() {
-  jq -n --slurpfile pr "$PR2_GH/pr.json" --arg verdict "${1:-APPROVE}" \
+  jq -n --slurpfile pr "$PR2_GH/pr.json" --arg issue "$ISSUE" --arg verdict "${1:-APPROVE}" \
     '[{id: "approval", createdAt: "2026-09-29T09:00:00Z", lastEditedAt: null,
-       body: ("## Code Review v2\n\n**Verdict**: " + $verdict +
+       body: ("## Code Review v2 — " + $issue + "\n\n**Verdict**: " + $verdict +
          "\n**Reviewed head**: `" + $pr[0].headRefOid + "`\n**Target**: `" +
          $pr[0].baseRefName + "` at `" + $pr[0].baseRefOid + "`")}]' > "$PR2_GH/comments.json"
 }

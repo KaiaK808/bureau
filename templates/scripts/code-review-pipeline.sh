@@ -1025,11 +1025,14 @@ $MERGED_REVIEW
 if [ "$REUSED_GATE_WAIT" = 1 ] && [ "$VERDICT" = APPROVE ]; then
   echo "  PR #$PR_NUMBER already carries the APPROVE of this head — no new review comment."
 else
-  # GitHub refuses a comment over 65,536 characters, and the failure is swallowed here;
+  # GitHub refuses a comment over 65,536 characters;
   # the cap keeps the header with the verdict the merge gate reads.
   REVIEW_COMMENT_BODY=$(cap_review_comment "$REVIEW_COMMENT")
   bureau_ticket_checkpoint "$ISSUE"
-  gh pr comment "$PR_NUMBER" --body "$REVIEW_COMMENT_BODY" || true
+  if ! gh pr comment "$PR_NUMBER" --body "$REVIEW_COMMENT_BODY"; then
+    echo "  ERROR: review publication to PR #$PR_NUMBER failed; retained review output needs reconciliation." >&2
+    exit 18
+  fi
   # Bound stdout even if the publication cap used its legacy failure fallback.
   bureau_cap_comment "$REVIEW_COMMENT_BODY" || true
   printf '\n'
