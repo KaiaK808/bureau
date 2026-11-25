@@ -226,12 +226,16 @@ fi
 MERGE_PUBLISHER_POLICY=$(python3 -I -B "$(dirname "$0")/bureau-merge-review.py" policy "$(_bureau_gh_owner_repo)") \
   || MERGE_PUBLISHER_POLICY='{"kind":"read","message":"publisher policy could not be read"}'
 
-# Probe shared local metadata without Git or service calls. Unenrolled
-# installations do not load policy or create files, even with an enabled block.
+# Resolve enrollment authority with one local Git read, then inspect only its
+# record. Unenrolled installations add no service calls, policy reads or files.
+_BUREAU_MERGE_CHARTER_COMMON=""
+export -n _BUREAU_MERGE_CHARTER_COMMON
+_BUREAU_MERGE_CHARTER_COMMON=$(bureau_common_dir) || _BUREAU_MERGE_CHARTER_COMMON=""
 charter_enrolled() {
   # 0 enrolled, 1 confirmed absent; every other result is indeterminate.
   local state
-  state=$(python3 -I -B "$(dirname "$0")/bureau-charter.py" --repo "$PWD" status --local 2>/dev/null) || return 25
+  [ -n "$_BUREAU_MERGE_CHARTER_COMMON" ] || return 25
+  state=$(python3 -I -B "$(dirname "$0")/bureau-charter.py" --repo "$PWD" status --common-dir "$_BUREAU_MERGE_CHARTER_COMMON" 2>/dev/null) || return 25
   case "$state" in
     enrolled) return 0 ;;
     not-enrolled) return 1 ;;

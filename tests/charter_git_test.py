@@ -3,6 +3,7 @@
 import base64
 import copy
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ import sys
 import tempfile
 import types
 import unittest
+from contextlib import redirect_stdout
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -86,6 +88,90 @@ def mutant(old, new):
     module.__file__ = str(SCRIPTS / 'bureau-charter.py')
     exec(compile(source.replace(old, new), '<charter mutation>', 'exec'), module.__dict__)
     return module
+
+
+class ProbeLayoutTests(unittest.TestCase):
+    """Repository authority comes from real Git output, never fixture discovery."""
+    def setUp(self):
+        scratch = tempfile.TemporaryDirectory(prefix='bureau-charter-layout-', dir=tempfile.gettempdir())
+        self.addCleanup(scratch.cleanup)
+        self.root = Path(scratch.name)
+
+    def command(self, repo, common=None):
+        arguments = ['--repo', str(repo), 'status']
+        if common is not None:
+            arguments += ['--common-dir', common]
+        output = io.StringIO()
+        with redirect_stdout(output):
+            code = charter.main(arguments)
+        return code, output.getvalue().strip()
+
+    def record(self, repo):
+        path = charter.enrollment_path(repo)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(dict(version=1, repository='owner/repository', default_branch='main',
+                                       default_commit='a' * 40, policy_digest='b' * 64)))
+        return path
+
+    def test_git_output_drives_checkout_worktree_separate_bare_and_submodule_probes(self):
+        checkout = self.root / 'checkout with spaces'
+        checkout.mkdir()
+        git(checkout, 'init', '--initial-branch=main')
+        git(checkout, 'commit', '--allow-empty', '-m', 'chore: layout fixture')
+        nested = checkout / 'nested directory'
+        nested.mkdir()
+        linked = self.root / 'linked worktree'
+        git(checkout, 'worktree', 'add', '--detach', str(linked), 'HEAD')
+        separate = self.root / 'separate checkout'
+        separate.mkdir()
+        git(separate, 'init', '--separate-git-dir', str(self.root / 'separate metadata'), '--initial-branch=main')
+        bare = self.root / 'standalone bare.git'
+        git(self.root, 'init', '--bare', '--initial-branch=main', str(bare))
+        nested_bare = checkout / 'nested bare.git'
+        git(checkout, 'init', '--bare', '--initial-branch=main', str(nested_bare))
+        superproject = self.root / 'superproject'
+        superproject.mkdir()
+        git(superproject, 'init', '--initial-branch=main')
+        git(superproject, '-c', 'protocol.file.allow=always', 'submodule', 'add', '--', str(checkout), 'module with spaces')
+        module = superproject / 'module with spaces'
+        for repo in (checkout, nested, linked, separate, bare, bare / 'objects', nested_bare, module):
+            with self.subTest(layout=repo.relative_to(self.root)):
+                raw = git(repo, 'rev-parse', '--git-common-dir')
+                self.assertEqual(charter.common_dir(repo), (repo / raw).resolve())
+                self.assertEqual(self.command(repo), (0, 'not-enrolled'))
+                with patch.object(charter.subprocess, 'run', side_effect=AssertionError('unexpected process')):
+                    self.assertEqual(self.command(repo, raw), (0, 'not-enrolled'))
+                path = self.record(repo)
+                try:
+                    self.assertEqual(self.command(repo), (0, 'enrolled'))
+                    with patch.object(charter.subprocess, 'run', side_effect=AssertionError('unexpected process')):
+                        self.assertEqual(self.command(repo, raw), (0, 'enrolled'))
+                finally:
+                    path.unlink()
+        self.assertIsNone(charter.enrollment(checkout))
+
+    def test_ordinary_content_named_like_git_metadata_keeps_git_authority(self):
+        checkout = self.root / 'checkout'
+        checkout.mkdir()
+        git(checkout, 'init', '--initial-branch=main')
+        self.record(checkout)
+        content = checkout / 'fixtures'
+        content.mkdir()
+        (content / 'HEAD').write_text('notes\n')
+        for name in ('objects', 'refs'):
+            (content / name).mkdir()
+        raw = git(content, 'rev-parse', '--git-common-dir')
+        self.assertEqual((content / raw).resolve(), charter.common_dir(checkout))
+        self.assertEqual(self.command(content, raw), (0, 'enrolled'))
+
+    def test_git_failure_never_confirms_absence(self):
+        bare = self.root / 'broken bare.git'
+        git(self.root, 'init', '--bare', '--initial-branch=main', str(bare))
+        self.record(bare)
+        (bare / 'HEAD').unlink()
+        code, message = self.command(bare)
+        self.assertEqual(code, 25)
+        self.assertIn('Git operation failed', message)
 
 
 class GitTests(unittest.TestCase):
@@ -335,8 +421,7 @@ def prepare_pipeline(repo, case, mutation=''):
     if case == 'non-searchable':
         charter.enrollment_path(repo).parent.chmod(0o600)
     if case == 'common-dir-failed':
-        # The merge probe resolves local metadata without Git; an unusable
-        # common-directory target must still block rather than confirm absence.
+        # A failed Git lookup must block rather than confirm absence.
         (repo / '.git/commondir').write_text('missing-common-directory\n')
     if mutation:
         target = repo / ('scripts/merge-pipeline.sh' if mutation in ('wiring', 'unconditional', 'handoff', 'priority') else 'scripts/bureau-charter.py')
