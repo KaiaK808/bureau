@@ -1,6 +1,7 @@
 """Pure Python rule checks; no Git, providers, network or fixture repositories."""
 import importlib.util
 from contextlib import redirect_stdout
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -97,6 +98,14 @@ class SecretRuleTests(unittest.TestCase):
         for ordinary in ('config/ordinary.txt', 'password=example', 'secret=' + 'x' * 80):
             self.assertEqual(self.m.mask_metadata(ordinary), ordinary)
 
+    def test_metadata_assignment_matching_preserves_path_separators(self):
+        value = fake_keys()[-3][1].split('=', 1)[1]
+        name = 'config/password=' + value + '/target.txt'
+        self.assertEqual(self.m.mask_metadata(name), 'config/[REDACTED]/target.txt',
+                         'metadata assignment consumed the next path component')
+        self.assertEqual(self.m.mask_metadata('password=' + value[:12] + '/' + value[12:] + '/target.txt'),
+                         'password=' + value[:12] + '/' + value[12:] + '/target.txt')
+
     def test_token_boundaries_test_keys_and_split_values_are_not_findings(self):
         for rule, value in fake_keys():
             if rule in ('private-key-header', 'generic-secret-assignment'):
@@ -166,6 +175,84 @@ class SecretMeasurementUnitTests(unittest.TestCase):
                 return output.getvalue()
             return self.m.measure(Path('.'), self.base, self.head)
 
+    def measure_additions(self, files, *, cli=False):
+        head, blobs, patches = {}, {}, {}
+        for name, text in files.items():
+            content = (text + '\n').encode()
+            # Git blob identity without invoking Git or writing a fixture file.
+            blob = hashlib.sha1(b'blob ' + str(len(content)).encode() + b'\0' + content).hexdigest()
+            head[name] = ['100644', 'blob', blob]
+            blobs[blob] = content
+            patches[name] = b'@@ -0,0 +1 @@\n+' + content
+        return self.measure({}, head, blobs, patches, cli=cli), head
+
+    def test_later_detected_values_and_masked_forms_leave_no_finding_metadata(self):
+        key = fake_keys()[0][1]
+        password = fake_keys()[-3][1].split('=', 1)[1]
+        nested = 'qR4!' + key + '!zS7'
+        cases = ((password, password, 'generic-secret-assignment'),
+                 (key, '_' + key, 'aws-access-key-id'),
+                 (nested, 'qR4![REDACTED]!zS7', 'generic-secret-assignment'),
+                 (nested, 'qR4!' + fake_keys()[1][1] + '!zS7', 'generic-secret-assignment'))
+        for value, filename, rule in cases:
+            with self.subTest(kind=rule, masked_form='[REDACTED]' in filename):
+                detection = ('password=' if rule == 'generic-secret-assignment' else '') + value
+                files = {'a/' + filename + '.txt': fake_keys()[2][1], 'z/detected.txt': detection}
+                # The first finding's rule ID has neither assignment context nor
+                # a token boundary. It must use the same scan-wide redaction.
+                rules = tuple(('context_' + filename if name == 'github-token' else name, pattern, floor)
+                              for name, pattern, floor in self.m.SECRET_RULES)
+                with patch.object(self.m, 'SECRET_RULES', rules):
+                    output, _ = self.measure_additions(files, cli=True)
+                self.assertNotIn(value, output, 'a later detected value escaped through finding metadata')
+                result = json.loads(output)
+                self.assertEqual((result['status'], result['blocking']), ('measured', True))
+                first = result['findings'][0]
+                expected = '_[REDACTED]' if filename.startswith('_') else '[REDACTED]'
+                self.assertEqual(first['file'], 'a/' + expected + '.txt',
+                                 'a masked form of a detected value escaped through the path')
+                self.assertEqual(first['rule_id'], 'context_' + expected,
+                                 'a masked form of a detected value escaped through the rule ID')
+
+    def test_suppressed_and_omitted_values_still_redact_earlier_metadata(self):
+        password = fake_keys()[-3][1].split('=', 1)[1]
+        files = {'a/' + password + '.txt': fake_keys()[0][1], 'z/detected.txt': 'password=' + password}
+        policy = self.m.scan.module('trivy')
+        for suppressed in (False, True):
+            with self.subTest(suppressed=suppressed), patch.object(self.m, 'MAX_FINDINGS', 1), \
+                    patch.object(policy, 'active_exceptions', return_value=[dict(file='z/detected.txt')] if suppressed else []):
+                output, _ = self.measure_additions(files, cli=True)
+                self.assertNotIn(password, output, 'a non-published detection escaped through earlier metadata')
+                result = json.loads(output)
+                self.assertEqual((result['status'], result['blocking']), ('measured', True))
+                self.assertEqual(result['findings'][0]['file'], 'a/[REDACTED].txt')
+                self.assertEqual(result['findings_suppressed'], int(suppressed))
+                self.assertEqual(result['findings_omitted'], int(not suppressed))
+
+    def test_redacted_paths_have_distinct_resolvable_locators_for_identical_blobs(self):
+        names = ['config/' + key + '.txt' for _, key in fake_keys()[:2]]
+        output, head = self.measure_additions(dict.fromkeys(names, fake_keys()[2][1]), cli=True)
+        result = json.loads(output)
+        self.assertEqual((result['status'], result['blocking']), ('measured', True))
+        findings = result['findings']
+        self.assertEqual(len(findings), 2)
+        self.assertEqual(len({(row['file'], row['line'], row['rule_id']) for row in findings}), 1)
+        self.assertTrue(all('locator' in row for row in findings), 'redacted finding has no resolvable locator')
+        self.assertEqual(len({row['locator']['blob'] for row in findings}), 1)
+        self.assertEqual(len({row['locator']['path_sha256'] for row in findings}), 2)
+        resolved = []
+        for row in findings:
+            locator = row['locator']
+            self.assertRegex(locator['blob'], r'^(?:[0-9a-f]{40}|[0-9a-f]{64})$')
+            self.assertRegex(locator['path_sha256'], r'^[0-9a-f]{16}$')
+            candidates = [name for name, entry in head.items() if entry[2] == locator['blob']
+                          and hashlib.sha256(name.encode()).hexdigest()[:16] == locator['path_sha256']]
+            self.assertEqual(len(candidates), 1, 'locator did not resolve to exactly one pinned-tree entry')
+            resolved.extend(candidates)
+        self.assertEqual(set(resolved), set(names))
+        for name in names:
+            self.assertNotIn(name, output)
+
     def assert_clean(self, result):
         self.assertEqual(result['status'], 'measured', 'proven deletion was not measured')
         self.assertFalse(result['blocking'])
@@ -203,7 +290,8 @@ class SecretMeasurementUnitTests(unittest.TestCase):
         result = json.loads(output)
         self.assertEqual((result['status'], result['blocking']), ('measured', True))
         self.assertEqual(result['findings'], [dict(file='config/[REDACTED].txt', line=1,
-                         rule_id='context-[REDACTED]', value='[REDACTED]')])
+                         rule_id='context-[REDACTED]', value='[REDACTED]',
+                         locator=dict(blob=blob, path_sha256=hashlib.sha256(name.encode()).hexdigest()[:16]))])
 
 
 if __name__ == '__main__':

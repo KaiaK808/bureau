@@ -1,5 +1,6 @@
 """Real Git branch diffs and base-controlled secret exceptions; offline fixtures."""
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -48,6 +49,10 @@ class SecretScanTests(unittest.TestCase):
     def measure(self, **kw):
         return self.m.measure(self.repo, self.base, self.head, **kw)
 
+    def locator(self, name):
+        return dict(blob=self.git('rev-parse', self.head + ':' + name),
+                    path_sha256=hashlib.sha256(name.encode()).hexdigest()[:16])
+
     def test_added_key_is_masked_and_same_diff_without_key_is_clean(self):
         self.write('source.txt', 'safe\n' + self.key + '\n')
         self.commit()
@@ -55,7 +60,7 @@ class SecretScanTests(unittest.TestCase):
         self.assertEqual(result['status'], 'measured')
         self.assertTrue(result['blocking'])
         self.assertEqual(result['findings'], [dict(file='source.txt', line=2,
-                         rule_id='aws-access-key-id', value='[REDACTED]')])
+                         rule_id='aws-access-key-id', value='[REDACTED]', locator=self.locator('source.txt'))])
         self.assertNotIn(self.key, json.dumps(result))
         self.write('source.txt', 'safe\nordinary addition\n')
         self.commit()
@@ -106,7 +111,7 @@ class SecretScanTests(unittest.TestCase):
         result = self.measure()
         self.assertEqual((result['status'], result['blocking']), ('measured', True))
         self.assertEqual(result['findings'], [dict(file='[REDACTED].txt', line=1,
-                         rule_id='aws-access-key-id', value='[REDACTED]')])
+                         rule_id='aws-access-key-id', value='[REDACTED]', locator=self.locator(name))])
         process = subprocess.run(['python3', '-I', '-B', self.m.__file__, '--repo', str(self.repo),
                                   '--base', self.base, '--head', self.head], env=self.env,
                                  capture_output=True, text=True, timeout=15)

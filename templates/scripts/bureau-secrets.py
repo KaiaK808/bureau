@@ -3,6 +3,7 @@
 import argparse
 from collections import Counter
 from datetime import datetime, timezone
+import hashlib
 import importlib.util
 import json
 import math
@@ -30,8 +31,8 @@ def token(pattern):
 
 
 # Public reusable rule table: (stable rule ID, compiled pattern, entropy floor).
-# A future published-text scanner can import SECRET_RULES and rule_ids(). No
-# matched values or value hashes leave this module. Format checks are deliberately
+# A future published-text scanner can import SECRET_RULES and rule_ids(). Only
+# masked values and Git blob/path locators leave this module. Format checks are
 # narrow; no credential validation, decoding, history or cross-line reconstruction.
 SECRET_RULES = (
     ('aws-access-key-id', token(r'(?:AKIA|ASIA)[A-Z0-9]{16}'), None),
@@ -66,16 +67,37 @@ def rule_ids(text):
     return list(dict.fromkeys(rule for rule, _ in rule_matches(text)))
 
 
-def mask_metadata(text):
-    """Replace all rule-matching spans, including overlapping matches."""
-    pieces, end = [], 0
-    for _, match in sorted(rule_matches(text), key=lambda row: row[1].start()):
-        start, stop = match.span()
-        if start >= end:
-            pieces.extend((text[end:start], MASK))
-        end = max(end, stop)
-    pieces.append(text[end:])
-    return ''.join(pieces)
+def metadata_matches(text):
+    """Apply metadata rules per component so assignments never consume a slash."""
+    offset = 0
+    for component in text.split('/'):
+        for rule, match in rule_matches(component):
+            yield rule, match, offset
+        offset += len(component) + 1
+
+
+def mask_metadata(text, values=()):
+    """Redact the union of rule spans and exact known values, without boundaries."""
+    values = tuple(value for value in values if value and value != MASK)
+    while True:
+        spans = [(offset + match.start(), offset + match.end()) for _, match, offset in metadata_matches(text)]
+        for value in values:
+            start = text.find(value)
+            while start >= 0:
+                spans.append((start, start + len(value)))
+                start = text.find(value, start + 1)
+        pieces, end = [], 0
+        for start, stop in sorted(spans):
+            if start >= end:
+                pieces.extend((text[end:start], MASK))
+            end = max(end, stop)
+        pieces.append(text[end:])
+        masked = ''.join(pieces)
+        if masked == text:
+            return masked
+        # Rule redaction can create a known masked form. Repeat until stable;
+        # detected values and nontrivial masked forms are longer than MASK.
+        text = masked
 
 
 def lines(data):
@@ -150,23 +172,36 @@ def measure(repo, base, head, *, now=None):
         names = [name for name in head_tree if old_tree.get(name) != head_tree[name]]
         if len(names) > MAX_FILES or any(not scan.relative(name) for name in names):
             raise ValueError('unsupported diff paths or size')
-        found, count, suppressed = [], 0, 0
+        found, count, suppressed, values = [], 0, 0, set()
         for name in sorted(names):
+            values.update(match.groupdict().get('value', match.group()) for _, match, _ in metadata_matches(name))
             before = scan.blob(repo, old_tree, name, limit=MAX_BYTES) or b''
             after = scan.blob(repo, head_tree, name, limit=MAX_BYTES) or b''
             patch = scan.git(repo, 'diff', *flags, '--unified=0', '--inter-hunk-context=0',
                              '--output-indicator-new=+', '--output-indicator-old=-', '--output-indicator-context= ',
                              merge_base, head, '--', ':(literal)' + name)
             for line, content in added_lines(patch, before, after):
-                for rule in rule_ids(content.decode('utf-8', errors='replace')):
+                rules = {}
+                for rule, match in rule_matches(content.decode('utf-8', errors='replace')):
+                    values.add(match.groupdict().get('value', match.group()))
+                    rules[rule] = None
+                for rule in rules:
+                    values.update(match.groupdict().get('value', match.group()) for _, match, _ in metadata_matches(rule))
                     if any(all(row[key] == {'id': rule, 'file': name}[key] for key in ('id', 'file') if key in row)
                            for row in ignores):
                         suppressed += 1
                     else:
                         count += 1
                         if len(found) < MAX_FINDINGS:
-                            found.append(dict(file=mask_metadata(name), line=line,
-                                              rule_id=mask_metadata(rule), value=MASK))
+                            found.append(dict(file=name, line=line, rule_id=rule, value=MASK,
+                                              locator=dict(blob=head_tree[name][2],
+                                                           path_sha256=hashlib.sha256(name.encode('utf-8')).hexdigest()[:16])))
+        # Redact only after every addition has been validated and scanned. Later,
+        # suppressed and omitted detections must protect earlier metadata too.
+        values.update(mask_metadata(value) for value in tuple(values))
+        for finding in found:
+            for key in ('file', 'rule_id'):
+                finding[key] = mask_metadata(finding[key], values)
         result.update(status='measured', reason=None, findings=found, findings_count=count,
                       findings_omitted=max(0, count - MAX_FINDINGS), findings_suppressed=suppressed, blocking=bool(count))
     except (OSError, ValueError, TypeError, KeyError, UnicodeError, subprocess.SubprocessError):

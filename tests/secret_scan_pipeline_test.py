@@ -32,7 +32,7 @@ class SecretReviewTests(unittest.TestCase):
         self.assertEqual(record['final_verdict'], 'REQUEST_CHANGES', 'secret finding was approved')
         self.assertIn('**Verdict**: REQUEST_CHANGES', body)
         self.assertIn('SECRET FLOOR', body)
-        for text in ('credential.txt', '"line":2', 'aws-access-key-id', '[REDACTED]'):
+        for text in ('credential.txt', '"line":2', 'aws-access-key-id', '[REDACTED]', '"locator":', '"path_sha256":'):
             self.assertIn(text, body)
         self.assertNotIn(self.key, body)
 
@@ -127,7 +127,8 @@ class SecretOutputTests(unittest.TestCase):
 
     def payload(self, blocking=True):
         return json.dumps(dict(tool='secrets', base=self.base, head=self.head, status='measured', reason=None,
-            findings=[dict(file='source.txt', line=1, rule_id='aws-access-key-id', value='[REDACTED]')] if blocking else [],
+            findings=[dict(file='source.txt', line=1, rule_id='aws-access-key-id', value='[REDACTED]',
+                           locator=dict(blob='c' * 40, path_sha256='d' * 16))] if blocking else [],
             findings_count=int(blocking), findings_omitted=0, findings_suppressed=0, blocking=blocking))
 
     def run_parser(self, output, flag=None):
@@ -176,6 +177,20 @@ jq() {
         for flag in ('', '2', '01', 'true', ' 1', '1\n1', '0\n0', '0\n1'):
             with self.subTest(flag=flag):
                 self.assert_held_unmeasured(self.payload(), flag)
+
+    def test_missing_or_invalid_finding_locators_are_not_measured(self):
+        for locator in (None, {}, dict(blob='c' * 41, path_sha256='d' * 16),
+                        dict(blob='c' * 40, path_sha256='d' * 15),
+                        dict(blob='x' * 40, path_sha256='d' * 16),
+                        dict(blob='c' * 40, path_sha256='x' * 16),
+                        dict(blob='c' * 40, path_sha256='d' * 16, extra='unexpected')):
+            with self.subTest(locator=locator):
+                result = json.loads(self.payload())
+                if locator is None:
+                    del result['findings'][0]['locator']
+                else:
+                    result['findings'][0]['locator'] = locator
+                self.assert_held_unmeasured(json.dumps(result))
 
 
 if __name__ == '__main__':

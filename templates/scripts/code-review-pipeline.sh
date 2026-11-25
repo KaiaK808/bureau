@@ -442,7 +442,9 @@ if [ "$_secrets_rc" = 0 ] && jq -se --arg base "$REVIEW_BASE" --arg head "$REVIE
   and .tool == "secrets" and .base == $base and .head == $head
   and (.findings_count | count) and (.findings_omitted | count) and (.findings_suppressed | count)
   and (.findings | type == "array" and length <= 20 and all(.[];
-    (keys == ["file","line","rule_id","value"]) and (.file | type == "string")
+    (keys == ["file","line","locator","rule_id","value"]) and (.file | type == "string")
+    and (.locator | type == "object" and keys == ["blob","path_sha256"]
+      and (.blob | test("^([0-9a-f]{40}|[0-9a-f]{64})$")) and (.path_sha256 | test("^[0-9a-f]{16}$")))
     and (.line | count and . > 0) and (.rule_id | test("^[a-z0-9-]+$")) and .value == "[REDACTED]"))
   and .findings_count == ((.findings | length) + .findings_omitted)
   and ((.status == "measured" and .reason == null and .blocking == (.findings_count > 0))
