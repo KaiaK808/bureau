@@ -9,15 +9,18 @@ export GIT_CEILING_DIRECTORIES="$T"
 CI_FIXTURES="$T"
 export CI_FIXTURES
 mkdir -p "$T/bin"
+cp "$ROOT/templates/scripts/bureau-merge-review.py" "$T/"
+_BUREAU_SCRIPTS_DIR="$T"
 cat > "$T/bin/gh" <<'GH'
 #!/bin/bash
 set -uo pipefail
 printf '%s\n' "$*" >> "$CI_FIXTURES/calls.log"
 case "$*" in
   'repo view '*) [ ! -e "$CI_FIXTURES/no_repo" ] || exit 1; echo test-owner/test-repo ;;
-  'pr view '*) [ ! -e "$CI_FIXTURES/no_head" ] || exit 1; echo HEAD_SHA ;;
+  'pr view '*) [ ! -e "$CI_FIXTURES/no_head" ] || exit 1; echo 0123456789abcdef0123456789abcdef01234567 ;;
   *'/check-runs '*) [ ! -e "$CI_FIXTURES/no_checks" ] || exit 1; cat "$CI_FIXTURES/checks.json" ;;
-  *'/status '*) [ ! -e "$CI_FIXTURES/no_status" ] || exit 1; cat "$CI_FIXTURES/statuses.json" ;;
+  *'/status '*) [ ! -e "$CI_FIXTURES/no_status" ] || exit 1
+    jq '{total_count:length,statuses:(to_entries | map(.value + {id:.key}))}' "$CI_FIXTURES/statuses.json" ;;
   *'/git/commits/'*) echo 2020-01-01T00:00:00Z ;;
   *) echo "unexpected gh call: $*" >&2; exit 1 ;;
 esac
@@ -58,6 +61,8 @@ runs() { jq -n --argjson runs "$1" '{check_runs: $runs}' > "$T/checks.json"; }
 gate() {
   RC=0
   LINE=$(pr_ci_is_green 42 2>&1) || RC=$?
+  # Preserve the symbolic assertion label after the real reader returns.
+  LINE=${LINE//0123456789abcdef0123456789abcdef01234567/HEAD_SHA}
 }
 line_is() { [ "$RC" = 1 ] && [ "$LINE" = "$1" ]; }
 green() { [ "$RC" = 0 ] && [ -z "$LINE" ]; }

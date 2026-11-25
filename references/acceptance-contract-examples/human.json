@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "contract_id": "sample-human-review",
+  "revision": 1,
+  "retired_requirement_ids": [],
+  "requirements": [
+    {"requirement_id": "FR-001", "spec_ref": "FR-001", "task_ids": ["T001"], "mode": "human"},
+    {"requirement_id": "SC-001", "spec_ref": "SC-001", "task_ids": ["T002"], "mode": "human"}
+  ]
+}

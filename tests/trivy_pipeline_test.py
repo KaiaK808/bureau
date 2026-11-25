@@ -81,7 +81,7 @@ if case=='cache-digest':(installed['cache']/'db/trivy.db').write_bytes(b'changed
 if case=='stale':f.make_cache(installed['cache'],age=72)
 head=git('rev-parse','HEAD')
 gh=pathlib.Path(os.environ['PR2_GH'])
-(gh/'comments.json').write_text(json.dumps([dict(id='approval',lastEditedAt=None,body=f'## Code Review v2\n**Verdict**: APPROVE\n**Reviewed head**: `{head}`\n**Target**: `main` at `{base}`',createdAt='2026-01-01T00:00:00Z')]))
+(gh/'comments.json').write_text(json.dumps([dict(id='approval',lastEditedAt=None,body=f'## Code Review v2 — TEAM-1\n\n**Verdict**: APPROVE\n**Reviewed head**: `{head}`\n**Target**: `main` at `{base}`',createdAt='2026-01-01T00:00:00Z')]))
 pr=gh/'pr.json';data=json.loads(pr.read_text());data.update(headRefOid=head,baseRefOid=base);pr.write_text(json.dumps(data))
 if case=='head-before-scan-hold':
     data['headRefOid']=initial_head;pr.write_text(json.dumps(data))

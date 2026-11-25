@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="f629f06fdb30fdf89854311430ad0c98e56f033c61fc0b209dd0afe993a29d2d">
+<meta name="bureau-source-sha256" content="784954c49eb07747d06428d934617912c7b66c7fad32f056d16e29875c1bfa12">
 <title>release-notes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -18,10 +18,16 @@
 <main class="bhb-main"><h1
 id="bureau-v392--decision-answers-merge-approval-binding-and-trivy-parsing">Bureau
 v3.9.2 — Decision answers, merge approval binding and Trivy parsing</h1>
-<p><strong>Release preparation · 2026-11-24 · source tag
-<code>v3.9.2</code>.</strong> v3.9.2 is a patch release on <a
-href="release-notes-v3.9.0.html">v3.9.0</a>. Tagging and GitHub Release
-publication remain separate maintainer operations.</p>
+<p><strong>Published release · 2026-11-24 · source tag
+<code>v3.9.2</code>.</strong> The <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.9.2">GitHub
+Release</a>, "Bureau v3.9.2 — Decision answers, merge approval binding
+and Trivy parsing", is published as latest. Annotated tag
+<code>v3.9.2</code> (tag object <code>ccc3a09</code>) points at merge
+commit <code>8b342bc</code> of <a
+href="https://github.com/KaiaK808/bureau/pull/172">#172</a>, merged on
+2026-11-24. v3.9.2 is a patch release on <a
+href="release-notes-v3.9.0.html">v3.9.0</a>.</p>
 <p>The release includes <a
 href="https://github.com/KaiaK808/bureau/pull/165">#165</a>, <a
 href="https://github.com/KaiaK808/bureau/pull/166">#166</a>, <a
@@ -186,12 +192,12 @@ base name is missing; a failed read with only undecided blockers returns
 2. See <a href="exit-codes.html">exit codes</a>.</p>
 <h2 id="upgrade-an-existing-installation">Upgrade an existing
 installation</h2>
-<p><strong>From v3.9.0, once v3.9.2 is published.</strong> Drain old
-drivers and stop every shepherd, queue loop, dispatcher and supervisor.
-Preserve unfinished work, local commits, customized assets, user
-instructions, Spec Kit assets and constitution, and shared runtime
-records. Compare installed drift and reconcile local incident fixes.
-Record the previous source commit and save the <a
+<p><strong>From v3.9.0.</strong> Drain old drivers and stop every
+shepherd, queue loop, dispatcher and supervisor. Preserve unfinished
+work, local commits, customized assets, user instructions, Spec Kit
+assets and constitution, and shared runtime records. Compare installed
+drift and reconcile local incident fixes. Record the previous source
+commit and save the <a
 href="migration.html#before-changing-an-adopting-repository">pre-upgrade
 inventory and private backup</a>, including
 <code>.bureau-install.json</code> and <code>.gitignore</code>. Select
@@ -294,8 +300,12 @@ validation. Live scanner and adopter qualification are excluded. The
 v3.9.0 publication facts are maintainer-supplied. See the <a
 href="../../CHANGELOG.md#392---2026-11-24">fragment validation in the
 changelog</a>.</p>
-<p>The release branch's own validation remains to be run by the
-maintainer:</p>
+<p>The maintainer-supplied release review, both gate suites, release CI
+and final candidate/tag tree comparison are recorded below. The release
+PR changed documentation only: <code>templates/</code>,
+<code>tests/</code> and <code>scripts/</code> are tree-identical to
+<code>5b0c279</code>. No manual live injection sample was run for
+v3.9.2, and adopter qualification remains pending.</p>
 <table>
 <thead>
 <tr>
@@ -306,34 +316,63 @@ maintainer:</p>
 <tbody>
 <tr>
 <td>Independent release review</td>
-<td>TBD</td>
+<td>Codex, read-only, three rounds on the release PR. Round 1 returned
+an approval without evidence and is not counted as a check. Round 2
+found one P2: the hold-reissue upgrade step had no runnable procedure,
+fixed in <code>6be88f5</code>. Round 3 approved <code>6be88f5</code>
+with file and line evidence for every check.</td>
 </tr>
 <tr>
 <td>macOS gate suite and tested ref</td>
-<td>TBD</td>
+<td><code>5b0c279</code>, two shards: 198 of 198 on the first pass, no
+reruns (2026-11-24).</td>
 </tr>
 <tr>
 <td>Remote gate suite and tested ref</td>
-<td>TBD</td>
+<td><code>openclaw-01</code>, exactly <code>5b0c279</code>, two shards:
+198 of 198 on the first pass, no reruns (2026-11-24).</td>
 </tr>
 <tr>
 <td>Release CI jobs, runs and results</td>
-<td>TBD</td>
+<td><a href="https://github.com/KaiaK808/bureau/pull/172">#172</a> at
+<code>6be88f5</code>: pull-request <a
+href="https://github.com/KaiaK808/bureau/actions/runs/45410048890">run
+45410048890</a> and release-branch push <a
+href="https://github.com/KaiaK808/bureau/actions/runs/45410033730">run
+45410033730</a>, all jobs passed on the first attempt. The main push <a
+href="https://github.com/KaiaK808/bureau/actions/runs/45436105597">run
+45436105597</a> on <code>8b342bc</code> was cancelled by the next push
+to main (<a
+href="https://github.com/KaiaK808/bureau/pull/170">#170</a>). Main on
+the following commit <code>a7c66d8</code>: <a
+href="https://github.com/KaiaK808/bureau/actions/runs/45436229543">run
+45436229543</a>, also cancelled by the next push to main (<a
+href="https://github.com/KaiaK808/bureau/pull/171">#171</a>); the tag
+run below covers the same commit as the release merge. Tag
+<code>v3.9.2</code>: <a
+href="https://github.com/KaiaK808/bureau/actions/runs/45436172742">run
+45436172742</a>, passed on the first attempt.</td>
 </tr>
 <tr>
 <td>Final candidate/tag tested-tree comparison</td>
-<td>TBD</td>
+<td><code>python3 scripts/release_verify.py 5b0c279 v3.9.2</code>
+passed: <code>templates/</code>, <code>tests/</code> and
+<code>scripts/</code> are tree-identical between the tested candidate
+and the tag. The reviewed release candidate <code>6be88f5</code> and the
+tag's commit <code>8b342bc</code> have the identical tree
+(<code>c0c2ed57</code>).</td>
 </tr>
 <tr>
 <td>Manual live injection sample and adopter qualification</td>
-<td>TBD</td>
+<td>Manual live injection sample: not run for v3.9.2. Adopter
+qualification: none recorded yet; one adopting installation is scheduled
+to resync later.</td>
 </tr>
 </tbody>
 </table>
-<p>Before publication, record the exact tested refs and results and run
-<a href="releases.html#verify-the-tested-release-trees">release tree
-verification</a>. The manual live injection sample remains a separate
-release-checklist item.</p>
+<p>See <a href="releases.html#verify-the-tested-release-trees">release
+tree verification</a> for the comparison procedure. The manual live
+injection sample remains a separate release-checklist item.</p>
 <h2 id="known-limitations">Known limitations</h2>
 <ul>
 <li>Target validation is observational. A retarget after the final read
@@ -350,9 +389,9 @@ Yarn plain values also reduce coverage.</li>
 run's leases are marked interrupted a few milliseconds after the
 dispatcher exits. This path predates this release and remains unchanged
 in v3.9.2.</li>
-<li>The release branch's own macOS and remote suites, CI, tested refs
-and final tree comparisons remain <code>TBD</code> until the maintainer
-runs them.</li>
+<li>No manual live injection sample was run for v3.9.2. No adopter
+qualification is recorded yet; one adopting installation is scheduled to
+resync later.</li>
 </ul></main>
 </div>
 </body>
