@@ -1,6 +1,6 @@
 # Bureau v3.9.2 — Decision answers, merge approval binding and Trivy parsing
 
-**Release preparation · 2026-11-24 · source tag `v3.9.2`.** v3.9.2 is a patch release on [v3.9.0](release-notes-v3.9.0.md). Tagging and GitHub Release publication remain separate maintainer operations.
+**Published release · 2026-11-24 · source tag `v3.9.2`.** The [GitHub Release](https://github.com/KaiaK808/bureau/releases/tag/v3.9.2), "Bureau v3.9.2 — Decision answers, merge approval binding and Trivy parsing", is published as latest. Annotated tag `v3.9.2` (tag object `ccc3a09`) points at merge commit `8b342bc` of [#172](https://github.com/KaiaK808/bureau/pull/172), merged on 2026-11-24. v3.9.2 is a patch release on [v3.9.0](release-notes-v3.9.0.md).
 
 The release includes [#165](https://github.com/KaiaK808/bureau/pull/165), [#166](https://github.com/KaiaK808/bureau/pull/166), [#167](https://github.com/KaiaK808/bureau/pull/167), [#168](https://github.com/KaiaK808/bureau/pull/168) and [#169](https://github.com/KaiaK808/bureau/pull/169) in first-parent merge order. All changes are merged. The [changelog](../CHANGELOG.md#392---2026-11-24) collects the four release fragments.
 
@@ -57,7 +57,7 @@ A stale approval uses existing exit 20 and returns to Build Review. A wrong-targ
 
 ## Upgrade an existing installation
 
-**From v3.9.0, once v3.9.2 is published.** Drain old drivers and stop every shepherd, queue loop, dispatcher and supervisor. Preserve unfinished work, local commits, customized assets, user instructions, Spec Kit assets and constitution, and shared runtime records. Compare installed drift and reconcile local incident fixes. Record the previous source commit and save the [pre-upgrade inventory and private backup](migration.md#before-changing-an-adopting-repository), including `.bureau-install.json` and `.gitignore`. Select the published `v3.9.2` tag and refresh discovery.
+**From v3.9.0.** Drain old drivers and stop every shepherd, queue loop, dispatcher and supervisor. Preserve unfinished work, local commits, customized assets, user instructions, Spec Kit assets and constitution, and shared runtime records. Compare installed drift and reconcile local incident fixes. Record the previous source commit and save the [pre-upgrade inventory and private backup](migration.md#before-changing-an-adopting-repository), including `.bureau-install.json` and `.gitignore`. Select the published `v3.9.2` tag and refresh discovery.
 
 Use the [v3.9.2 preview and apply commands](migration.md#from-v390) in each adopting repository with its existing target selection. Resync the **complete scripts scope together with interfaces**, including evidence writers and readers. Resolve conflicts before applying. `--update` edits configuration only.
 
@@ -89,18 +89,18 @@ The fragments record local hold-answer fixtures with fake Linear and providers. 
 
 Trivy validation records offline parser and pipeline regressions, fail-before checks against the previous revision, realistic Yarn v1/Berry locks including CRLF, Python compilation and changelog validation. Live scanner and adopter qualification are excluded. The v3.9.0 publication facts are maintainer-supplied. See the [fragment validation in the changelog](../CHANGELOG.md#392---2026-11-24).
 
-The release branch's own validation remains to be run by the maintainer:
+The maintainer-supplied release review, both gate suites, release CI and final candidate/tag tree comparison are recorded below. The release PR changed documentation only: `templates/`, `tests/` and `scripts/` are tree-identical to `5b0c279`. No manual live injection sample was run for v3.9.2, and adopter qualification remains pending.
 
 | Release check | Result / reference |
 |---|---|
-| Independent release review | TBD |
-| macOS gate suite and tested ref | TBD |
-| Remote gate suite and tested ref | TBD |
-| Release CI jobs, runs and results | TBD |
-| Final candidate/tag tested-tree comparison | TBD |
-| Manual live injection sample and adopter qualification | TBD |
+| Independent release review | Codex, read-only, three rounds on the release PR. Round 1 returned an approval without evidence and is not counted as a check. Round 2 found one P2: the hold-reissue upgrade step had no runnable procedure, fixed in `6be88f5`. Round 3 approved `6be88f5` with file and line evidence for every check. |
+| macOS gate suite and tested ref | `5b0c279`, two shards: 198 of 198 on the first pass, no reruns (2026-11-24). |
+| Remote gate suite and tested ref | `openclaw-01`, exactly `5b0c279`, two shards: 198 of 198 on the first pass, no reruns (2026-11-24). |
+| Release CI jobs, runs and results | [#172](https://github.com/KaiaK808/bureau/pull/172) at `6be88f5`: pull-request [run 45410048890](https://github.com/KaiaK808/bureau/actions/runs/45410048890) and release-branch push [run 45410033730](https://github.com/KaiaK808/bureau/actions/runs/45410033730), all jobs passed on the first attempt. The main push [run 45436105597](https://github.com/KaiaK808/bureau/actions/runs/45436105597) on `8b342bc` was cancelled by the next push to main ([#170](https://github.com/KaiaK808/bureau/pull/170)). Main on the following commit `a7c66d8`: [run 45436229543](https://github.com/KaiaK808/bureau/actions/runs/45436229543), also cancelled by the next push to main ([#171](https://github.com/KaiaK808/bureau/pull/171)); the tag run below covers the same commit as the release merge. Tag `v3.9.2`: [run 45436172742](https://github.com/KaiaK808/bureau/actions/runs/45436172742), passed on the first attempt. |
+| Final candidate/tag tested-tree comparison | `python3 scripts/release_verify.py 5b0c279 v3.9.2` passed: `templates/`, `tests/` and `scripts/` are tree-identical between the tested candidate and the tag. The reviewed release candidate `6be88f5` and the tag's commit `8b342bc` have the identical tree (`c0c2ed57`). |
+| Manual live injection sample and adopter qualification | Manual live injection sample: not run for v3.9.2. Adopter qualification: none recorded yet; one adopting installation is scheduled to resync later. |
 
-Before publication, record the exact tested refs and results and run [release tree verification](releases.md#verify-the-tested-release-trees). The manual live injection sample remains a separate release-checklist item.
+See [release tree verification](releases.md#verify-the-tested-release-trees) for the comparison procedure. The manual live injection sample remains a separate release-checklist item.
 
 ## Known limitations
 
@@ -108,4 +108,4 @@ Before publication, record the exact tested refs and results and run [release tr
 - Live GitHub behaviour, the Linear editor round-trip, live scanner behaviour and adopting-repository qualification remain unverified by the offline validation recorded in the fragments.
 - Trivy preserves unrecognised inline-ignore shapes and reports reduced coverage. The conservative Dockerfile rule retains every marker from the first `<<` through end of file; unsupported Yarn plain values also reduce coverage.
 - The dispatcher shutdown test can fail intermittently because the run's leases are marked interrupted a few milliseconds after the dispatcher exits. This path predates this release and remains unchanged in v3.9.2.
-- The release branch's own macOS and remote suites, CI, tested refs and final tree comparisons remain `TBD` until the maintainer runs them.
+- No manual live injection sample was run for v3.9.2. No adopter qualification is recorded yet; one adopting installation is scheduled to resync later.
