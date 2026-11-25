@@ -187,52 +187,109 @@ class EnrollmentSafetyTests(unittest.TestCase):
         with redirect_stdout(io.StringIO()), self.assertRaisesRegex(AssertionError, 'unexpected process'):
             mutant.main(['--repo', str(self.common.parent), 'status', '--local'])
 
-    def test_local_probe_resolves_linked_and_separate_git_directories(self):
+    def test_local_probe_resolves_existing_git_layouts(self):
         self.metadata()
         self.record()
-        for layout in ('linked-relative', 'linked-absolute', 'separate'):
-            checkout = self.root / ('checkout with spaces ' + layout)
-            checkout.mkdir()
+        for layout in ('checkout', 'linked-relative', 'linked-absolute', 'separate', 'submodule'):
+            checkout = self.common.parent if layout == 'checkout' else self.root / ('checkout with spaces ' + layout)
+            if layout == 'submodule':
+                checkout = self.common.parent / 'module with spaces'
+            checkout.mkdir(exist_ok=True)
+            expected = self.common
             if layout.startswith('linked'):
                 gitdir = self.common / 'worktrees' / layout
                 gitdir.mkdir(parents=True)
                 (gitdir / 'HEAD').write_text('a' * 40 + '\n')
                 shared = '../..' if layout.endswith('relative') else str(self.common)
                 (gitdir / 'commondir').write_text(shared + '\n')
+            elif layout == 'submodule':
+                gitdir = self.common / 'modules' / 'module with spaces'
+                self.metadata(gitdir)
+                self.record(gitdir)
+                expected = gitdir
             else:
                 gitdir = self.common
-            target = str(gitdir) if layout.endswith('absolute') else os.path.relpath(gitdir, checkout)
-            (checkout / '.git').write_text('gitdir: ' + target + '\n')
+            if layout != 'checkout':
+                target = str(gitdir) if layout.endswith('absolute') else os.path.relpath(gitdir, checkout)
+                (checkout / '.git').write_text('gitdir: ' + target + '\n')
             nested = checkout / 'nested'
             nested.mkdir()
             with self.subTest(layout=layout):
                 for repo in (checkout, nested):
+                    self.assertEqual(charter.local_common_dir(repo), expected.resolve())
                     self.assertEqual(self.command('status', repo=repo, local=True), (0, 'enrolled'))
         self.process.assert_not_called()
 
-    def test_local_probe_keeps_enrollment_parent_and_record_validation(self):
+    def test_local_probe_resolves_standalone_bare_repository(self):
+        bare = self.root / 'standalone bare.git'
+        self.metadata(bare)
+        for repo in (bare, bare / 'objects'):
+            with self.subTest(repo=repo.name):
+                self.assertEqual(self.command('status', repo=repo, local=True), (0, 'not-enrolled'))
+                self.assertEqual(charter.local_common_dir(repo), bare.resolve())
+        self.assertFalse((bare / 'bureau').exists())
+        self.record(bare)
+        self.assertEqual(self.command('status', repo=bare, local=True), (0, 'enrolled'))
+        self.process.assert_not_called()
+
+    def test_local_probe_prefers_enrolled_bare_repository_over_unenrolled_outer_checkout(self):
         self.metadata()
-        path = self.record()
-        for parent in (self.common, path.parent.parent, path.parent):
-            with self.subTest(parent=parent.name):
-                parent.chmod(0o600)
+        bare = self.common.parent / 'nested bare.git'
+        self.metadata(bare)
+        self.record(bare)
+        self.assertEqual(self.command('status', local=True), (0, 'not-enrolled'))
+        for repo in (bare, bare / 'objects'):
+            with self.subTest(repo=repo.name):
+                self.assertEqual(self.command('status', repo=repo, local=True), (0, 'enrolled'))
+                self.assertEqual(charter.local_common_dir(repo), bare.resolve())
+        self.assertFalse((self.common / 'bureau').exists())
+        self.process.assert_not_called()
+
+    def test_local_probe_keeps_enrollment_parent_and_record_validation(self):
+        for common in (self.common, self.root / 'bare.git'):
+            self.metadata(common)
+            path = self.record(common)
+            repo = common.parent if common == self.common else common
+            with self.subTest(layout=common.name):
+                for parent in (common, path.parent.parent, path.parent):
+                    with self.subTest(parent=parent.name):
+                        parent.chmod(0o600)
+                        try:
+                            self.assertEqual(self.command('status', repo=repo, local=True)[0], 25)
+                        finally:
+                            parent.chmod(0o700)
+                path.write_text('{broken')
+                self.assertEqual(self.command('status', repo=repo, local=True)[0], 25)
+                path.unlink()
+                path.parent.chmod(0o600)
                 try:
-                    self.assertEqual(self.command('status', local=True)[0], 25)
+                    self.assertEqual(self.command('status', repo=repo, local=True)[0], 25)
                 finally:
-                    parent.chmod(0o700)
-        path.write_text('{broken')
-        self.assertEqual(self.command('status', local=True)[0], 25)
-        path.unlink()
-        path.parent.chmod(0o600)
-        try:
-            self.assertEqual(self.command('status', local=True)[0], 25)
-        finally:
-            path.parent.chmod(0o700)
-        path.parent.rmdir()
-        other = self.root / 'other charter'
-        other.mkdir()
-        path.parent.symlink_to(other, target_is_directory=True)
-        self.assertEqual(self.command('status', local=True)[0], 25)
+                    path.parent.chmod(0o700)
+                path.parent.rmdir()
+                other = self.root / ('other charter ' + common.name)
+                other.mkdir()
+                path.parent.symlink_to(other, target_is_directory=True)
+                self.assertEqual(self.command('status', repo=repo, local=True)[0], 25)
+        self.process.assert_not_called()
+
+    def test_local_probe_rejects_indeterminate_bare_metadata_inside_checkout(self):
+        self.metadata()
+        bare = self.common.parent / 'uncertain bare.git'
+        self.metadata(bare)
+        self.record(bare)
+        for name in ('objects', 'refs'):
+            directory = bare / name
+            directory.rmdir()
+            try:
+                with self.subTest(missing=name):
+                    self.assertEqual(self.command('status', repo=bare, local=True)[0], 25)
+            finally:
+                directory.mkdir()
+        head = bare / 'HEAD'
+        head.unlink()
+        head.symlink_to(bare / 'missing')
+        self.assertEqual(self.command('status', repo=bare, local=True)[0], 25)
         self.process.assert_not_called()
 
     def test_local_probe_rejects_indeterminate_git_metadata(self):

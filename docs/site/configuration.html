@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="7cf9142e3e3b5bf7116b11eaa341ea6be6c8f24462e2f8caa6aa40d34f40fa3c">
+<meta name="bureau-source-sha256" content="cdc0c5dd030c4181c11c71314b5f02dd838c4a2ab27d3b0efd377b37cb61e521">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1991,9 +1991,14 @@ enrollment record or a failed common-directory resolution blocks merging
 with <code>charter-policy</code>, exit <code>25</code> and the human
 handoff. The merge probe reads <code>.git</code> and
 <code>commondir</code> metadata directly from the filesystem, including
-linked worktrees and separate Git directories, without starting Git or a
-service. The offline <code>status</code> command prints
-<code>enrolled</code> or <code>not-enrolled</code> on success;
+linked worktrees, separate Git directories and submodules, without
+starting Git or a service. At each level it checks the <code>.git</code>
+marker first, then bare-repository metadata before ascending, so an
+enrolled bare repository inside an unenrolled checkout retains its own
+authority. Bare candidates pass the same metadata and enrollment
+parent-directory validation; incomplete or inaccessible metadata never
+falls back to an outer checkout. The offline <code>status</code> command
+prints <code>enrolled</code> or <code>not-enrolled</code> on success;
 <code>status --local</code> uses the merge probe's filesystem resolution
 instead of a Git lookup. Unrecognized or unreadable metadata returns
 <code>25</code> and never confirms absence. Both forms retain the same

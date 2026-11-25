@@ -156,24 +156,32 @@ def common_dir(repo):
 
 
 def local_common_dir(repo):
-    """Resolve checkout metadata without starting Git, including linked worktrees."""
+    """Resolve normal and bare Git metadata without starting Git."""
     root = Path(repo).resolve(strict=True)
     for parent in (root, *root.parents):
         marker = parent / '.git'
         try:
             marker.lstat()
         except FileNotFoundError:
-            continue
-        mode = marker.stat().st_mode
-        if stat.S_ISDIR(mode):
-            gitdir = marker.resolve(strict=True)
-        elif stat.S_ISREG(mode):
-            value = marker.read_text(encoding='utf-8').rstrip('\r\n')
-            if not value.startswith('gitdir: ') or not value[8:] or '\n' in value or '\r' in value:
-                raise ValueError('charter Git directory marker is invalid')
-            gitdir = (parent / value[8:]).resolve(strict=True)
+            # Git checks the directory itself before ascending. A bare candidate
+            # must pass the same validation; incomplete metadata cannot fall back
+            # to an outer checkout and hide its enrollment.
+            try:
+                (parent / 'HEAD').lstat()
+            except FileNotFoundError:
+                continue
+            gitdir = parent
         else:
-            raise ValueError('charter Git directory marker is invalid')
+            mode = marker.stat().st_mode
+            if stat.S_ISDIR(mode):
+                gitdir = marker.resolve(strict=True)
+            elif stat.S_ISREG(mode):
+                value = marker.read_text(encoding='utf-8').rstrip('\r\n')
+                if not value.startswith('gitdir: ') or not value[8:] or '\n' in value or '\r' in value:
+                    raise ValueError('charter Git directory marker is invalid')
+                gitdir = (parent / value[8:]).resolve(strict=True)
+            else:
+                raise ValueError('charter Git directory marker is invalid')
         mode = gitdir.stat().st_mode
         if not stat.S_ISDIR(mode) or not mode & 0o111 or not os.access(gitdir, os.X_OK):
             raise ValueError('charter Git directory is unreadable')
