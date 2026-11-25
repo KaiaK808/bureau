@@ -126,6 +126,7 @@ print(json.dumps(dict(result=json.dumps(result) if isinstance(result,dict) else 
 
 GH = r'''#!/usr/bin/env python3
 import json, os, pathlib, signal, subprocess, sys, time
+# review transport helpers
 root=pathlib.Path(os.environ['PR9_FIXTURE']); a=sys.argv[1:]
 review_body=root/'review-body'
 base_ref=root/'pr-base-ref'
@@ -136,7 +137,8 @@ def git_ref(ref):
 
 def review_comment():
     return dict(id='approval',body=review_body.read_text(),createdAt='2026-10-26T00:00:00Z',
-                includesCreatedEdit=False) if review_body.exists() else None
+                includesCreatedEdit=False,lastEditedAt=None,isMinimized=False,
+                author=dict(__typename='User',login='fixture')) if review_body.exists() else None
 
 if a[:2] in (['pr','create'],['pr','comment'],['pr','merge'],['pr','ready']):
     with (root/'events').open('a') as f: f.write(json.dumps(dict(kind='gh-publication',args=a))+'\n')
@@ -178,14 +180,14 @@ elif a[:2]==['pr','merge']:
     (root/'merged').touch()
 elif a[:2]==['repo','view']: print('test/repo')
 elif a[:1]==['api']:
-    if 'graphql' in a:
-        if any('node(id:$id)' in arg for arg in a):
-            comment=review_comment()
-            node=dict(body=comment['body'],lastEditedAt=None) if comment and 'id='+comment['id'] in a else None
-            print(json.dumps(dict(data=dict(node=node))))
-        else: print('{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}')
+    def comments(number):
+        assert number in (None,9)
+        comment=review_comment()
+        # gh pr view has its own projection; GraphQL exposes exactly these fields.
+        return [{k:v for k,v in comment.items() if k!='includesCreatedEdit'}] if comment else []
+    handled,value=review_transport(a,git_ref('main'),json.loads((root/'default-config').read_text()),comments)
+    if handled: print(json.dumps(value))
     elif any('/check-runs' in x for x in a): print('{"check_runs":[{"status":"completed","conclusion":"success","name":"fixture-ci"}]}')
-    elif any('/status' in x for x in a): print('[]')
     elif '/branches/' in a[1]: print(git_ref(a[1].split('/branches/',1)[1]))
     else: print('{}')
 else: print('{}')
@@ -220,7 +222,10 @@ class WithdrawalFixture(unittest.TestCase):
                         BUREAU_ALERT_THROTTLE_FILE=str(self.root/'alerts'), TMUX='', PYTHONDONTWRITEBYTECODE='1',
                         GIT_CEILING_DIRECTORIES=str(self.root))
         for name, body in [('curl',CURL),('claude',PROVIDER),('gh',GH),('git',GIT)]:
+            body=body.replace('# review transport helpers',(ROOT/'tests/lib/review-transport.py').read_text())
             p=self.bin/name; p.write_text(body); p.chmod(0o755)
+        for name in ('codex','wget','ssh'):
+            p=self.bin/name; p.write_text('#!/bin/sh\nexit 97\n'); p.chmod(0o755)
         for name, content in [('events',''),('pids',''),('labels','["lane-2"]'),('control','{}'),('state',STATES['build'])]:
             (self.root/name).write_text(content)
         self.git('init','-q','-b','main'); git_maintenance.disable(self.repo)
@@ -249,8 +254,9 @@ class WithdrawalFixture(unittest.TestCase):
         (self.repo/'.env').write_text('LINEAR_API_KEY=fixture-key\n')
         self.config=dict(version=2,linear=dict(teams=[dict(key='EXP',id='T',name='fixture',states=STATES)],
                          labels=dict(lane2=dict(id='L:lane-2',name='lane-2'))),
-                         agents=dict(runner='claude',implement=True,code_review=True,merge=True),repo=dict(base_branch='main',specs_dir='specs',test_command='true'))
+                         agents=dict(merge_publishers=['user:fixture'],runner='claude',implement=True,code_review=True,merge=True),repo=dict(base_branch='main',specs_dir='specs',test_command='true'))
         self.save_config()
+        (self.root/'default-config').write_text(json.dumps(self.config))
         self.common=self.repo/'.git'; self.wt=self.repo/'.worktrees/worker'
         self.addCleanup(self.assert_no_providers)
 
@@ -652,7 +658,7 @@ preselect_issue() { pipeline_pick_next "$1"; }
             head=self.git('rev-parse','origin/'+self.branch)
             base=self.git('rev-parse','origin/main')
             (self.root/'review-body').write_text(
-                f'## Code Review v2\n**Verdict**: APPROVE\n**Reviewed head**: `{head}`\n**Target**: `main` at `{base}`')
+                f'## Code Review v2 — EXP-9\n\n**Verdict**: APPROVE\n**Reviewed head**: `{head}`\n**Target**: `main` at `{base}`')
             self.state('merge')
         else:
             self.config['agents']['merge']=False; self.save_config(); self.state('build_review')

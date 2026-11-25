@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="4e585907f3d0d6297c609baddd3c2837e9adf7b8bd5c7e80fbb7d4b1a1fd39c9">
+<meta name="bureau-source-sha256" content="972b95060670f4975c8afa831b1c58ecaf71bf32f4d071e8ce63ba4323aec999">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1063,6 +1063,26 @@ not establish a passing acceptance gate.</li>
 <h2 id="stage-specific-failures">Stage-specific failures</h2>
 <h3 id="merge-gate-refuses-to-merge-a-pr-that-looks-green">Merge gate
 refuses to merge a PR that looks green</h3>
+<p>First check <code>agents.merge_publishers</code> on the repository's
+default branch. It must be an array of typed
+<code>user:&lt;login&gt;</code> or <code>app:&lt;slug&gt;</code> entries
+(at most 20). Set it before resyncing scripts and restarting drivers.
+Missing, invalid or empty policy holds merges with <code>25</code>;
+doctor reports missing or invalid policy. A policy added only in the PR
+checkout has no effect. The merge stage pins policy once per run;
+changes apply on the next run.</p>
+<p>Only the newest authorised exact issue-heading review supplies the
+verdict. A valid BLOCK or REQUEST_CHANGES, or a complete history with no
+authorised verdict, holds with <code>25</code>. Edited selected reviews
+require fresh Build Review (<code>20</code>), including edits to a
+BLOCK. Failed reads, partial GraphQL data, hidden/unreadable entries or
+incomplete pagination hold with <code>2</code>; an older approval is
+never substituted. Review publication failure stops with <code>18</code>
+and reports that retained output needs reconciliation. Check the
+configured publisher against the comment's GraphQL actor type;
+<code>/user</code> is not consulted. Shared logins trust everyone acting
+as that login, and deleting a newer verdict without trace cannot be
+detected. Prefer a dedicated Bureau App.</p>
 <p><code>merge-pipeline.sh</code> independently checks CI on the current
 PR head, the current PR base, GitHub's <code>mergeStateStatus</code>,
 the latest Code Review v2 approval and its head/target binding, hold

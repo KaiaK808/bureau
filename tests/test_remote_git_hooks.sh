@@ -84,6 +84,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPTS="$REPO_ROOT/templates/scripts"
 TMP=$(mktemp -d -t bureau-test.remote-hooks.XXXXXXXX)
 TMP=$(cd "$TMP" && pwd -P)
+export GIT_CEILING_DIRECTORIES="$TMP"
 trap 'rm -rf "$TMP"' EXIT
 fail() { pr1_fail "$@"; }
 # run_case <label> <command> [arguments] — one stage shell gets at most 60 s.
@@ -252,9 +253,9 @@ pr1_pass "4 without bureau-config.sh and BUREAU_CONFIG: hooks off"
 # "worktree" doctor runs in a linked worktree of the repository whose own checkout has none of them.
 doctor_warnings() {
   local d="$TMP/doctor" at="$TMP/doctor" file=.gitattributes
-  rm -rf "$d" "$TMP/doctor-wt"; mkdir -p "$d/scripts"; cp "$SCRIPTS"/bureau-doctor.py "$SCRIPTS"/bureau-paths.py "$SCRIPTS"/bureau-adr.py "$SCRIPTS"/bureau-review.py "$SCRIPTS"/bureau-ticket.py "$SCRIPTS"/bureau-runtime.py "$SCRIPTS"/bureau-provider.py "$SCRIPTS"/bureau-process.py "$SCRIPTS"/bureau-activity.py "$SCRIPTS"/bureau-evidence.py "$SCRIPTS"/bureau-gates.py "$SCRIPTS"/bureau-spec.py "$SCRIPTS"/bureau-stage.md "$d/scripts/"
+  rm -rf "$d" "$TMP/doctor-wt"; mkdir -p "$d/scripts"; cp "$SCRIPTS"/bureau-doctor.py "$SCRIPTS"/bureau-merge-review.py "$SCRIPTS"/bureau-paths.py "$SCRIPTS"/bureau-adr.py "$SCRIPTS"/bureau-review.py "$SCRIPTS"/bureau-ticket.py "$SCRIPTS"/bureau-runtime.py "$SCRIPTS"/bureau-provider.py "$SCRIPTS"/bureau-process.py "$SCRIPTS"/bureau-activity.py "$SCRIPTS"/bureau-evidence.py "$SCRIPTS"/bureau-gates.py "$SCRIPTS"/bureau-spec.py "$SCRIPTS"/bureau-stage.md "$d/scripts/"
   git -C "$d" init -q -b main; git -C "$d" config maintenance.auto false; git -C "$d" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
-  jq -n --argjson repo "$1" '{version: 2, linear: {teams: [{id: "t", key: "EXP", states: {build: "s"}}]}, agents: {}, repo: $repo}' > "$d/.bureau.json"
+  jq -n --argjson repo "$1" '{version: 2, linear: {teams: [{id: "t", key: "EXP", states: {build: "s"}}]}, agents: {merge_publishers: ["app:bureau-reviewer"]}, repo: $repo}' > "$d/.bureau.json"
   case "${3:-}" in nested|untracked) file=assets/.gitattributes ;; info) file=.git/info/attributes ;; esac
   if [ -n "${2:-}" ]; then mkdir -p "$(dirname "$d/$file")"; printf '%s\n' "$2" > "$d/$file"; fi
   if [ "${3:-}" = nested ]; then git -C "$d" add assets; git -C "$d" -c user.email=t@t -c user.name=t commit -q -m attributes; fi

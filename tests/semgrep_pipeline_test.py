@@ -345,7 +345,7 @@ if os.environ['SEMGREP_CASE']=='unavailable':
     source.write_text('# tampered after review\n')
 if os.environ['SEMGREP_CASE']=='isolation': f.inject_isolation(repo/'scripts',installed,available=False)
 head=git('rev-parse','HEAD')
-(pathlib.Path(os.environ['PR2_GH'])/'comments.json').write_text(json.dumps([dict(id='approval',lastEditedAt=None,body=f'## Code Review v2\n**Verdict**: APPROVE\n**Reviewed head**: `{head}`\n**Target**: `main` at `{base}`',createdAt='2026-01-01T00:00:00Z')]))
+(pathlib.Path(os.environ['PR2_GH'])/'comments.json').write_text(json.dumps([dict(id='approval',lastEditedAt=None,body=f'## Code Review v2 — TEAM-1\n\n**Verdict**: APPROVE\n**Reviewed head**: `{head}`\n**Target**: `main` at `{base}`',createdAt='2026-01-01T00:00:00Z')]))
 pr=pathlib.Path(os.environ['PR2_GH'])/'pr.json';data=json.loads(pr.read_text());data.update(headRefOid=head,baseRefOid=base);pr.write_text(json.dumps(data))
 if case=='head-before-scan-hold':
     data['headRefOid']=initial_head;pr.write_text(json.dumps(data))

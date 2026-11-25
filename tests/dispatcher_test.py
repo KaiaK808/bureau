@@ -31,6 +31,7 @@ NAMES = dict(triage='Triage', spec='Spec', spec_review='Spec Review', design='De
 SERVICE = r'''#!/usr/bin/env python3
 import fcntl, json, os, re, subprocess, sys, time
 from pathlib import Path
+# review transport helpers
 root = Path(os.environ['DISPATCH_FIXTURE']); args=sys.argv[1:]; binary=Path(sys.argv[0]).name
 def event(kind, **kw):
     with (root/'events').open('a') as f: f.write(json.dumps(dict(kind=kind,pid=os.getpid(),at=time.time(),**kw))+'\n')
@@ -138,18 +139,17 @@ with (root/'service.guard').open('a') as lock:
         p=pr_for(); body_file=args[args.index('--body-file')+1] if '--body-file' in args else None
         body=(sys.stdin.read() if body_file=='-' else Path(body_file).read_text()) if body_file is not None else args[args.index('--body')+1]
         p.setdefault('comments',[]).append(dict(id='comment-'+str(p['number'])+'-'+str(len(p['comments'])),
-                                              body=body,lastEditedAt=None,createdAt='2026-10-26T00:00:00Z')); save()
+                                              body=body,lastEditedAt=None,createdAt='2026-10-26T01:00:00Z',
+                                              isMinimized=False,author=dict(__typename='User',login='fixture'))); save()
         event('pr-comment',issue=p['issue'],body=body)
     elif args[:2]==['pr','merge']:
         p=pr_for(); p['state']='MERGED'; p['merge_commit']=git('rev-parse','refs/heads/'+p['branch']); save(); event('merge',issue=p['issue'])
     elif args[:1]==['api']:
         endpoint=next((a for a in args if a.startswith('repos/')),'')
-        if 'graphql' in args:
-            if any('node(id:$id)' in a for a in args):
-                cid=next(a[3:] for a in args if a.startswith('id='))
-                node=next((dict(body=c['body'],lastEditedAt=c['lastEditedAt']) for p in prs for c in p['comments'] if c.get('id')==cid),None)
-                print(json.dumps(dict(data=dict(node=node))))
-            else: print('{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}')
+        def comments(number):
+            return [c for p in prs if number is None or p['number']==number for c in p.get('comments',[])]
+        handled,value=review_transport(args,git('rev-parse','refs/heads/main'),data['default_config'],comments)
+        if handled: print(json.dumps(value))
         elif '/pulls?state=open' in endpoint:
             found=[]
             for p in prs:
@@ -165,7 +165,6 @@ with (root/'service.guard').open('a') as lock:
             print(json.dumps([dict(number=num,state='open',title=p['issue'],body='',
                 head=dict(ref=p['branch'],sha=v['headRefOid'],repo=dict(id=1,full_name='test/repo')),
                 base=dict(ref='main',sha=git('rev-parse','refs/heads/main'),repo=dict(id=1,full_name='test/repo')))]))
-        elif '/status' in endpoint: print('[]')
         elif '/branches/main' in endpoint: print(git('rev-parse','refs/heads/main'))
         elif '/compare/' in endpoint: print('1')
         else: print('{}')
@@ -250,14 +249,19 @@ class DispatcherFixture(unittest.TestCase):
         self.children = []; self.files = []; self.addCleanup(self.cleanup)
         self.bin = self.root/'bin'; self.bin.mkdir()
         self.state = self.root/'service.json'
-        self.data = dict(issues=[], prs=[], names=NAMES); self.save()
+        self.data = dict(issues=[], prs=[], names=NAMES,
+                         default_config=dict(agents=dict(merge_publishers=['user:fixture']))); self.save()
         self.env = {k:v for k,v in os.environ.items() if not k.startswith('BUREAU_')}
         self.env.update(PATH=str(self.bin)+os.pathsep+os.environ['PATH'], DISPATCH_FIXTURE=str(self.root),
                         DISPATCH_REAL_GIT=REAL_GIT, BUREAU_LINEAR_RETRIES='0', BUREAU_STOP_GRACE_SECONDS='1',
                         BUREAU_IMPL_MAX_ITER='1', PYTHONDONTWRITEBYTECODE='1', TMPDIR=str(self.root),
+                        GIT_CEILING_DIRECTORIES=str(self.root), GIT_ALLOW_PROTOCOL='file',
                         GIT_CONFIG_GLOBAL='/dev/null', GIT_CONFIG_NOSYSTEM='1', GIT_TERMINAL_PROMPT='0')
         for name,body in [('curl',SERVICE),('gh',SERVICE),('claude',PROVIDER),('git',GIT)]:
+            body=body.replace('# review transport helpers',(ROOT/'tests/lib/review-transport.py').read_text())
             file=self.bin/name; file.write_text(body); file.chmod(0o755)
+        for name in ('codex','wget','ssh'):
+            file=self.bin/name; file.write_text('#!/bin/sh\nexit 97\n'); file.chmod(0o755)
         self.g('init','-q','-b','main'); self.g('config','user.name','test'); self.g('config','user.email','test@bureau')
         git_maintenance.disable(self.repo)
         for key,value in [('gc.auto','0'),('fetch.writeCommitGraph','false')]: self.g('config',key,value)
@@ -274,7 +278,7 @@ class DispatcherFixture(unittest.TestCase):
         self.config = dict(linear=dict(teams=[dict(key='TST',id='T',name='Test',states={k:'id-'+k for k in NAMES if k!='qa'})],
                                       labels=dict(lane2=dict(id='L:lane-2',name='lane-2'))),
                            repo=dict(base_branch='main',specs_dir='specs',test_command='true'),
-                           agents=dict(runner='claude',spec=True,spec_review=False,implement=True,code_review=False,
+                           agents=dict(merge_publishers=['user:fixture'],runner='claude',spec=True,spec_review=False,implement=True,code_review=False,
                                        merge=True,file_overlap_gate=True,parallel_lanes=2))
         self.save_config(); (self.repo/'.env').write_text('LINEAR_API_KEY=fixture-only\n')
         self.common=self.repo/'.git/bureau'
@@ -967,7 +971,8 @@ signal.signal(signal.SIGTERM,exited)
     def approval_comment(self, branch):
         head=self.g('rev-parse','origin/'+branch); base=self.g('rev-parse','origin/main')
         return dict(id='approval',lastEditedAt=None,createdAt='2026-10-26T00:00:00Z',
-                    body=f'## Code Review v2\n**Verdict**: APPROVE\n**Reviewed head**: `{head}`\n**Target**: `main` at `{base}`')
+                    isMinimized=False,author=dict(__typename='User',login='fixture'),
+                    body=f'## Code Review v2 — TST-1\n\n**Verdict**: APPROVE\n**Reviewed head**: `{head}`\n**Target**: `main` at `{base}`')
 
     def test_stale_base_merge_forward_requires_fresh_review(self):
         issue,branch=self.stale_pr()
@@ -1007,7 +1012,7 @@ signal.signal(signal.SIGTERM,exited)
                            env={**self.env,'BUREAU_MERGE_GATE_REPORT':str(report)},timeout=70)
         self.assertEqual(result.returncode,20,result.stdout+result.stderr)
         self.assertEqual(report.read_text().splitlines()[0],'refreshed')
-        self.assertIn('approval_binding: selected approval comment was edited',report.read_text())
+        self.assertIn('approval_binding: selected review was edited; fresh Build Review required',report.read_text())
         self.assertFalse(self.events('merge'))
         self.assertEqual([v['state'] for v in self.events('move')],['build_review'])
 

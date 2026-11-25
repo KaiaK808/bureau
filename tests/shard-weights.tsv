@@ -100,6 +100,7 @@ test_merge_gate_switches.sh	75	193
 test_merge_mode.sh	28	58
 test_merge_pinned_head_log.sh	8	23
 test_merge_pipeline_correctness.sh	59	130
+test_merge_publishers.sh	180	360
 test_merge_reuse_base.sh	81	233
 test_model_argv.sh	1	2
 test_model_conflict_negative_controls.sh	7	12

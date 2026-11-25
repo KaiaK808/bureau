@@ -24,7 +24,7 @@ HEAD = 'a' * 40
 NEW_HEAD = 'b' * 40
 CONTEXT = 'bureau/human-approval'
 BASE = dict(version=2, linear={'teams': [{'id': 'team', 'key': 'TEAM', 'states': {'merge': 'merge'}}]},
-            agents={'runner': 'claude', 'merge_approvers': ['merge-person']}, repo={})
+            agents={'runner': 'claude', 'merge_approvers': ['merge-person'], 'merge_publishers': ['app:bureau-reviewer']}, repo={})
 
 
 def load(name, path):
@@ -96,14 +96,17 @@ def workflow_yaml(text):
 
 class Fixture(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix='bureau approval ', dir=ROOT)
+        temporary = tempfile.TemporaryDirectory(prefix='bureau approval ')
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         self.bin = self.root / 'bin'; self.bin.mkdir()
         shutil.copyfile(FIXTURES / 'gh', self.bin / 'gh'); (self.bin / 'gh').chmod(0o755)
         self.env = {**os.environ, **git_maintenance.OFF_ENV, 'PATH': str(self.bin) + os.pathsep + os.environ['PATH'],
                     'APPROVAL_FIXTURE': str(self.root), 'PYTHONDONTWRITEBYTECODE': '1',
-                    'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1', 'GH_TOKEN': 'approval-test-secret'}
+                    'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1', 'GH_TOKEN': 'approval-test-secret',
+                    'GIT_CEILING_DIRECTORIES': str(self.root)}
+        for name in ('curl', 'claude', 'codex', 'wget', 'ssh'):
+            stub = self.bin / name; stub.write_text('#!/bin/sh\nexit 97\n'); stub.chmod(0o755)
         for name in ('BUREAU_CONFIG', 'BUREAU_ENV_FILE', 'BASH_ENV', 'ENV', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR'):
             self.env.pop(name, None)
         self.state = dict(repository={'default_branch': 'stable'}, default_config=copy.deepcopy(BASE),
