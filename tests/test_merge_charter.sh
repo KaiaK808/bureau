@@ -5,6 +5,7 @@ set -uo pipefail
 export BUREAU_MERGE_TEST_LIBRARY_ONLY=1
 source "$(dirname "$0")/test_merge_pipeline_correctness.sh"
 unset BUREAU_MERGE_TEST_LIBRARY_ONLY
+trap 'chmod -R u+rwx "$SANDBOX_ROOT" 2>/dev/null || true; rm -rf "$SANDBOX_ROOT"' EXIT
 export GIT_ALLOW_PROTOCOL=file PYTHONDONTWRITEBYTECODE=1
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 export GIT_CEILING_DIRECTORIES="$SANDBOX_ROOT"
@@ -26,6 +27,8 @@ charter_case() {
   case "$name" in clean|unenrolled|disabled-unenrolled|absent) expected=0 ;; esac
   # The inherited library expects its caller's cwd to be the test repository.
   ( cd "$sb" && BUREAU_MERGE_GATE_REPORT="$sb/stub_data/gate-report" run_pipeline "$sb" TEAM-1 ); rc=$?
+  # Restore traversal before assertions or the shared sandbox's EXIT cleanup.
+  if [ "$name" = non-searchable ]; then chmod 700 "$sb/.git/bureau/charter" || return 3; fi
   if [ "$rc" != "$expected" ]; then
     echo "FAIL charter $name ${mutation:-normal}: got $rc, expected $expected" >&2
     tail -12 "$sb/pipeline.out" "$sb/pipeline.err" >&2
@@ -52,7 +55,7 @@ charter_case() {
   return 0
 }
 
-for name in clean policy disabled-pr unreadable stale-policy unenrolled disabled-unenrolled absent; do
+for name in clean policy disabled-pr unreadable stale-policy non-searchable common-dir-failed unenrolled disabled-unenrolled absent; do
   if charter_case "$name"; then echo "PASS charter $name"; else FAILS=$((FAILS + 1)); fi
 done
 # Each observation passes with production code first. Removing its enforcement

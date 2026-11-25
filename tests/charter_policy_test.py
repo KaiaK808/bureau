@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
-"""Pure-Python charter schema checks; no processes, repositories or services."""
+"""Pure-Python charter checks; filesystem fixtures, no child processes or services."""
 import copy
 import importlib.util
+import io
+import json
+import os
 from pathlib import Path
+import subprocess
+import tempfile
 import types
 import unittest
+from contextlib import redirect_stdout
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / 'templates/scripts/bureau-charter.py'
@@ -112,9 +119,123 @@ class PolicyTests(unittest.TestCase):
                 observation(charter)  # Unchanged baseline must pass first.
                 self.assertEqual(source.count(old), 1)
                 mutant = types.ModuleType('charter_mutant')
+                mutant.__file__ = str(SOURCE)
                 exec(compile(source.replace(old, new), '<charter mutation>', 'exec'), mutant.__dict__)
                 with self.assertRaises(AssertionError):
                     observation(mutant)
+
+
+class EnrollmentSafetyTests(unittest.TestCase):
+    """Real filesystem state; Git and service process boundaries never execute."""
+    def setUp(self):
+        scratch = tempfile.TemporaryDirectory(prefix='bureau-charter-policy-', dir=tempfile.gettempdir())
+        self.addCleanup(scratch.cleanup)
+        self.root = Path(scratch.name)
+        self.common = self.root / 'repository' / '.git'
+        self.common.mkdir(parents=True)
+        self.real_common_dir = charter.common_dir
+        common = patch.object(charter, 'common_dir', return_value=self.common)
+        common.start()
+        self.addCleanup(common.stop)
+        processes = patch.object(charter.subprocess, 'run', side_effect=AssertionError('unexpected process'))
+        self.process = processes.start()
+        self.addCleanup(processes.stop)
+
+    def record(self, common=None):
+        path = (common or self.common) / 'bureau/charter/enrollment.json'
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps(dict(version=1, repository='owner/repository', default_branch='main',
+                                       default_commit='a' * 40, policy_digest='b' * 64)))
+        return path
+
+    def command(self, operation):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            code = charter.main(['--repo', str(self.common.parent), operation])
+        return code, output.getvalue().strip()
+
+    def test_status_distinguishes_absence_from_enrollment(self):
+        self.assertEqual(self.command('status'), (0, 'not-enrolled'))
+        path = self.record()
+        self.assertEqual(self.command('status'), (0, 'enrolled'))
+        path.write_text('{broken')
+        code, message = self.command('status')
+        self.assertEqual(code, 25)
+        self.assertIn('invalid', message)
+        self.process.assert_not_called()
+
+    def test_non_searchable_parent_is_unusable_even_without_a_record(self):
+        path = self.record()
+        for directory in (path.parent, path.parent.parent):
+            with self.subTest(parent=directory.name):
+                directory.chmod(0o600)
+                try:
+                    code, _ = self.command('status')
+                    self.assertEqual(code, 25)
+                    with self.assertRaises((ValueError, OSError)):
+                        charter.enrollment(self.common.parent)
+                finally:
+                    directory.chmod(0o700)
+        path.unlink()
+        path.parent.chmod(0o600)
+        try:
+            self.assertEqual(self.command('status')[0], 25)
+        finally:
+            path.parent.chmod(0o700)
+
+    def test_failed_or_empty_common_directory_lookup_is_unusable(self):
+        # Exercise the real common_dir implementation while only Git's result is fake.
+        for result in (subprocess.CompletedProcess([], 128, b'', b'failed'),
+                       subprocess.CompletedProcess([], 0, b'', b'')):
+            self.process.side_effect = None
+            self.process.return_value = result
+            with self.subTest(returncode=result.returncode), patch.object(charter, 'common_dir', self.real_common_dir):
+                self.assertEqual(self.command('status')[0], 25)
+        self.assertFalse((self.common / 'bureau').exists())
+
+    def test_unenroll_refuses_symlinked_parent_without_touching_other_repository(self):
+        other = self.root / 'other repository' / '.git'
+        other.mkdir(parents=True)
+        target = self.record(other)
+        original = target.read_bytes()
+        bureau = self.common / 'bureau'
+        bureau.mkdir()
+        for link, destination in ((bureau / 'charter', target.parent), (bureau, target.parent.parent)):
+            with self.subTest(parent=link.name):
+                if link == bureau:
+                    bureau.rmdir()
+                link.symlink_to(destination, target_is_directory=True)
+                try:
+                    code, message = self.command('unenroll')
+                    self.assertEqual(code, 25)
+                    self.assertIn('symlink', message)
+                    self.assertEqual(target.read_bytes(), original)
+                    self.assertTrue(link.is_symlink())
+                finally:
+                    link.unlink()
+
+    def test_unenroll_can_remove_a_corrupt_regular_record(self):
+        path = self.record()
+        path.write_text('{broken')
+        self.assertEqual(self.command('unenroll')[0], 0)
+        self.assertFalse(path.exists())
+
+    def test_fetch_uses_the_existing_hardened_remote_runner(self):
+        sha = 'a' * 40
+        self.process.side_effect = [subprocess.CompletedProcess([], 0, b'', b''),
+                                    subprocess.CompletedProcess([], 0, (sha + '\n').encode(), b'')]
+        with patch.dict(os.environ, BASH_ENV='untrusted-startup', ENV='untrusted-startup'):
+            charter.GitHub(self.common.parent, 'owner/repository').fetch(sha)
+        arguments, options = self.process.call_args_list[0]
+        command = arguments[0]
+        self.assertEqual(command[:3], ['bash', '--noprofile', '--norc'])
+        self.assertIn('source "$1"', command[4])
+        self.assertIn('_bureau_remote_git_hooks_mode()', command[4])
+        self.assertIn('git "$@"', command[4])
+        self.assertEqual(Path(command[6]), SOURCE.with_name('bureau-env.sh'))
+        self.assertEqual(command[7:], ['-C', str(self.common.parent), 'fetch', '--no-tags', '--no-write-fetch-head', 'origin', sha])
+        self.assertNotIn('BASH_ENV', options['env'])
+        self.assertNotIn('ENV', options['env'])
 
 
 if __name__ == '__main__':

@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -16,6 +17,11 @@ from urllib.parse import quote
 
 SHA = re.compile(r'(?:[0-9a-f]{40}|[0-9a-f]{64})')
 DEFAULTS = dict(enabled=False, approved_queue=None, exceptions=[], suite=None, red_main=None, report=False)
+# Reuse Bureau's configured-hook and submodule protections. Charter policy must
+# not take a hook opt-in from the checkout whose merge it is authorizing.
+NO_HOOKS = ['bash', '--noprofile', '--norc', '-c',
+            'source "$1" || exit; shift; _bureau_remote_git_hooks_mode() { printf "off\\n"; }; git "$@"',
+            'bureau-charter', str(Path(__file__).resolve().with_name('bureau-env.sh'))]
 
 
 def object_keys(value, allowed, where, required=()):
@@ -123,11 +129,11 @@ def read_json(raw):
     return json.loads(raw, object_pairs_hook=unique, parse_constant=lambda _: (_ for _ in ()).throw(ValueError('nonfinite JSON value')))
 
 
-def git(repo, *args, codes=(0,)):
-    env = {k: v for k, v in os.environ.items() if k not in ('GIT_DIR', 'GIT_COMMON_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE')}
+def git(repo, *args, codes=(0,), runner=None):
+    env = {k: v for k, v in os.environ.items() if k not in ('GIT_DIR', 'GIT_COMMON_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'BASH_ENV', 'ENV')}
     env.update(GIT_NO_REPLACE_OBJECTS='1', GIT_TERMINAL_PROMPT='0', GIT_LITERAL_PATHSPECS='1')
     try:
-        result = subprocess.run(['git', '-c', 'core.hooksPath=/dev/null', '-C', str(repo), *args],
+        result = subprocess.run([*(runner or ['git', '-c', 'core.hooksPath=/dev/null']), '-C', str(repo), *args],
                                 capture_output=True, env=env, timeout=30)
     except (OSError, subprocess.TimeoutExpired):
         raise ValueError('charter Git read failed') from None
@@ -144,19 +150,33 @@ def commit(value):
 
 def common_dir(repo):
     value = os.fsdecode(git(repo, 'rev-parse', '--git-common-dir').stdout).strip()
-    return (Path(repo) / value).resolve()
+    if not value:
+        raise ValueError('charter Git common directory is unavailable')
+    return (Path(repo) / value).resolve(strict=True)
 
 
 def enrollment_path(repo):
     return common_dir(repo) / 'bureau' / 'charter' / 'enrollment.json'
 
 
-def enrollment(repo):
+def checked_enrollment_path(repo):
+    """Only a missing component proves absence; inaccessible state never does."""
     path = enrollment_path(repo)
-    # A broken symlink or malformed record is enrolled but unusable, never absent.
-    for entry in (path.parent.parent, path.parent, path):
-        if entry.is_symlink():
+    for entry in (path.parent.parent.parent, path.parent.parent, path.parent, path):
+        try:
+            mode = entry.lstat().st_mode
+        except FileNotFoundError:
+            return path
+        if stat.S_ISLNK(mode):
             raise ValueError('charter enrollment must not use symlinks')
+        if entry != path and (not stat.S_ISDIR(mode) or not mode & 0o111 or not os.access(entry, os.X_OK)):
+            raise ValueError('charter enrollment directory is unreadable')
+    return path
+
+
+def enrollment(repo):
+    # A broken symlink or malformed record is enrolled but unusable, never absent.
+    path = checked_enrollment_path(repo)
     try:
         raw = path.read_bytes()
     except FileNotFoundError:
@@ -211,7 +231,7 @@ class GitHub:
         return dict(default_branch=branch, default_commit=self.tip(branch))
 
     def fetch(self, sha):
-        git(self.repo, 'fetch', '--no-tags', '--no-write-fetch-head', 'origin', commit(sha))
+        git(self.repo, 'fetch', '--no-tags', '--no-write-fetch-head', 'origin', commit(sha), runner=NO_HOOKS)
         if git(self.repo, 'rev-parse', '--verify', sha + '^{commit}').stdout.strip().decode() != sha:
             raise ValueError('fetched charter commit identity differs')
 
@@ -322,7 +342,7 @@ def enroll(repo, source):
     pin = {key: snapshot[key] for key in ('default_branch', 'default_commit')}
     if not source.revalidate(pin):
         raise ValueError('default branch changed before enrollment; retry')
-    path = enrollment_path(repo)
+    path = checked_enrollment_path(repo)
     for directory in (path.parent.parent, path.parent):
         if directory.is_symlink():
             raise ValueError('charter state directories must not be symlinks')
@@ -403,7 +423,7 @@ def main(argv=None):
     parser.add_argument('--repo', type=Path, default=Path('.'))
     parser.add_argument('--github', help='OWNER/REPO; required for remote policy operations')
     commands = parser.add_subparsers(dest='command', required=True)
-    for name in ('enroll', 'unenroll', 'pin', 'policy'):
+    for name in ('enroll', 'unenroll', 'status', 'pin', 'policy'):
         commands.add_parser(name)
     check = commands.add_parser('gate')
     check.add_argument('--pin', required=True)
@@ -411,10 +431,11 @@ def main(argv=None):
     check.add_argument('--head', required=True)
     args = parser.parse_args(argv)
     try:
+        if args.command == 'status':
+            print('not-enrolled' if enrollment(args.repo) is None else 'enrolled')
+            return 0
         if args.command == 'unenroll':
-            path = enrollment_path(args.repo)
-            if path.is_symlink():
-                raise ValueError('refusing symlinked charter enrollment')
+            path = checked_enrollment_path(args.repo)
             path.unlink(missing_ok=True)
             print('Charter enrollment removed; automatic charter checks are inactive')
             return 0

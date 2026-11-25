@@ -229,17 +229,24 @@ MERGE_PUBLISHER_POLICY=$(python3 -I -B "$(dirname "$0")/bureau-merge-review.py" 
 # Probe only shared local state. Unenrolled installations do not load policy,
 # contact a new service or create any charter files, even with an enabled block.
 charter_enrolled() {
-  local common path
-  common=$(git rev-parse --git-common-dir 2>/dev/null) || return 1
-  path="$common/bureau/charter/enrollment.json"
-  [ -e "$path" ] || [ -L "$path" ]
+  # 0 enrolled, 1 confirmed absent; every other result is indeterminate.
+  local state
+  state=$(python3 -I -B "$(dirname "$0")/bureau-charter.py" --repo "$PWD" status 2>/dev/null) || return 25
+  case "$state" in
+    enrolled) return 0 ;;
+    not-enrolled) return 1 ;;
+    *) return 25 ;;
+  esac
 }
 MERGE_CHARTER_PIN='{}'
+MERGE_CHARTER_PROBE_RC=0
 if charter_enrolled; then
   # Keep D across both evaluations; neither a JIT default-branch advance nor a
   # PR-controlled enabled:false can replace that authority mid-run.
   MERGE_CHARTER_PIN=$(python3 -I -B "$(dirname "$0")/bureau-charter.py" --repo "$PWD" \
     --github "$(_bureau_gh_owner_repo)" pin) || MERGE_CHARTER_PIN='{}'
+else
+  MERGE_CHARTER_PROBE_RC=$?
 fi
 
 # Keep the mismatch diagnostic identical across gate passes and the live base
@@ -296,7 +303,9 @@ evaluate_merge_gates() {
   done
 
   local _blockers=()
-  if charter_enrolled; then
+  if [ "${MERGE_CHARTER_PROBE_RC:-1}" != 0 ] && [ "${MERGE_CHARTER_PROBE_RC:-1}" != 1 ]; then
+    _blockers+=("charter-policy: enrollment state could not be confirmed; a maintainer must inspect shared Git state")
+  elif charter_enrolled; then
     local _charter_lines _charter_rc=0
     _charter_lines=$(python3 -I -B "$(dirname "$0")/bureau-charter.py" --repo "$PWD" \
       --github "$owner_repo" gate --pin "$MERGE_CHARTER_PIN" --base "$_base_ref" --head "$head") || _charter_rc=$?
@@ -305,6 +314,11 @@ evaluate_merge_gates() {
         charter-*:*) _blockers+=("$_charter_lines") ;;
         *) _blockers+=("charter-unreadable: enrolled policy helper failed") ;;
       esac
+    fi
+  else
+    local _charter_probe_rc=$?
+    if [ "$_charter_probe_rc" != 1 ]; then
+      _blockers+=("charter-policy: enrollment state could not be confirmed; a maintainer must inspect shared Git state")
     fi
   fi
   [ -n "$head" ] || _blockers+=("head_read: the PR's head commit could not be read")
@@ -483,7 +497,7 @@ merge_gate_exit() {
   [ "$outcome" = not-yet ] && code=2
   # Dedicated Merge workers need the same human handoff as inline review.
   # Keep this limited to charter exceptions; existing gate routing is unchanged.
-  if [ "$code" = 25 ] && [ "$DRY_RUN" != true ] && [ "${BUREAU_INLINE_MERGE:-0}" != 1 ]; then
+  if [ "$code" = 25 ] && [ "${DRY_RUN:-false}" != true ] && [ "${BUREAU_INLINE_MERGE:-0}" != 1 ]; then
     case "$lines" in
       charter-*|*$'\n'charter-*) mark_needs_human "$ISSUE" merge 25 || true ;;
     esac

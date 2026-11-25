@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="d8f51791cca06668cd078ef954b59840bc440c8e77f1fb34fd2ca6de92a32e87">
+<meta name="bureau-source-sha256" content="58e51574236dd68c046366b147b898b23ab8163007b1161d98aa6756360d9a31">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1970,18 +1970,8 @@ human handoff. From the adopting repository, with authenticated
 <div class="sourceCode" id="cb11"><pre
 class="sourceCode bash"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-charter.py <span class="at">--repo</span> . <span class="at">--github</span> owner/repository enroll</span>
 <span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-charter.py <span class="at">--repo</span> . <span class="at">--github</span> owner/repository policy</span></code></pre></div>
-<p><code>enroll</code> resolves the default branch through GitHub, pins
-its commit D, fetches the exact object and reads only
-<code>D:.bureau.json</code>. It validates policy shape and declared file
-availability, revalidates D, then atomically writes a private versioned
-enrollment record at
-<code>&lt;git-common-dir&gt;/bureau/charter/enrollment.json</code> with
-repository identity, default branch, D and a SHA-256 digest of the
-normalized charter policy. It never publishes or edits checkout
-configuration. <code>policy</code> returns the trusted policy, D and
-digest; without enrollment it returns <code>not-enrolled</code> without
-a remote read. Linked worktrees share enrollment; separate clones do
-not.</p>
+<p><code>enroll</code> resolves the default branch through GitHub, pins its commit D, fetches the exact object and reads only <code>D:.bureau.json</code>. It validates policy shape and declared file availability, revalidates D, then atomically writes a private versioned enrollment record at <code>&lt;git-common-dir&gt;/bureau/charter/enrollment.json</code> with repository identity, default branch, D and a SHA-256 digest of the normalized charter policy. It never publishes or edits checkout configuration. <code>policy</code> returns the trusted policy, D and digest; without enrollment it returns <code>not-enrolled</code> without a remote read. Linked worktrees share enrollment; separate clones do not. Charter fetches use the hardened Git helper in <code>bureau-env.sh</code>, with directory hooks, configured hooks and submodule recursion disabled regardless of checkout <code>repo.remote_git_runs_hooks</code>.</p>
+<p>Only a successful local enrollment probe can confirm absence. An unreadable or non-searchable shared-state directory, an invalid enrollment record or a failed Git common-directory lookup blocks merging with <code>charter-policy</code>, exit <code>25</code> and the human handoff. The offline <code>status</code> command prints <code>enrolled</code> or <code>not-enrolled</code> on success; errors return <code>25</code> and never confirm absence.</p>
 <p>Both initial and just-in-time merge evaluations use the same pinned D
 and revalidate the live default branch. Enrolled policy that is missing,
 disabled, malformed or unreadable refuses with
@@ -2019,13 +2009,7 @@ enrollment, inspect the record and use explicit unenrollment followed by
 fresh enrollment. To remove enrollment, run:</p>
 <div class="sourceCode" id="cb12"><pre
 class="sourceCode bash"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-charter.py <span class="at">--repo</span> . unenroll</span></code></pre></div>
-<p>Only this explicit operation deactivates the shared enrollment;
-changing a checkout flag or resyncing scripts does not. Policy-changing
-PRs require a human merge even if they tighten policy. Manual GitHub
-merges, deliberate bypass by a process with the same user permissions,
-independent clones and changes after the final observation remain
-outside this local accident guard. No receipt, report, latch or future
-recovery state is created by this foundation.</p>
+<p>Only this explicit operation deactivates the shared enrollment; changing a checkout flag or resyncing scripts does not. Enrollment reads, writes and removal reject symlinks in the shared-state parent directories; <code>unenroll</code> refuses with <code>25</code> rather than following another repository's state. Inspect and repair those directories before retrying. A corrupt regular enrollment record can still be explicitly removed. Policy-changing PRs require a human merge even if they tighten policy. Manual GitHub merges, deliberate bypass by a process with the same user permissions, independent clones and changes after the final observation remain outside this local accident guard. No receipt, report, latch or future recovery state is created by this foundation.</p>
 <h3 id="ticket-run-budgets-and-trusted-progress">Ticket run budgets and
 trusted progress</h3>
 <p>Ticket budgets are off by default. They cover every provider attempt

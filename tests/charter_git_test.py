@@ -83,6 +83,7 @@ def mutant(old, new):
     if source.count(old) != 1:
         raise AssertionError('mutation anchor missing or ambiguous: ' + old)
     module = types.ModuleType('charter_mutant')
+    module.__file__ = str(SCRIPTS / 'bureau-charter.py')
     exec(compile(source.replace(old, new), '<charter mutation>', 'exec'), module.__dict__)
     return module
 
@@ -233,6 +234,19 @@ class GitTests(unittest.TestCase):
             self.assertEqual(code, 25)
             self.assertTrue(line.startswith('charter-unreadable:'), line)
 
+    def test_unenroll_refuses_state_symlinked_to_another_repository(self):
+        other = Path(self.scratch.name) / 'other checkout'
+        default, _ = build_history(other)
+        charter.enroll(other, LocalGitHub(other, default))
+        target = charter.enrollment_path(other)
+        original = target.read_bytes()
+        path = charter.enrollment_path(self.repo)
+        path.parent.parent.mkdir()
+        path.parent.symlink_to(target.parent, target_is_directory=True)
+        self.assertEqual(charter.main(['--repo', str(self.repo), 'unenroll']), 25)
+        self.assertEqual(target.read_bytes(), original)
+        self.assertTrue(path.parent.is_symlink())
+
     def test_doctor_drift_and_disabled_compatibility(self):
         config = base_config()
         absent = copy.deepcopy(config); absent['agents'].pop('merge_charter')
@@ -318,6 +332,15 @@ def prepare_pipeline(repo, case, mutation=''):
     (state / 'branch_main.json').write_text(json.dumps(dict(commit=dict(sha=default))))
     with (repo / 'scripts/bureau-config.sh').open('a') as output:
         output.write('\nmark_needs_human() { printf "needs-human %s %s %s\\n" "$@" >> "$STUB_DIR/handoff.log"; }\n')
+    if case == 'non-searchable':
+        charter.enrollment_path(repo).parent.chmod(0o600)
+    if case == 'common-dir-failed':
+        original_git = shutil.which('git')
+        wrapper = repo / 'bin/git'
+        wrapper.write_text('#!/bin/sh\nfor argument; do\n'
+                           '  [ "$argument" != --git-common-dir ] || exit 128\ndone\nexec '
+                           + shlex.quote(original_git) + ' "$@"\n')
+        wrapper.chmod(0o755)
     if mutation:
         target = repo / ('scripts/merge-pipeline.sh' if mutation in ('wiring', 'unconditional', 'handoff', 'priority') else 'scripts/bureau-charter.py')
         old, new = {
