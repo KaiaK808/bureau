@@ -335,12 +335,9 @@ def prepare_pipeline(repo, case, mutation='', history=build_history):
     if case == 'non-searchable':
         charter.enrollment_path(repo).parent.chmod(0o600)
     if case == 'common-dir-failed':
-        original_git = shutil.which('git')
-        wrapper = repo / 'bin/git'
-        wrapper.write_text('#!/bin/sh\nfor argument; do\n'
-                           '  [ "$argument" != --git-common-dir ] || exit 128\ndone\nexec '
-                           + shlex.quote(original_git) + ' "$@"\n')
-        wrapper.chmod(0o755)
+        # The merge probe resolves local metadata without Git; an unusable
+        # common-directory target must still block rather than confirm absence.
+        (repo / '.git/commondir').write_text('missing-common-directory\n')
     if mutation:
         target = repo / ('scripts/merge-pipeline.sh' if mutation in ('wiring', 'unconditional', 'handoff', 'priority') else 'scripts/bureau-charter.py')
         old, new = {

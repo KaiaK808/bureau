@@ -148,11 +148,118 @@ class EnrollmentSafetyTests(unittest.TestCase):
                                        default_commit='a' * 40, policy_digest='b' * 64)))
         return path
 
-    def command(self, operation):
+    def command(self, operation, *, repo=None, local=False):
         output = io.StringIO()
+        arguments = ['--repo', str(repo or self.common.parent), operation]
+        if local:
+            arguments.append('--local')
         with redirect_stdout(output):
-            code = charter.main(['--repo', str(self.common.parent), operation])
+            code = charter.main(arguments)
         return code, output.getvalue().strip()
+
+    def metadata(self, gitdir=None):
+        gitdir = gitdir or self.common
+        gitdir.mkdir(parents=True, exist_ok=True)
+        (gitdir / 'HEAD').write_text('ref: refs/heads/main\n')
+        for name in ('objects', 'refs'):
+            (gitdir / name).mkdir(exist_ok=True)
+
+    def test_non_enrolled_local_probe_adds_no_git_or_service_call(self):
+        self.metadata()
+        # Use the real Git boundary: reverting the local path would start Git.
+        with patch.object(charter, 'common_dir', self.real_common_dir):
+            for policy in (None, {'enabled': False}, {'enabled': True}):
+                if policy is not None:
+                    (self.common.parent / '.bureau.json').write_text(json.dumps(config(**policy)))
+                with self.subTest(policy=policy):
+                    # Initial probe plus both gate evaluations must stay process-free.
+                    for _ in range(3):
+                        self.assertEqual(self.command('status', local=True), (0, 'not-enrolled'))
+        self.process.assert_not_called()
+        self.assertFalse((self.common / 'bureau').exists())
+        old = 'common = local_common_dir(args.repo) if args.local else None'
+        source = SOURCE.read_text()
+        self.assertEqual(source.count(old), 1)
+        mutant = types.ModuleType('charter_lookup_mutant')
+        mutant.__file__ = str(SOURCE)
+        exec(compile(source.replace(old, 'common = None'), '<charter lookup mutation>', 'exec'), mutant.__dict__)
+        # Restoring the old Git lookup must trip the denied process boundary.
+        with redirect_stdout(io.StringIO()), self.assertRaisesRegex(AssertionError, 'unexpected process'):
+            mutant.main(['--repo', str(self.common.parent), 'status', '--local'])
+
+    def test_local_probe_resolves_linked_and_separate_git_directories(self):
+        self.metadata()
+        self.record()
+        for layout in ('linked-relative', 'linked-absolute', 'separate'):
+            checkout = self.root / ('checkout with spaces ' + layout)
+            checkout.mkdir()
+            if layout.startswith('linked'):
+                gitdir = self.common / 'worktrees' / layout
+                gitdir.mkdir(parents=True)
+                (gitdir / 'HEAD').write_text('a' * 40 + '\n')
+                shared = '../..' if layout.endswith('relative') else str(self.common)
+                (gitdir / 'commondir').write_text(shared + '\n')
+            else:
+                gitdir = self.common
+            target = str(gitdir) if layout.endswith('absolute') else os.path.relpath(gitdir, checkout)
+            (checkout / '.git').write_text('gitdir: ' + target + '\n')
+            nested = checkout / 'nested'
+            nested.mkdir()
+            with self.subTest(layout=layout):
+                for repo in (checkout, nested):
+                    self.assertEqual(self.command('status', repo=repo, local=True), (0, 'enrolled'))
+        self.process.assert_not_called()
+
+    def test_local_probe_keeps_enrollment_parent_and_record_validation(self):
+        self.metadata()
+        path = self.record()
+        for parent in (self.common, path.parent.parent, path.parent):
+            with self.subTest(parent=parent.name):
+                parent.chmod(0o600)
+                try:
+                    self.assertEqual(self.command('status', local=True)[0], 25)
+                finally:
+                    parent.chmod(0o700)
+        path.write_text('{broken')
+        self.assertEqual(self.command('status', local=True)[0], 25)
+        path.unlink()
+        path.parent.chmod(0o600)
+        try:
+            self.assertEqual(self.command('status', local=True)[0], 25)
+        finally:
+            path.parent.chmod(0o700)
+        path.parent.rmdir()
+        other = self.root / 'other charter'
+        other.mkdir()
+        path.parent.symlink_to(other, target_is_directory=True)
+        self.assertEqual(self.command('status', local=True)[0], 25)
+        self.process.assert_not_called()
+
+    def test_local_probe_rejects_indeterminate_git_metadata(self):
+        checkout = self.root / 'uncertain checkout'
+        checkout.mkdir()
+        marker = checkout / '.git'
+        self.assertEqual(self.command('status', repo=checkout, local=True)[0], 25)
+        for value in ('invalid\n', 'gitdir: \n', 'gitdir: missing\n', 'gitdir: missing\nextra\n'):
+            with self.subTest(marker=value):
+                marker.write_text(value)
+                self.assertEqual(self.command('status', repo=checkout, local=True)[0], 25)
+        marker.unlink()
+        marker.symlink_to(checkout / 'missing')
+        self.assertEqual(self.command('status', repo=checkout, local=True)[0], 25)
+        marker.unlink()
+        marker.mkdir()
+        self.assertEqual(self.command('status', repo=checkout, local=True)[0], 25)
+        self.metadata(marker)
+        shared = marker / 'commondir'
+        for value in ('', 'missing\n', 'missing\nextra\n'):
+            with self.subTest(commondir=value):
+                shared.write_text(value)
+                self.assertEqual(self.command('status', repo=checkout, local=True)[0], 25)
+        shared.unlink()
+        shared.symlink_to(checkout / 'missing')
+        self.assertEqual(self.command('status', repo=checkout, local=True)[0], 25)
+        self.process.assert_not_called()
 
     def test_status_distinguishes_absence_from_enrollment(self):
         self.assertEqual(self.command('status'), (0, 'not-enrolled'))

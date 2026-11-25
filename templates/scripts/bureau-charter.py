@@ -155,13 +155,51 @@ def common_dir(repo):
     return (Path(repo) / value).resolve(strict=True)
 
 
-def enrollment_path(repo):
-    return common_dir(repo) / 'bureau' / 'charter' / 'enrollment.json'
+def local_common_dir(repo):
+    """Resolve checkout metadata without starting Git, including linked worktrees."""
+    root = Path(repo).resolve(strict=True)
+    for parent in (root, *root.parents):
+        marker = parent / '.git'
+        try:
+            marker.lstat()
+        except FileNotFoundError:
+            continue
+        mode = marker.stat().st_mode
+        if stat.S_ISDIR(mode):
+            gitdir = marker.resolve(strict=True)
+        elif stat.S_ISREG(mode):
+            value = marker.read_text(encoding='utf-8').rstrip('\r\n')
+            if not value.startswith('gitdir: ') or not value[8:] or '\n' in value or '\r' in value:
+                raise ValueError('charter Git directory marker is invalid')
+            gitdir = (parent / value[8:]).resolve(strict=True)
+        else:
+            raise ValueError('charter Git directory marker is invalid')
+        mode = gitdir.stat().st_mode
+        if not stat.S_ISDIR(mode) or not mode & 0o111 or not os.access(gitdir, os.X_OK):
+            raise ValueError('charter Git directory is unreadable')
+        shared = gitdir / 'commondir'
+        try:
+            shared.lstat()
+        except FileNotFoundError:
+            common = gitdir
+        else:
+            value = shared.read_text(encoding='utf-8').rstrip('\r\n')
+            if not value or '\n' in value or '\r' in value:
+                raise ValueError('charter Git common directory marker is invalid')
+            common = (gitdir / value).resolve(strict=True)
+        if not (gitdir / 'HEAD').is_file() or not all((common / name).is_dir() for name in ('objects', 'refs')):
+            raise ValueError('charter Git metadata is incomplete')
+        return common
+    raise ValueError('charter Git common directory is unavailable')
 
 
-def checked_enrollment_path(repo):
+def enrollment_path(repo, common=None):
+    return (common_dir(repo) if common is None else common) / 'bureau' / 'charter' / 'enrollment.json'
+
+
+def checked_enrollment_path(repo, common=None):
     """Only a missing component proves absence; inaccessible state never does."""
-    path = enrollment_path(repo)
+    path = enrollment_path(repo, common)
     for entry in (path.parent.parent.parent, path.parent.parent, path.parent, path):
         try:
             mode = entry.lstat().st_mode
@@ -174,9 +212,9 @@ def checked_enrollment_path(repo):
     return path
 
 
-def enrollment(repo):
+def enrollment(repo, common=None):
     # A broken symlink or malformed record is enrolled but unusable, never absent.
-    path = checked_enrollment_path(repo)
+    path = checked_enrollment_path(repo, common)
     try:
         raw = path.read_bytes()
     except FileNotFoundError:
@@ -571,8 +609,10 @@ def main(argv=None):
     parser.add_argument('--repo', type=Path, default=Path('.'))
     parser.add_argument('--github', help='OWNER/REPO; required for remote policy operations')
     commands = parser.add_subparsers(dest='command', required=True)
-    for name in ('enroll', 'unenroll', 'status', 'pin', 'policy'):
+    for name in ('enroll', 'unenroll', 'pin', 'policy'):
         commands.add_parser(name)
+    status = commands.add_parser('status')
+    status.add_argument('--local', action='store_true', help='Resolve shared Git metadata without running Git')
     check = commands.add_parser('gate')
     check.add_argument('--pin', required=True)
     check.add_argument('--base', required=True)
@@ -581,7 +621,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.command == 'status':
-            print('not-enrolled' if enrollment(args.repo) is None else 'enrolled')
+            common = local_common_dir(args.repo) if args.local else None
+            print('not-enrolled' if enrollment(args.repo, common) is None else 'enrolled')
             return 0
         if args.command == 'unenroll':
             path = checked_enrollment_path(args.repo)
