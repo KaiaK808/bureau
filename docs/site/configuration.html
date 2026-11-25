@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="3a846eecc6ba06c382453fc2c57a5531976c3aa2b44ecfb76af54dc8e056f589">
+<meta name="bureau-source-sha256" content="6349aeae066c74218982a4a51c42f65acc3510de790dff714b5be49a24ab0b98">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1699,21 +1699,21 @@ call; unset leaves the CLI's own default</td>
 <td>unset</td>
 <td>Claude configuration directory for every Claude stage of this
 installation: <code>bureau-provider.py</code> sets
-<code>CLAUDE_CONFIG_DIR</code> to it for the <code>claude</code> child
-and its <code>claude auth status</code> check, nowhere else, so
-settings, <code>CLAUDE.md</code>, hooks, plugins, MCP servers, session
-history and the login come from there. An absolute path to an existing
-directory; a leading <code>~/</code> is the home directory. Anything
-else (a relative path, a missing directory, a non-string) fails with 22
+<code>CLAUDE_CONFIG_DIR</code> only for the Claude child and its login
+check, so user settings, instructions, plugins, MCP configuration,
+session history and login come from there; QA/review retain their
+command-line isolation. An existing absolute directory; a leading
+<code>~/</code> is the home directory. Invalid values fail with 22
 before any provider call. <code>BUREAU_CLAUDE_CONFIG_DIR</code> in the
-process environment wins over the key under the same rules. Unset (or
-<code>null</code>): the child keeps the environment it had, the
-inherited <code>CLAUDE_CONFIG_DIR</code> or <code>~/.claude</code>.
-Codex ignores it. <code>--describe</code> reports it as
-<code>config_dir</code>; doctor names the directory per Claude stage and
-warns when Claude is not logged in there. See <a
-href="provider-runtime.html#claude-configuration-directory">provider
-runtime</a></td>
+process environment wins under the same rules. Unset/null retains the
+inherited <code>CLAUDE_CONFIG_DIR</code>, otherwise
+<code>~/.claude</code>. Codex ignores it. Doctor shares launcher
+resolution, warns once naming stages without a lean profile, inventories
+only user-scope MCP server and enabled-plugin names, and retains
+configured-profile login warnings. Setting a lean directory silences the
+inheritance warning. See <a
+href="provider-runtime.html#claude-configuration-directory">profile files
+and limits</a></td>
 </tr>
 <tr>
 <td><code>agents.&lt;stage&gt;.sandbox</code></td>
@@ -1804,6 +1804,21 @@ write within the permitted workspace. The executor runs actual
 implementation/QA tests separately. Unknown runners, malformed results
 and denied permissions are errors, never automatic fallback to
 Claude.</p>
+<p>All background Claude stages force
+<code>CLAUDE_CODE_DISABLE_AUTO_MEMORY=1</code> in the child environment,
+including review/verifier and optional helper calls, with Headroom or
+clean environment filtering too. A parent value of <code>0</code> cannot
+override it; interactive Claude outside Bureau keeps its own settings.
+Doctor reports names under <code>claude_profiles</code> from user-scope
+<code>mcpServers</code> in the selected global <code>.claude.json</code>
+(or nonempty legacy <code>.config.json</code>) and enabled
+<code>enabledPlugins</code> in the profile's <code>settings.json</code>,
+without server definitions or plugin configuration. Missing files mean
+empty lists; unreadable or malformed files warn
+<code>could not check</code>. The inventory does not inspect
+project/managed settings or plugin-declared servers and does not persist
+drift history. Resync the complete scripts scope and restart drivers;
+<code>--update</code> changes configuration only.</p>
 <p>For Codex, <code>sandbox: read-only</code> keeps the repository
 unwritable while allowing temporary files in a fresh private scratch
 directory outside it. Bureau launches <code>workspace-write</code> with

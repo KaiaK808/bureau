@@ -124,12 +124,21 @@ def claude_config_dir(provider, env):
 
 
 def claude_env(options, env):
-    # The environment of a claude process: CLAUDE_CONFIG_DIR is the configured
-    # directory when there is one; without one `env` is returned unchanged
-    # (None, as subprocess takes it, is the adapter's own environment).
-    if options.get('runner') == 'claude' and options.get('config_dir'):
-        return {**(os.environ if env is None else env), 'CLAUDE_CONFIG_DIR': options['config_dir']}
-    return env
+    # Every background Claude call, including auth and Headroom, gets this
+    # child-only guard after environment filtering. Never trust a parent override.
+    if options.get('runner') != 'claude': return env
+    result = {**(os.environ if env is None else env)}
+    result['CLAUDE_CODE_DISABLE_AUTO_MEMORY'] = '1'
+    if options.get('config_dir'):
+        result['CLAUDE_CONFIG_DIR'] = options['config_dir']
+    return result
+
+
+def claude_profile_dir(options, env=None):
+    """The profile used by the child and transcript lookup; doctor shares this resolution."""
+    child = claude_env(options, env)
+    home = Path(child.get('HOME') or os.path.expanduser('~'))
+    return Path(child.get('CLAUDE_CONFIG_DIR') or home / '.claude')
 
 
 class AuthError(Exception):
@@ -750,7 +759,6 @@ def _run(options, prompt, system, repo, evidence, schema=None):
     try:
         child_env = untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner, options.get('untrusted_git_credentials', 'off'))
         child_env = claude_env(options, env=child_env)
-        if shadow: child_env['CLAUDE_CODE_DISABLE_AUTO_MEMORY'] = '1'
         tempdir = codex_tmpdir(runner, child_env, repo, required=private_scratch)
         if private_scratch:
             command[command.index('-C') + 1] = tempdir
@@ -1050,7 +1058,7 @@ def claude_takes_session_id(cache, mode='default', environ=None, git_credentials
     except (OSError, ValueError): pass
     try:
         proc = subprocess.run([found, '--help'], capture_output=True, text=True, timeout=20, stdin=subprocess.DEVNULL,
-                              env=untrusted_env(environ, mode, 'claude', git_credentials))
+                              env=claude_env({'runner': 'claude'}, untrusted_env(environ, mode, 'claude', git_credentials)))
     except (OSError, subprocess.SubprocessError) as exc: return False, 'claude --help failed: ' + str(exc)
     if proc.returncode != 0: return False, 'claude --help failed with exit ' + str(proc.returncode)
     answer = '--session-id' in proc.stdout
@@ -1076,7 +1084,7 @@ def transcript(options, repo, evidence, environ=None):
             missing = dict(session_id=None, transcript=None, transcript_found=False)
             if options.get('session_note'): missing['transcript_note'] = options['session_note'] + '; no session id was set'
             return missing
-        projects = Path(claude_env(options, env=environ).get('CLAUDE_CONFIG_DIR') or home/'.claude')/'projects'
+        projects = claude_profile_dir(options, environ)/'projects'
         expected = projects/claude_project_slug(str(repo))/(session + '.jsonl')
         found = _found(expected.parent, expected.name) or _found(projects, '*/' + session + '.jsonl')
         return dict(session_id=session, transcript=str(found or expected), transcript_found=found is not None)

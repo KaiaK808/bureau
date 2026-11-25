@@ -200,3 +200,5 @@ test_wrapper_policy.sh	60	120
 test_wrapper_execution.sh	60	120
 test_wrapper_process.sh	60	120
 test_wrapper_negative.sh	60	120
+# Profile unit checks are unmeasured on hosted runners: provisional estimates.
+test_claude_profile.sh	60	120

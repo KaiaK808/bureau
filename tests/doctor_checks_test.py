@@ -57,6 +57,8 @@ class Repo(unittest.TestCase):
         # Doctor finds .bureau.json itself; an operator's BUREAU_CONFIG or timeout must not leak in.
         env = patch.dict(os.environ, {}); env.start(); self.addCleanup(env.stop)
         for name in ('BUREAU_CONFIG', 'BUREAU_STAGE_TIMEOUT'): os.environ.pop(name, None)
+        os.environ['CLAUDE_CONFIG_DIR'] = str(self.base / 'operator profile')
+        os.environ.pop('BUREAU_CLAUDE_CONFIG_DIR', None)
 
     def write_config(self, config):
         (self.repo / '.bureau.json').write_text(json.dumps(config))
@@ -1000,6 +1002,12 @@ class ClaudeConfigDirTests(Repo):
         for entry in result['claude_config_dirs'].values():
             self.assertEqual(entry, {'config_dir': str(self.base / 'operator profile'), 'configured': False, 'logged_in': 'not checked'})
         self.assertEqual(self.called(), []); self.assertEqual(self.warnings(result), [])
+        inherited = [w for w in result['warnings'] if w.startswith('Claude background stages inherit')]
+        self.assertEqual(len(inherited), 1)
+        self.assertIn('spec, implement, code_review', inherited[0])
+        profile = result['claude_profiles'][str(self.base / 'operator profile')]
+        self.assertEqual(profile['mcp_servers']['status'], 'empty')
+        self.assertEqual(profile['plugins']['status'], 'empty')
 
     def test_an_invalid_config_dir_is_a_doctor_error(self):
         for value in ('relative/profile', str(self.base / 'missing'), 42):

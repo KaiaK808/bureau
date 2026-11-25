@@ -2217,9 +2217,10 @@ p.Path.open=refuse_transcript_read
                 child,login=self.claude_envs(config,**env)
                 self.assertEqual(child['CLAUDE_CONFIG_DIR'],str(expected))
                 self.assertEqual(login['CLAUDE_CONFIG_DIR'],str(expected))
-                # Only that variable differs from the environment the child got before.
+                # Profile selection and the mandatory memory guard are child-only.
                 self.assertEqual({k:v for k,v in child.items() if k!='CLAUDE_CONFIG_DIR'},
-                                 {k:v for k,v in p.untrusted_env({**self.env,**env},'default','claude').items() if k!='CLAUDE_CONFIG_DIR'})
+                                 {**{k:v for k,v in p.untrusted_env({**self.env,**env},'default','claude').items() if k!='CLAUDE_CONFIG_DIR'},
+                                  'CLAUDE_CODE_DISABLE_AUTO_MEMORY':'1'})
                 self.assertEqual(p.configuration('implement',config,{**self.env,**env})['config_dir'],str(expected))
                 # Claude writes its transcript under that directory, and result.json names it there.
                 _,metadata=self.evidence()
@@ -2238,9 +2239,9 @@ p.Path.open=refuse_transcript_read
                 if 'repo' in config: self.assertNotIn('FAKE_ROOT',child)
 
     def without_config_dir(self):
-        # The adapter without this change: claude_env leaves the environment as it is.
+        # Remove profile selection while retaining the mandatory memory guard.
         source=SCRIPT.read_text()
-        changed="        return {**(os.environ if env is None else env), 'CLAUDE_CONFIG_DIR': options['config_dir']}\n"
+        changed="        result['CLAUDE_CONFIG_DIR'] = options['config_dir']\n"
         self.assertEqual(source.count(changed),1,'the control no longer matches the adapter')
         control=self.root/'control'/'bureau-provider.py'; control.parent.mkdir(exist_ok=True)
         shutil.copy(SCRIPT.with_name('bureau-evidence.py'), control.parent / 'bureau-evidence.py')
@@ -2249,7 +2250,7 @@ p.Path.open=refuse_transcript_read
         shutil.copy(SCRIPT.with_name('bureau-ticket.py'), control.parent / 'bureau-ticket.py')
         shutil.copy(SCRIPT.with_name('bureau-insights.sh'), control.parent / 'bureau-insights.sh')
         shutil.copy(SCRIPT.with_name('bureau-process.py'), control.parent / 'bureau-process.py')
-        control.write_text(source.replace(changed,'        return env\n'))
+        control.write_text(source.replace(changed,'        pass\n'))
         return control
 
     def test_claude_config_dir_control_persists_successful_stage_outcome(self):
@@ -2275,7 +2276,8 @@ p.Path.open=refuse_transcript_read
         self.env.pop('CLAUDE_CONFIG_DIR')
         child,login=self.claude_envs(config)
         self.assertNotIn('CLAUDE_CONFIG_DIR',child); self.assertNotIn('CLAUDE_CONFIG_DIR',login)
-        self.assertEqual(child,p.untrusted_env({**self.env,'FAKE_ROOT':self.env['FAKE_ROOT']},'default','claude'))
+        self.assertEqual(child,{**p.untrusted_env({**self.env,'FAKE_ROOT':self.env['FAKE_ROOT']},'default','claude'),
+                                'CLAUDE_CODE_DISABLE_AUTO_MEMORY':'1'})
         # An empty override is no override, as for the other BUREAU_ overrides.
         child,_=self.claude_envs(config,BUREAU_CLAUDE_CONFIG_DIR='')
         self.assertNotIn('CLAUDE_CONFIG_DIR',child)

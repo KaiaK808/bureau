@@ -573,22 +573,66 @@ def claude_logged_in(provider, options, mode, timeout=20):
     return logged, None if logged else 'claude auth status --json did not report loggedIn true (exit ' + str(proc.returncode) + ')'
 
 
-def claude_config_dirs(config, effective, provider, warnings):
+def claude_profile_names(directory, child_env):
+    """Extract only user-scope names, never server definitions or plugin configuration."""
+    def names(path, key, plugins=False):
+        try:
+            value = json.loads(path.read_text(encoding='utf-8'))
+            if not isinstance(value, dict) or not isinstance(value.get(key, {}), dict): raise ValueError()
+            entries = value.get(key, {})
+            if plugins and any(type(v) is not bool and not (isinstance(v, list) and all(isinstance(x, str) for x in v)) for v in entries.values()):
+                raise ValueError()
+            if not plugins and any(not isinstance(v, dict) for v in entries.values()): raise ValueError()
+            selected = sorted(k for k, v in entries.items() if not plugins or v is True)
+            return dict(file=str(path), status='checked' if selected else 'empty', names=selected)
+        except FileNotFoundError:
+            return dict(file=str(path), status='empty', names=[], reason='file missing')
+        except (OSError, ValueError, UnicodeError):
+            # Exception text can quote the offending input; it must not reach output.
+            return dict(file=str(path), status='could not check', names=None)
+
+    home = Path(child_env.get('HOME') or os.path.expanduser('~'))
+    suffix = '-custom-oauth' if child_env.get('CLAUDE_CODE_CUSTOM_OAUTH_URL') else ''
+    mcp = (directory if child_env.get('CLAUDE_CONFIG_DIR') else home) / ('.claude' + suffix + '.json')
+    legacy = directory / '.config.json'
+    try:
+        # Claude still prefers a nonempty legacy global config over .claude.json.
+        if legacy.stat().st_size: mcp = legacy
+        servers = names(mcp, 'mcpServers')
+    except FileNotFoundError:
+        servers = names(mcp, 'mcpServers')
+    except OSError:
+        servers = dict(file=str(legacy), status='could not check', names=None)
+    return dict(mcp_servers=servers, plugins=names(directory / 'settings.json', 'enabledPlugins', plugins=True))
+
+
+def claude_config_dirs(config, effective, provider, warnings, repo=None):
     """Per enabled Claude stage, the configuration directory its claude child gets: config_dir
     (BUREAU_CLAUDE_CONFIG_DIR, else agents.providers.claude.config_dir), with whether Claude is
     logged in there; without one, the directory the child inherits (CLAUDE_CONFIG_DIR, else
-    ~/.claude), which is the operator's own setup and is not checked here."""
+    ~/.claude). Inventory user-scope names once per profile, even when MCP is
+    suppressed by QA/review argv. Login checks remain limited to configured profiles."""
     try: mode = provider.untrusted_env_mode(config)
     except provider.UntrustedEnvError: mode = 'default'
     try: git_credentials = provider.untrusted_git_credentials_mode(config)
     except provider.UntrustedEnvError: git_credentials = 'off'
-    report, checked = {}, {}
+    report, checked, profiles = {}, {}, {}
+    if not any(options['runner'] == 'claude' for options in effective.values()): return report, profiles
+    try: child_env = provider.untrusted_env(os.environ, mode, 'claude', git_credentials)
+    except provider.UntrustedEnvError:
+        warnings.append('Claude profile could not check: invalid child environment blocks background launch')
+        return report, profiles
     for stage, options in effective.items():
         if options['runner'] != 'claude': continue
-        directory = options.get('config_dir')
-        if not directory:
-            inherited = os.environ.get('CLAUDE_CONFIG_DIR') or os.path.join(os.path.expanduser('~'), '.claude')
-            report[stage] = dict(config_dir=inherited, configured=False, logged_in='not checked'); continue
+        child = provider.claude_env(options, child_env)
+        profile = provider.claude_profile_dir(options, child)
+        if not profile.is_absolute() and repo is not None: profile = repo / profile
+        directory = str(profile)
+        if directory not in profiles:
+            profiles[directory] = dict(stages=[], **claude_profile_names(profile, child))
+        profiles[directory]['stages'].append(stage)
+        if not options.get('config_dir'):
+            report[stage] = dict(config_dir=directory, configured=False, logged_in='not checked'); continue
         if directory not in checked: checked[directory] = claude_logged_in(provider, {**options, 'untrusted_git_credentials': git_credentials}, mode)
         logged, reason = checked[directory]
         report[stage] = dict(config_dir=directory, configured=True, logged_in=logged)
@@ -602,7 +646,16 @@ def claude_config_dirs(config, effective, provider, warnings):
                 continue
             warnings.append('Claude is not logged in in the configuration directory ' + directory + ' (' + stages + '): ' + reason
                             + '; the stage ends with 16 before any call. Log in with CLAUDE_CONFIG_DIR=' + directory + ' claude')
-    return report
+    inherited = [stage for stage, entry in report.items() if not entry['configured']]
+    if inherited:
+        warnings.append('Claude background stages inherit the operator profile without a lean config_dir: ' + ', '.join(inherited)
+                        + '; review the listed user-scope MCP servers and enabled plugins; set agents.providers.claude.config_dir or BUREAU_CLAUDE_CONFIG_DIR to a lean profile.')
+    for profile in profiles.values():
+        for kind in ('mcp_servers', 'plugins'):
+            if profile[kind]['status'] == 'could not check':
+                warnings.append('Claude profile ' + kind + ' could not check (' + Path(profile[kind]['file']).name
+                                + '; stages: ' + ', '.join(profile['stages']) + '): file unreadable or malformed')
+    return report, profiles
 
 
 def test_wrapper_diagnostics(repo, operator_config=None, trusted_base=None, config=None):
@@ -668,7 +721,7 @@ def diagnose(repo, mode, wrapper_config=None, wrapper_base=None):
         try: env_path = stage_env_file(path)
         except (OSError, ValueError, RuntimeError) as exc: errors.append(str(exc))
     if not errors:
-        for stage in STAGES:
+        for stage in STAGES + ('conflict_resolver', 'upstream_port', 'upstream_summary'):
             if stage in ('merge', 'rebase') or not runtime.enabled(config, stage): continue
             try: effective[stage] = provider.configuration(stage, config, os.environ)
             except (ValueError, TypeError, AttributeError) as exc: errors.append(stage + ': ' + str(exc))
@@ -785,11 +838,11 @@ def diagnose(repo, mode, wrapper_config=None, wrapper_base=None):
         warnings.append('repo.remote_git_runs_hooks is "operator" and the main checkout uses Git LFS, but the git common dir\'s hooks directory has no executable pre-push hook: Bureau runs only that directory\'s hooks, so the LFS objects are not uploaded; run git lfs install in the main checkout without core.hooksPath set, or set repo.remote_git_runs_hooks to true')
     links, link_errors, link_warnings = worktree_links(repo, config, checkout)
     errors.extend(link_errors); warnings.extend(link_warnings)
-    claude_dirs = claude_config_dirs(config, effective, provider, warnings)
+    claude_dirs, claude_profiles = claude_config_dirs(config, effective, provider, warnings, repo)
     return dict(ok=not errors, mode=mode, workspace=str(repo), config=str(path), version=config.get('version', 1),
                 merge_mode=merge, post_implement_command=hook if isinstance(hook, str) and hook.strip() else None,
                 remote_git_hooks=remote_mode,
-                main_checkout=str(main) if main is not None else None, worktree_links=links, claude_config_dirs=claude_dirs,
+                main_checkout=str(main) if main is not None else None, worktree_links=links, claude_config_dirs=claude_dirs, claude_profiles=claude_profiles,
                 interfaces=interfaces, active_integration=active.get('integration'), effective_stages=effective,
                 template_source=source, test_wrapper=wrapper, drift=drift, errors=errors, warnings=warnings,
                 authentication='not checked', live_model_acceptance='not checked')
