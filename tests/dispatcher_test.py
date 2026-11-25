@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Real local Git, trusted policy/ownership/workers, fake service transports."""
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -899,6 +900,208 @@ signal.signal(signal.SIGTERM,exited)
         self.assertEqual((workspace/'unfinished-TST-1.txt').read_text(),'interrupted work must survive\n')
         ticks=(self.root/'ticks').read_text(); time.sleep(.2); self.assertEqual((self.root/'ticks').read_text(),ticks)
         sentinel.terminate(); sentinel.wait(timeout=3)
+
+    def test_shutdown_waits_for_inner_hold_and_lease_finalization(self):
+        self.ticket(1)
+        # The shepherd exits from its trap before its nested runtime finishes.
+        # The writer holds real coordination open until the test releases it.
+        writer=self.root/'held-writer.py'
+        writer.write_text('''import importlib.util, os, signal, sys, time
+from pathlib import Path
+spec=importlib.util.spec_from_file_location('held_process',sys.argv[1])
+pg=importlib.util.module_from_spec(spec); spec.loader.exec_module(pg)
+root=Path(os.environ['DISPATCH_FIXTURE'])
+stopping=False
+def stop(*_):
+    global stopping
+    stopping=True
+signal.signal(signal.SIGTERM,stop)
+hold=pg.ProcessHold(pg.hold_root(Path.cwd(),os.environ),'fixture_writer',Path.cwd())
+(root/'inner-hold-ready').touch()
+try:
+    while not stopping: time.sleep(.02)
+    while not (root/'release-inner-hold').exists(): time.sleep(.02)
+finally:
+    hold.close(stopped=True)
+sys.exit(130)
+''')
+        self.env['DISPATCH_PYTHON']=sys.executable
+        # The parent owns two gates and may be descheduled at either one.
+        # Allow their 25-second handshakes ample time, and keep the nested
+        # depth-1 runtime's 180-second grace longer than settlement's budget.
+        self.env['BUREAU_TEST_DISPATCH_SETTLE_SECONDS']='120'
+        self.env['BUREAU_STOP_GRACE_SECONDS']='60'
+        shepherd=self.repo/'scripts/shepherd.sh'
+        shepherd.write_text('''#!/bin/bash
+trap 'exit 130' TERM INT HUP
+scripts="$(dirname "$0")"
+"$DISPATCH_PYTHON" -I "$scripts/bureau-runtime.py" --repo "$PWD" exec --issue "$5" --workspace "$4" --entry held-pipeline.sh -- "$DISPATCH_PYTHON" -B "$DISPATCH_FIXTURE/held-writer.py" "$scripts/bureau-process.py" &
+wait "$!"
+''')
+        runtime=self.repo/'scripts/bureau-runtime.py'; source=runtime.read_text()
+        anchor='    def finish_execution(self, run, resources, interrupted, repo=None, report=True):\n'
+        self.assertEqual(source.count(anchor),1)
+        runtime.write_text(source.replace(anchor,anchor+'''        if interrupted and os.environ.get('BUREAU_RUN_DEPTH') == '1':
+            fixture=Path(os.environ['DISPATCH_FIXTURE'])
+            (fixture/'inner-before-mark').touch()
+            while not (fixture/'release-inner-mark').exists(): time.sleep(.02)
+''',1))
+        dispatcher=self.repo/'scripts/bureau-dispatch.py'; source=dispatcher.read_text()
+        anchor='spec.loader.exec_module(r)\n'; self.assertEqual(source.count(anchor),1)
+        # Observe real per-run hold reads in the dispatcher, without changing
+        # their result. This seam also applies to the dispatcher before the fix.
+        dispatcher.write_text(source.replace(anchor,anchor+'''_fixture_holds=r.pg.process_holds
+def observed_holds(root, run=None, inactive_only=False):
+    held=_fixture_holds(root,run,inactive_only)
+    if run is not None:
+        fixture=Path(os.environ['DISPATCH_FIXTURE'])
+        (fixture/('dispatch-hold-seen' if held else 'dispatch-hold-cleared')).touch()
+    return held
+r.pg.process_holds=observed_holds
+_fixture_sleep=time.sleep
+def observed_sleep(seconds):
+    fixture=Path(os.environ['DISPATCH_FIXTURE'])
+    if (fixture/'dispatch-hold-cleared').exists():
+        (fixture/'dispatch-lease-wait').touch()
+    _fixture_sleep(seconds)
+time.sleep=observed_sleep
+''',1))
+        child=self.start()
+        leases_at_exit=None
+        try:
+            self.wait_for(lambda:(self.root/'inner-hold-ready').exists())
+            run=json.loads((self.common/'leases.json').read_text())['issue:TST-1']['run_id']
+            child.terminate()
+            self.wait_for(lambda:child.poll() is not None or (self.root/'dispatch-hold-seen').exists(),timeout=25)
+            # On the old dispatcher, its direct child has returned at the
+            # open-hold check and these two leases are still unmarked at exit.
+            if child.poll() is not None:
+                leases_at_exit=json.loads((self.common/'leases.json').read_text())
+            (self.root/'release-inner-hold').touch()
+            self.wait_for(lambda:(self.root/'inner-before-mark').exists(),timeout=25)
+            if leases_at_exit is None:
+                # Hold removal alone is insufficient: final marking is also
+                # gated, so the dispatcher must continue observing the leases.
+                self.wait_for(lambda:child.poll() is not None or (self.root/'dispatch-lease-wait').exists(),timeout=25)
+                if child.poll() is not None:
+                    leases_at_exit=json.loads((self.common/'leases.json').read_text())
+            (self.root/'release-inner-mark').touch()
+            code=child.wait(timeout=25)
+            if leases_at_exit is None:
+                leases_at_exit=json.loads((self.common/'leases.json').read_text())
+            self.assertEqual(code,130,self.output())
+            self.assertEqual(len(leases_at_exit),2)
+            self.assertTrue(all(v['run_id']==run and v.get('interrupted') for v in leases_at_exit.values()),
+                            'dispatcher exited before its run leases were marked interrupted')
+            self.assertNotIn('did not settle',self.output())
+        finally:
+            (self.root/'release-inner-hold').touch(); (self.root/'release-inner-mark').touch()
+            if child.poll() is None: self.stop(child)
+            # Join the failing control's late finalization too, before cleanup.
+            self.wait_for(lambda:not pg.process_holds(self.common) and all(
+                v.get('interrupted') for v in json.loads((self.common/'leases.json').read_text()).values()),timeout=25)
+
+    def test_shutdown_reports_each_unsettled_run_without_changing_ownership(self):
+        spec=importlib.util.spec_from_file_location('held_dispatch',self.repo/'scripts/bureau-dispatch.py')
+        dispatch=importlib.util.module_from_spec(spec); spec.loader.exec_module(dispatch)
+        dispatcher=object.__new__(dispatch.Dispatcher)
+        dispatcher.store=dispatch.r.Store(self.repo)
+        dispatcher.runs={'a'*32:'TST-1','b'*32:'TST-2'}
+        for run,issue in dispatcher.runs.items():
+            dispatcher.store.claim(issue,self.root/issue,run,'background')
+        hold=pg.ProcessHold(self.common,'fixture_writer',self.repo,run_id='a'*32)
+        dispatcher.runs['c'*32]='TST-3'  # Already released; no diagnostic.
+        dispatcher.store.claim('TST-4',self.root/'foreign','d'*32,'background')
+        foreign=pg.ProcessHold(self.common,'fixture_writer',self.repo,run_id='d'*32)
+        before=(self.common/'leases.json').read_bytes()
+        output=io.StringIO()
+        clock=[100.0]
+        sleeps=[]
+        def sleep(seconds):
+            sleeps.append(seconds)
+            clock[0]+=seconds
+        try:
+            # Exercise the real default deadline without five wall-clock
+            # seconds per test, and prove the budget is shared across runs.
+            with patch.dict(os.environ,{'BUREAU_TEST_DISPATCH_SETTLE_SECONDS':''}), \
+                    patch.object(dispatch.time,'monotonic',lambda:clock[0]), \
+                    patch.object(dispatch.time,'sleep',sleep), patch('sys.stderr',output):
+                dispatcher.settle_shutdown()
+            self.assertEqual(clock[0],105.0)
+            self.assertTrue(sleeps)
+            self.assertTrue(all(0 < seconds <= .05 for seconds in sleeps))
+            for run,issue in [('a'*32,'TST-1'),('b'*32,'TST-2')]:
+                self.assertIn('run '+run+' ('+issue+') did not settle within 5 s; ownership retained',output.getvalue())
+            self.assertEqual(output.getvalue().count('human_hold'),2)
+            self.assertNotIn('c'*32,output.getvalue()); self.assertNotIn('d'*32,output.getvalue())
+            self.assertEqual((self.common/'leases.json').read_bytes(),before)
+            self.assertTrue(hold.path.exists()); self.assertTrue(foreign.path.exists())
+        finally:
+            hold.close(stopped=True); foreign.close(stopped=True)
+
+    def test_shutdown_settle_override_is_validated_and_bounded(self):
+        spec=importlib.util.spec_from_file_location('settle_dispatch',self.repo/'scripts/bureau-dispatch.py')
+        dispatch=importlib.util.module_from_spec(spec); spec.loader.exec_module(dispatch)
+        for raw,expected in [('',5),('1',1),('120',120),('600',600),('0',5),('-1',5),('601',5),
+                             ('1.5',5),('nan',5),('inf',5),('9'*5000,5),('\u00b2',5)]:
+            with self.subTest(raw=raw[:20]), patch.dict(os.environ,{'BUREAU_TEST_DISPATCH_SETTLE_SECONDS':raw}):
+                self.assertEqual(dispatch.shutdown_settle_seconds(),expected)
+
+    def test_shutdown_diagnostic_failures_preserve_exit_and_ownership(self):
+        spec=importlib.util.spec_from_file_location('diagnostic_dispatch',self.repo/'scripts/bureau-dispatch.py')
+        dispatch=importlib.util.module_from_spec(spec); spec.loader.exec_module(dispatch)
+        store=dispatch.r.Store(self.repo)
+        run='a'*32
+        store.claim('TST-1',self.root/'held',run,'background')
+        hold=pg.ProcessHold(self.common,'fixture_writer',self.repo,run_id=run)
+        before=(self.common/'leases.json').read_bytes()
+        code='''import importlib.util, io, os, sys
+from pathlib import Path
+from types import SimpleNamespace
+path,repo,run,phase,failure=sys.argv[1:]
+spec=importlib.util.spec_from_file_location('broken_dispatch',path)
+dispatch=importlib.util.module_from_spec(spec); spec.loader.exec_module(dispatch)
+dispatch.SHUTDOWN_SETTLE_SECONDS=0
+def cancelled_run(self, cancelled=None):
+    if phase == 'settle':
+        self.runs={run:'TST-1'}
+        self.settle_shutdown()
+    elif phase == 'helper':
+        self.helpers.uncertain(SimpleNamespace(pid=os.getpid()),'fixture uncertainty')
+        assert self.helpers.termination_failure is not None
+    elif phase == 'runtime':
+        self.store.finish_execution(run,['issue:TST-1'],True,self.repo)
+    else:
+        raise dispatch.Stop(130,'fixture cancellation')
+    return 130
+dispatch.Dispatcher.run=cancelled_run
+if failure == 'write':
+    reader,writer=os.pipe(); os.close(reader)
+    sys.stderr=io.TextIOWrapper(io.FileIO(writer,'w'),write_through=True)
+elif failure == 'flush':
+    class FlushFailure:
+        def write(self,text): return len(text)
+        def flush(self): raise OSError('fixture flush failure')
+    sys.stderr=FlushFailure()
+else:
+    sys.stderr=io.StringIO(); sys.stderr.close()
+sys.argv=[path,'--repo',repo,'run']
+# Leave normally through sys.exit, so an unsafe final flush would turn 130
+# into 120. os._exit would hide precisely that regression.
+sys.exit(dispatch.main())
+'''
+        try:
+            for phase in ('settle','helper','runtime','stop'):
+                for failure in ('write','flush','closed'):
+                    with self.subTest(phase=phase,failure=failure):
+                        result=self.invoke([sys.executable,'-I','-c',code,str(self.repo/'scripts/bureau-dispatch.py'),
+                                            str(self.repo),run,phase,failure],
+                                           env={**self.env,'BUREAU_TEST_DISPATCH_SETTLE_SECONDS':''})
+                        self.assertEqual(result.returncode,130,result.stdout+result.stderr)
+                        self.assertEqual((self.common/'leases.json').read_bytes(),before)
+                        self.assertTrue(hold.path.exists())
+        finally:
+            hold.close(stopped=True)
 
     def test_shutdown_during_launch_window_has_no_orphan(self):
         self.ticket(1,hold=True)
