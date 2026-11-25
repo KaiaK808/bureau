@@ -296,8 +296,8 @@ def service_transport(args):
     return 0
 
 
-def prepare_pipeline(repo, case, mutation=''):
-    default, head = build_history(repo, case)
+def prepare_pipeline(repo, case, mutation='', history=build_history):
+    default, head = history(repo, case)
     state = repo / 'stub_data'
     (state / 'default_commit').write_text(default)
     original = (repo / 'bin/gh').rename(repo / 'bin/gh.base')
@@ -349,7 +349,7 @@ def prepare_pipeline(repo, case, mutation=''):
             'classification': ('if classification:', 'if False:'),
             'unreadable': ("return 25, 'charter-unreadable: ' + str(exc)", "return 0, ''"),
             'handoff': ('mark_needs_human "$ISSUE" merge 25 || true ;;', ': ;;'),
-            'priority': ('charter-policy:*|charter-unreadable:*|charter-unclassified:*|*$\'\\n\'charter-policy:*|*$\'\\n\'charter-unreadable:*|*$\'\\n\'charter-unclassified:*) return 0 ;;', ':) return 0 ;;'),
+            'priority': ('charter-policy:*|charter-unreadable:*|charter-unclassified:*|charter-exception:*|*$\'\\n\'charter-policy:*|*$\'\\n\'charter-unreadable:*|*$\'\\n\'charter-unclassified:*|*$\'\\n\'charter-exception:*) return 0 ;;', ':) return 0 ;;'),
         }[mutation]
         source = target.read_text()
         if old not in source:

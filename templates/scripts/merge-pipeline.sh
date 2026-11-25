@@ -17,8 +17,8 @@
 #   6. No `needs-human`, `blocked`, or `wip` label on the PR
 #   7. Zero unresolved review threads (GraphQL: pullRequest.reviewThreads)
 #   8. Explicitly enrolled charter: readable pinned default-branch policy;
-#      no .bureau.json change from the PR merge base (charter-policy, exit 25)
-#      Queue, selector, suite, report and red-main gates are not implemented yet.
+#      approved Linear queue (exit 2); path/label exceptions and .bureau.json
+#      changes require a human (exit 25). Suite, report and red-main gates follow.
 #
 # Gates 3 and 4 enforce the Not-Rocket-Science Rule independently of GitHub's
 # mergeStateStatus — they catch (a) PRs that merge with red CI when no
@@ -308,7 +308,7 @@ evaluate_merge_gates() {
   elif charter_enrolled; then
     local _charter_lines _charter_rc=0
     _charter_lines=$(python3 -I -B "$(dirname "$0")/bureau-charter.py" --repo "$PWD" \
-      --github "$owner_repo" gate --pin "$MERGE_CHARTER_PIN" --base "$_base_ref" --head "$head") || _charter_rc=$?
+      --github "$owner_repo" gate --pin "$MERGE_CHARTER_PIN" --base "$_base_ref" --head "$head" --issue "$ISSUE") || _charter_rc=$?
     if [ "$_charter_rc" != 0 ]; then
       case "$_charter_lines" in
         charter-*:*) _blockers+=("$_charter_lines") ;;
@@ -455,8 +455,8 @@ merge_gate_outcome() {
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     case "$line" in
-      "charter-retry: "*) ;;
-      "charter-policy: "*|"charter-unreadable: "*|"charter-unclassified: "*) outcome=blocked ;;
+      "charter-retry: "*|"charter-queue: "*) ;;
+      "charter-policy: "*|"charter-unreadable: "*|"charter-unclassified: "*|"charter-exception: "*) outcome=blocked ;;
       "ci_green: ci: "*" still pending on "*) ;;
       "ci_green: ci: only "*" completed check(s) on "*) ;;
       "ci_green: ci: cannot resolve "*|"ci_green: ci: gh check-runs query failed"*) ;;
@@ -539,7 +539,7 @@ refresh_stale_approval() {
   local gates="$1" lines body last_body last_key current_key
   # A policy exception must not be softened into routine re-review (exit 20).
   case "$gates" in
-    charter-policy:*|charter-unreadable:*|charter-unclassified:*|*$'\n'charter-policy:*|*$'\n'charter-unreadable:*|*$'\n'charter-unclassified:*) return 0 ;;
+    charter-policy:*|charter-unreadable:*|charter-unclassified:*|charter-exception:*|*$'\n'charter-policy:*|*$'\n'charter-unreadable:*|*$'\n'charter-unclassified:*|*$'\n'charter-exception:*) return 0 ;;
   esac
   lines=$(printf '%s\n' "$gates" | sed -n 's/^approval_binding: /- /p') || exit $?
   [ -n "$lines" ] || return 0
@@ -598,7 +598,7 @@ merge_record_gate() {
   if [ -n "$2" ]; then
     if [ "$(printf '%s\n' "$2" | merge_gate_outcome)" = not-yet ]; then rc=2; else rc=25; fi
     case "$2" in "approval_binding: "*|*$'\n'"approval_binding: "*) rc=20 ;; esac
-    case "$2" in charter-policy:*|charter-unreadable:*|charter-unclassified:*|*$'\n'charter-policy:*|*$'\n'charter-unreadable:*|*$'\n'charter-unclassified:*) rc=25 ;; esac
+    case "$2" in charter-policy:*|charter-unreadable:*|charter-unclassified:*|charter-exception:*|*$'\n'charter-policy:*|*$'\n'charter-unreadable:*|*$'\n'charter-unclassified:*|*$'\n'charter-exception:*) rc=25 ;; esac
   fi
   [[ "$1" =~ ^[0-9a-f]{40,64}$ ]] || kind=artifact
   bureau_evidence evidence-gate --kind "$kind" --path "$file" --head "$1" --end-head "$1" \

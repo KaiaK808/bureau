@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="58e51574236dd68c046366b147b898b23ab8163007b1161d98aa6756360d9a31">
+<meta name="bureau-source-sha256" content="6cb3a085738aba412f30d9b8e0defece5275f6e141136c4a171083bd4450bb5c">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1934,11 +1934,13 @@ objects such as
 Each class must be nonempty and unique, and each entry needs at least
 one nonempty path or label selector. Labels and class names are
 case-sensitive, without surrounding whitespace or control characters;
-repeated selectors are invalid. General exception matching is not active
-in this foundation.</p>
+repeated selectors are invalid.</p>
 <p>Paths are root-relative and case-sensitive. Declared glob syntax is
 <code>*</code> within a component, <code>**</code> across components and
-<code>?</code> for one character. Absolute paths, drive prefixes, home
+<code>?</code> for one character within a component. A complete
+<code>**/</code> component may match zero directories:
+<code>**/tokens?.json</code> matches both <code>tokens1.json</code> and
+<code>src/tokens1.json</code>. Absolute paths, drive prefixes, home
 prefixes, backslashes, empty/dot/traversal components, negation,
 brackets and brace expansion are rejected. Suite inputs and workflow
 paths are literal files, without globs. <code>suite</code> is null or
@@ -1951,9 +1953,58 @@ workflows is a nonempty array of unique literal
 <code>.github/workflows/*.yml</code> or <code>.yaml</code> paths. Timing
 values default to 60 and 3600 and must be positive integers with poll at
 most timeout. <code>report: true</code> requires both suite and red-main
-declarations. Queue, path/label exceptions, suite receipts, reports,
-main-CI watching and latches are reserved declarations here; no check or
-execution of those gates is claimed.</p>
+declarations. Suite receipts, reports, main-CI watching and latches
+remain declarations; those gates are not implemented.</p>
+<p>For an enrolled repository, a label queue and two exception classes
+can be configured as follows. To select a cycle instead, replace the
+entire <code>approved_queue</code> object with
+<code>{"cycle_id":"12345678-1234-1234-1234-123456789abc"}</code>. A null
+queue adds no queue requirement; an empty exception list is allowed and
+retains the mandatory <code>charter-policy</code> exception.</p>
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;merge_charter&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span></span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;approved_queue&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;label&quot;</span><span class="fu">:</span> <span class="st">&quot;approved-for-merge&quot;</span><span class="fu">},</span></span>
+<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;exceptions&quot;</span><span class="fu">:</span> <span class="ot">[</span></span>
+<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a>        <span class="fu">{</span><span class="dt">&quot;class&quot;</span><span class="fu">:</span> <span class="st">&quot;security&quot;</span><span class="fu">,</span> <span class="dt">&quot;paths&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;auth/**&quot;</span><span class="ot">,</span> <span class="st">&quot;**/tokens?.json&quot;</span><span class="ot">]</span><span class="fu">,</span> <span class="dt">&quot;labels&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;security-sensitive&quot;</span><span class="ot">]</span><span class="fu">}</span><span class="ot">,</span></span>
+<span id="cb11-8"><a href="#cb11-8" aria-hidden="true" tabindex="-1"></a>        <span class="fu">{</span><span class="dt">&quot;class&quot;</span><span class="fu">:</span> <span class="st">&quot;data&quot;</span><span class="fu">,</span> <span class="dt">&quot;paths&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;migrations/**&quot;</span><span class="ot">]</span><span class="fu">,</span> <span class="dt">&quot;labels&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;schema-change&quot;</span><span class="ot">]</span><span class="fu">}</span></span>
+<span id="cb11-9"><a href="#cb11-9" aria-hidden="true" tabindex="-1"></a>      <span class="ot">]</span></span>
+<span id="cb11-10"><a href="#cb11-10" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb11-11"><a href="#cb11-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb11-12"><a href="#cb11-12" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>Each initial and just-in-time evaluation reads one validated Linear
+ticket snapshot when queue approval or exception labels need it. Queue
+labels are ticket labels, independent of PR labels. Cycle mode requests
+<code>cycle { id }</code> in that same snapshot. A missing approval
+label, an unassigned or different cycle, or an approval-only read
+failure waits with <code>charter-queue</code>, exit <code>2</code>, and
+no merge. The read uses the existing Linear helper with one transport
+attempt and reloads the configured secrets file through Bureau's safe
+reader; missing fields, GraphQL errors, an unexpected ticket, unreadable
+JSON or <code>pageInfo.hasNextPage: true</code> never count as an empty
+label list. If exception labels depend on that failed or incomplete
+read, the result is class <code>unclassified</code>
+(<code>charter-unclassified</code>), exit <code>25</code>, and human
+handoff. Approval cannot waive an exception.</p>
+<p>Exception selectors come exclusively from trusted policy at D. The
+evaluator pins PR head H and the live target branch tip B, fetches and
+verifies both commits, requires exactly one merge base and classifies
+the complete NUL-delimited
+<code>git diff --name-status -z --find-renames &lt;merge-base(B,H)&gt; H --</code>
+output. Copy detection is also enabled, including unchanged sources.
+Deleted paths and both rename/copy endpoints participate; a renamed-away
+protected path still requires a human. Diff warnings, object/fetch
+failures, ambiguous merge bases, malformed or truncated change records
+and undecodable paths require class <code>unclassified</code> and
+<code>25</code>. Working-tree changes are never classification inputs. A
+path match or an exact ticket-label match holds with
+<code>charter-exception</code>, exit <code>25</code>, names every
+matching configured class and requires a maintainer to inspect and
+merge. Exceptions dominate queue waits and stale-approval re-review.
+Both merge paths execute these same gates, in addition to all existing
+requirements.</p>
 <p>Before enrolling, compare installed script drift, resync the complete
 scripts scope and restart drivers. Use trusted installed scripts,
 outside the PR's control. A maintainer must first publish a sanitized
@@ -1967,9 +2018,9 @@ as <code>agents.merge_publishers</code>. Keep local secrets in the
 separately configured secrets file. Configure a Merge state locally for
 human handoff. From the adopting repository, with authenticated
 <code>gh</code> and a matching <code>origin</code>, run:</p>
-<div class="sourceCode" id="cb11"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-charter.py <span class="at">--repo</span> . <span class="at">--github</span> owner/repository enroll</span>
-<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-charter.py <span class="at">--repo</span> . <span class="at">--github</span> owner/repository policy</span></code></pre></div>
+<div class="sourceCode" id="cb12"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-charter.py <span class="at">--repo</span> . <span class="at">--github</span> owner/repository enroll</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-charter.py <span class="at">--repo</span> . <span class="at">--github</span> owner/repository policy</span></code></pre></div>
 <p><code>enroll</code> resolves the default branch through GitHub, pins
 its commit D, fetches the exact object and reads only
 <code>D:.bureau.json</code>. It validates policy shape and declared file
@@ -2012,9 +2063,14 @@ terms.</p>
 <p>Doctor validates shapes and selectors, declared suite files, workflow
 files and recognizable push declarations, handoff configuration,
 shared-state permissions, enrollment versus enabled policy and
-digest/source drift. It does not execute a suite or workflow, parse all
-YAML, establish branch/event filters or test an actual state write.
-Enrolled diagnostics use the locally fetched default branch selected by
+digest/source drift. Its <code>merge_charter</code> output reports
+<code>enrolled</code>, <code>queue_mode</code> (<code>none</code>,
+<code>label</code> or <code>cycle_id</code>),
+<code>approved_queue</code> and <code>exception_classes</code>; only an
+enrolled repository warns about an empty exception list. It does not
+execute a suite or workflow, query Linear, parse all YAML, establish
+branch/event filters or test an actual state write. Enrolled diagnostics
+use the locally fetched default branch selected by
 <code>origin/HEAD</code>; refresh that ref through the maintainer's
 normal fetch process before interpreting drift. Doctor performs no new
 remote read and creates no charter state. Without a block or enrollment,
@@ -2027,8 +2083,8 @@ enrollment record or unreadable policy never silently deactivates
 checks. Repair unreadable trusted policy before retrying. For a corrupt
 enrollment, inspect the record and use explicit unenrollment followed by
 fresh enrollment. To remove enrollment, run:</p>
-<div class="sourceCode" id="cb12"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-charter.py <span class="at">--repo</span> . unenroll</span></code></pre></div>
+<div class="sourceCode" id="cb13"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-charter.py <span class="at">--repo</span> . unenroll</span></code></pre></div>
 <p>Only this explicit operation deactivates the shared enrollment;
 changing a checkout flag or resyncing scripts does not. Enrollment
 reads, writes and removal reject symlinks in the shared-state parent
@@ -2047,30 +2103,30 @@ trusted progress</h3>
 for the issue in the same common Git directory, across stages,
 checker/verifier phases, worktrees, shepherd runs and dispatcher
 restarts:</p>
-<div class="sourceCode" id="cb13"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;ticket_budget&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;tokens&quot;</span><span class="fu">:</span> <span class="dv">200000</span><span class="fu">,</span></span>
-<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;provider_calls&quot;</span><span class="fu">:</span> <span class="dv">20</span><span class="fu">,</span></span>
-<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;wall_seconds&quot;</span><span class="fu">:</span> <span class="dv">14400</span><span class="fu">,</span></span>
-<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;allow_unknown_usage&quot;</span><span class="fu">:</span> <span class="kw">false</span></span>
-<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a>    <span class="fu">},</span></span>
-<span id="cb13-9"><a href="#cb13-9" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;ticket_progress&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb13-10"><a href="#cb13-10" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span></span>
-<span id="cb13-11"><a href="#cb13-11" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;max_non_improving_turns&quot;</span><span class="fu">:</span> <span class="dv">2</span><span class="fu">,</span></span>
-<span id="cb13-12"><a href="#cb13-12" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;contract&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb13-13"><a href="#cb13-13" aria-hidden="true" tabindex="-1"></a>        <span class="dt">&quot;fulfilled_requirements&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb13-14"><a href="#cb13-14" aria-hidden="true" tabindex="-1"></a>          <span class="dt">&quot;required-behavior&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;command_id&quot;</span><span class="fu">:</span> <span class="st">&quot;repo.test_command&quot;</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="st">&quot;bash tests/acceptance.sh&quot;</span><span class="fu">}</span></span>
-<span id="cb13-15"><a href="#cb13-15" aria-hidden="true" tabindex="-1"></a>        <span class="fu">},</span></span>
-<span id="cb13-16"><a href="#cb13-16" aria-hidden="true" tabindex="-1"></a>        <span class="dt">&quot;qualified_gates&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb13-17"><a href="#cb13-17" aria-hidden="true" tabindex="-1"></a>          <span class="dt">&quot;acceptance&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;command_id&quot;</span><span class="fu">:</span> <span class="st">&quot;repo.test_command&quot;</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="st">&quot;bash tests/acceptance.sh&quot;</span><span class="fu">}</span></span>
-<span id="cb13-18"><a href="#cb13-18" aria-hidden="true" tabindex="-1"></a>        <span class="fu">},</span></span>
-<span id="cb13-19"><a href="#cb13-19" aria-hidden="true" tabindex="-1"></a>        <span class="dt">&quot;confirmed_findings&quot;</span><span class="fu">:</span> <span class="fu">{}</span></span>
-<span id="cb13-20"><a href="#cb13-20" aria-hidden="true" tabindex="-1"></a>      <span class="fu">}</span></span>
-<span id="cb13-21"><a href="#cb13-21" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
-<span id="cb13-22"><a href="#cb13-22" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
-<span id="cb13-23"><a href="#cb13-23" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb14"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;ticket_budget&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;tokens&quot;</span><span class="fu">:</span> <span class="dv">200000</span><span class="fu">,</span></span>
+<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;provider_calls&quot;</span><span class="fu">:</span> <span class="dv">20</span><span class="fu">,</span></span>
+<span id="cb14-6"><a href="#cb14-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;wall_seconds&quot;</span><span class="fu">:</span> <span class="dv">14400</span><span class="fu">,</span></span>
+<span id="cb14-7"><a href="#cb14-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;allow_unknown_usage&quot;</span><span class="fu">:</span> <span class="kw">false</span></span>
+<span id="cb14-8"><a href="#cb14-8" aria-hidden="true" tabindex="-1"></a>    <span class="fu">},</span></span>
+<span id="cb14-9"><a href="#cb14-9" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;ticket_progress&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb14-10"><a href="#cb14-10" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span></span>
+<span id="cb14-11"><a href="#cb14-11" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;max_non_improving_turns&quot;</span><span class="fu">:</span> <span class="dv">2</span><span class="fu">,</span></span>
+<span id="cb14-12"><a href="#cb14-12" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;contract&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb14-13"><a href="#cb14-13" aria-hidden="true" tabindex="-1"></a>        <span class="dt">&quot;fulfilled_requirements&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb14-14"><a href="#cb14-14" aria-hidden="true" tabindex="-1"></a>          <span class="dt">&quot;required-behavior&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;command_id&quot;</span><span class="fu">:</span> <span class="st">&quot;repo.test_command&quot;</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="st">&quot;bash tests/acceptance.sh&quot;</span><span class="fu">}</span></span>
+<span id="cb14-15"><a href="#cb14-15" aria-hidden="true" tabindex="-1"></a>        <span class="fu">},</span></span>
+<span id="cb14-16"><a href="#cb14-16" aria-hidden="true" tabindex="-1"></a>        <span class="dt">&quot;qualified_gates&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb14-17"><a href="#cb14-17" aria-hidden="true" tabindex="-1"></a>          <span class="dt">&quot;acceptance&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;command_id&quot;</span><span class="fu">:</span> <span class="st">&quot;repo.test_command&quot;</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="st">&quot;bash tests/acceptance.sh&quot;</span><span class="fu">}</span></span>
+<span id="cb14-18"><a href="#cb14-18" aria-hidden="true" tabindex="-1"></a>        <span class="fu">},</span></span>
+<span id="cb14-19"><a href="#cb14-19" aria-hidden="true" tabindex="-1"></a>        <span class="dt">&quot;confirmed_findings&quot;</span><span class="fu">:</span> <span class="fu">{}</span></span>
+<span id="cb14-20"><a href="#cb14-20" aria-hidden="true" tabindex="-1"></a>      <span class="fu">}</span></span>
+<span id="cb14-21"><a href="#cb14-21" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb14-22"><a href="#cb14-22" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb14-23"><a href="#cb14-23" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>Each dimension is independently optional; absent/null/0 disables it.
 Wrong types, unknown keys, negative/nonfinite limits or invalid
 contracts refuse execution with 24. Tokens/calls require integers; wall
@@ -2903,18 +2959,18 @@ configuration migration is required; existing installations retain the
 legacy rules.</p>
 <p>For Bureau's generated manual, cover <strong>every</strong> output of
 the renderer, which requires Pandoc:</p>
-<div class="sourceCode" id="cb14"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;repo&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;test_command&quot;</span><span class="fu">:</span> <span class="st">&quot;bash tests/run.sh&quot;</span><span class="fu">,</span></span>
-<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;conflict_resolution&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;generated&quot;</span><span class="fu">:</span> <span class="ot">[</span></span>
-<span id="cb14-6"><a href="#cb14-6" aria-hidden="true" tabindex="-1"></a>        <span class="fu">{</span><span class="dt">&quot;globs&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;docs/site/*.html&quot;</span><span class="ot">]</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;python3&quot;</span><span class="ot">,</span> <span class="st">&quot;scripts/render_docs.py&quot;</span><span class="ot">]</span><span class="fu">}</span></span>
-<span id="cb14-7"><a href="#cb14-7" aria-hidden="true" tabindex="-1"></a>      <span class="ot">]</span><span class="fu">,</span></span>
-<span id="cb14-8"><a href="#cb14-8" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;append_only_paths&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;CHANGELOG.md&quot;</span><span class="ot">]</span></span>
-<span id="cb14-9"><a href="#cb14-9" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
-<span id="cb14-10"><a href="#cb14-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
-<span id="cb14-11"><a href="#cb14-11" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb15"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;repo&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;test_command&quot;</span><span class="fu">:</span> <span class="st">&quot;bash tests/run.sh&quot;</span><span class="fu">,</span></span>
+<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;conflict_resolution&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;generated&quot;</span><span class="fu">:</span> <span class="ot">[</span></span>
+<span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a>        <span class="fu">{</span><span class="dt">&quot;globs&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;docs/site/*.html&quot;</span><span class="ot">]</span><span class="fu">,</span> <span class="dt">&quot;command&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;python3&quot;</span><span class="ot">,</span> <span class="st">&quot;scripts/render_docs.py&quot;</span><span class="ot">]</span><span class="fu">}</span></span>
+<span id="cb15-7"><a href="#cb15-7" aria-hidden="true" tabindex="-1"></a>      <span class="ot">]</span><span class="fu">,</span></span>
+<span id="cb15-8"><a href="#cb15-8" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;append_only_paths&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;CHANGELOG.md&quot;</span><span class="ot">]</span></span>
+<span id="cb15-9"><a href="#cb15-9" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb15-10"><a href="#cb15-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb15-11"><a href="#cb15-11" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>A configured repair requires an explicit
 <code>repo.test_command</code> containing a command; whitespace-only or
 comment-only strings decline, and there is no inferred fallback.
@@ -3084,18 +3140,18 @@ or 2), and an explicit nonblank, non-comment
 <code>timeout_seconds</code> and silence-watchdog options apply through
 <code>run_stage_for conflict_resolver</code>; there is no separate
 provider integration. Invalid resolver configuration fails closed.</p>
-<div class="sourceCode" id="cb15"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;conflict_resolver&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">,</span></span>
-<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;max_attempts&quot;</span><span class="fu">:</span> <span class="dv">1</span><span class="fu">,</span></span>
-<span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;runner&quot;</span><span class="fu">:</span> <span class="st">&quot;codex&quot;</span><span class="fu">,</span></span>
-<span id="cb15-7"><a href="#cb15-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;timeout_seconds&quot;</span><span class="fu">:</span> <span class="dv">600</span></span>
-<span id="cb15-8"><a href="#cb15-8" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
-<span id="cb15-9"><a href="#cb15-9" aria-hidden="true" tabindex="-1"></a>  <span class="fu">},</span></span>
-<span id="cb15-10"><a href="#cb15-10" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;repo&quot;</span><span class="fu">:</span> <span class="fu">{</span> <span class="dt">&quot;test_command&quot;</span><span class="fu">:</span> <span class="st">&quot;python3 -m unittest discover -s tests&quot;</span> <span class="fu">}</span></span>
-<span id="cb15-11"><a href="#cb15-11" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb16"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;conflict_resolver&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">,</span></span>
+<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;max_attempts&quot;</span><span class="fu">:</span> <span class="dv">1</span><span class="fu">,</span></span>
+<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;runner&quot;</span><span class="fu">:</span> <span class="st">&quot;codex&quot;</span><span class="fu">,</span></span>
+<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;timeout_seconds&quot;</span><span class="fu">:</span> <span class="dv">600</span></span>
+<span id="cb16-8"><a href="#cb16-8" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb16-9"><a href="#cb16-9" aria-hidden="true" tabindex="-1"></a>  <span class="fu">},</span></span>
+<span id="cb16-10"><a href="#cb16-10" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;repo&quot;</span><span class="fu">:</span> <span class="fu">{</span> <span class="dt">&quot;test_command&quot;</span><span class="fu">:</span> <span class="st">&quot;python3 -m unittest discover -s tests&quot;</span> <span class="fu">}</span></span>
+<span id="cb16-11"><a href="#cb16-11" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>All conflict-stage environment overrides are optional and unset by
 default: <code>BUREAU_RUNNER_CONFLICT_RESOLVER</code>,
 <code>BUREAU_MODEL_CONFLICT_RESOLVER</code>,
@@ -4019,19 +4075,19 @@ supporting it. The tier changes no routing, holds, verdicts or merges; a
 human merges every PR. It does not enable automatic merging or change
 <code>agents.merge_mode</code>. Omitting <code>agents.risk_tier</code>
 uses these defaults:</p>
-<div class="sourceCode" id="cb17"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;risk_tier&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;low_max_changed_lines&quot;</span><span class="fu">:</span> <span class="dv">100</span><span class="fu">,</span></span>
-<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;low_max_files&quot;</span><span class="fu">:</span> <span class="dv">5</span><span class="fu">,</span></span>
-<span id="cb17-6"><a href="#cb17-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;high_min_changed_lines&quot;</span><span class="fu">:</span> <span class="dv">1000</span><span class="fu">,</span></span>
-<span id="cb17-7"><a href="#cb17-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;docs_patterns&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;docs/*&quot;</span><span class="ot">,</span> <span class="st">&quot;**/docs/*&quot;</span><span class="ot">,</span> <span class="st">&quot;*.md&quot;</span><span class="ot">,</span> <span class="st">&quot;*.rst&quot;</span><span class="ot">]</span><span class="fu">,</span></span>
-<span id="cb17-8"><a href="#cb17-8" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;test_patterns&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;tests/*&quot;</span><span class="ot">,</span> <span class="st">&quot;**/tests/*&quot;</span><span class="ot">,</span> <span class="st">&quot;test/*&quot;</span><span class="ot">,</span> <span class="st">&quot;**/test/*&quot;</span><span class="ot">,</span> <span class="st">&quot;test_*.py&quot;</span><span class="ot">,</span> <span class="st">&quot;*_test.py&quot;</span><span class="ot">,</span> <span class="st">&quot;*.test.*&quot;</span><span class="ot">,</span> <span class="st">&quot;*.spec.*&quot;</span><span class="ot">]</span><span class="fu">,</span></span>
-<span id="cb17-9"><a href="#cb17-9" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;sensitive_patterns&quot;</span><span class="fu">:</span> <span class="ot">[]</span></span>
-<span id="cb17-10"><a href="#cb17-10" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
-<span id="cb17-11"><a href="#cb17-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
-<span id="cb17-12"><a href="#cb17-12" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb18"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;risk_tier&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;low_max_changed_lines&quot;</span><span class="fu">:</span> <span class="dv">100</span><span class="fu">,</span></span>
+<span id="cb18-5"><a href="#cb18-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;low_max_files&quot;</span><span class="fu">:</span> <span class="dv">5</span><span class="fu">,</span></span>
+<span id="cb18-6"><a href="#cb18-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;high_min_changed_lines&quot;</span><span class="fu">:</span> <span class="dv">1000</span><span class="fu">,</span></span>
+<span id="cb18-7"><a href="#cb18-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;docs_patterns&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;docs/*&quot;</span><span class="ot">,</span> <span class="st">&quot;**/docs/*&quot;</span><span class="ot">,</span> <span class="st">&quot;*.md&quot;</span><span class="ot">,</span> <span class="st">&quot;*.rst&quot;</span><span class="ot">]</span><span class="fu">,</span></span>
+<span id="cb18-8"><a href="#cb18-8" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;test_patterns&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;tests/*&quot;</span><span class="ot">,</span> <span class="st">&quot;**/tests/*&quot;</span><span class="ot">,</span> <span class="st">&quot;test/*&quot;</span><span class="ot">,</span> <span class="st">&quot;**/test/*&quot;</span><span class="ot">,</span> <span class="st">&quot;test_*.py&quot;</span><span class="ot">,</span> <span class="st">&quot;*_test.py&quot;</span><span class="ot">,</span> <span class="st">&quot;*.test.*&quot;</span><span class="ot">,</span> <span class="st">&quot;*.spec.*&quot;</span><span class="ot">]</span><span class="fu">,</span></span>
+<span id="cb18-9"><a href="#cb18-9" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;sensitive_patterns&quot;</span><span class="fu">:</span> <span class="ot">[]</span></span>
+<span id="cb18-10"><a href="#cb18-10" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb18-11"><a href="#cb18-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb18-12"><a href="#cb18-12" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>Changed lines means insertions plus deletions in
 <code>base..HEAD</code>. Low requires at least one changed path, every
 path matching the docs/tests lists, at most 100 changed lines and 5

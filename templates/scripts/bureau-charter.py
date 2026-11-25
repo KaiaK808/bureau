@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Trusted merge-charter policy and explicit, shared-Git enrollment.
 
-Only policy integrity is enforced here. Queue, exception selectors, suite receipts, reports and main-CI observation are declarations for later gates.
+Enforces policy integrity, the approved queue and path/label exceptions. Suite receipts, reports and main-CI observation remain declarations for later gates.
 """
 import argparse
 import hashlib
@@ -272,19 +272,158 @@ def load_policy(repo, source, pin=None, enrolling=False):
     return dict(kind='ok', policy=policy, policy_digest=digest(policy), **pin)
 
 
-def policy_change_class(repo, base, head):
-    """Only the mandatory policy class; general exception matching comes later."""
+def parse_changes(raw):
+    """Consume the complete NUL protocol, including both rename/copy endpoints."""
+    if not isinstance(raw, bytes) or (raw and not raw.endswith(b'\0')):
+        raise ValueError('truncated charter change list')
+    fields = raw.split(b'\0')[:-1]
+    paths, index = [], 0
+    while index < len(fields):
+        status = fields[index].decode('ascii')
+        index += 1
+        if status in ('A', 'D', 'M', 'T'):
+            count = 1
+        elif re.fullmatch(r'[RCM][0-9]{1,3}', status) and int(status[1:]) <= 100:
+            count = 2 if status[0] in 'RC' else 1
+        else:
+            raise ValueError('invalid charter change status')
+        if index + count > len(fields):
+            raise ValueError('truncated charter change endpoints')
+        for field in fields[index:index + count]:
+            path = field.decode('utf-8')
+            if path.startswith('/') or any(part in ('', '.', '..') for part in path.split('/')):
+                raise ValueError('invalid charter change path')
+            paths.append(path)
+        index += count
+    return paths
+
+
+def changed_paths(repo, base, head):
     commit(base); commit(head)
     bases = git(repo, 'merge-base', '--all', base, head).stdout.splitlines()
     if len(bases) != 1:
         raise ValueError('charter comparison needs exactly one merge base')
     ancestor = commit(bases[0].decode())
-    changed = git(repo, 'diff', '--quiet', '--no-ext-diff', '--no-textconv', '--no-renames',
-                  ancestor, head, '--', '.bureau.json', codes=(0, 1)).returncode
-    return 'charter-policy' if changed else None
+    # Copy detection includes unchanged sources; never lose a protected source
+    # merely because it was copied into an otherwise unprotected directory.
+    result = git(repo, 'diff', '--name-status', '-z', '--no-relative', '--no-ext-diff', '--no-textconv',
+                 '--find-renames', '--find-copies', '--find-copies-harder', '--ignore-submodules=none',
+                 ancestor, head, '--')
+    if result.stderr:
+        raise ValueError('charter diff reported incomplete or uncertain classification')
+    return parse_changes(result.stdout)
 
 
-def gate(repo, source, pin, base_branch, head):
+def policy_change_class(repo, base, head, paths=None):
+    paths = changed_paths(repo, base, head) if paths is None else paths
+    return 'charter-policy' if '.bureau.json' in paths else None
+
+
+def path_matches(pattern, path):
+    """Root-relative, case-sensitive glob; a whole **/ may span zero directories."""
+    expression, index = '', 0
+    while index < len(pattern):
+        if pattern[index:index + 2] == '**':
+            index += 2
+            if (index == 2 or pattern[index - 3] == '/') and pattern[index:index + 1] == '/':
+                expression += '(?:.*/)?'
+                index += 1
+            else:
+                expression += '.*'
+        elif pattern[index] == '*':
+            expression += '[^/]*'
+            index += 1
+        elif pattern[index] == '?':
+            expression += '[^/]'
+            index += 1
+        else:
+            expression += re.escape(pattern[index])
+            index += 1
+    return re.fullmatch(expression, path, re.DOTALL) is not None
+
+
+def parse_issue_snapshot(raw, issue, with_cycle):
+    value = read_json(raw)
+    if not isinstance(value, dict) or value.get('errors') not in (None, []):
+        raise ValueError('partial charter ticket snapshot')
+    connection = value['data']['issues']
+    nodes = connection['nodes']
+    if not isinstance(nodes, list) or len(nodes) != 1 or connection['pageInfo']['hasNextPage'] is not False:
+        raise ValueError('charter ticket snapshot is missing or incomplete')
+    node = nodes[0]
+    if node['identifier'] != issue:
+        raise ValueError('charter ticket snapshot identity differs')
+    labels = node['labels']
+    if not isinstance(labels['nodes'], list) or labels['pageInfo']['hasNextPage'] is not False:
+        raise ValueError('charter ticket labels are incomplete')
+    names = [text(label['name'], 'ticket label') for label in labels['nodes']]
+    cycle_id = None
+    if with_cycle:
+        cycle = node['cycle']  # Missing differs from an explicitly unassigned cycle.
+        if cycle is not None:
+            cycle_id = text(cycle['id'], 'ticket cycle')
+            if not re.fullmatch(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', cycle_id):
+                raise ValueError('invalid charter ticket cycle')
+    return dict(labels=names, cycle_id=cycle_id)
+
+
+def issue_snapshot(repo, issue, with_cycle):
+    """One Linear read via the existing credential-safe helper, never a model."""
+    if not isinstance(issue, str) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*-[1-9][0-9]*', issue):
+        raise ValueError('charter requires a ticket identifier')
+    key, number = issue.rsplit('-', 1)
+    query = ('{ issues(first:2, filter:{team:{key:{eq:' + json.dumps(key) + '}} number:{eq:' + number + '}}) '
+             '{ nodes { identifier labels(first:250) { nodes { name } pageInfo { hasNextPage } } '
+             + ('cycle { id } ' if with_cycle else '') + '} pageInfo { hasNextPage } } }')
+    env = {key: value for key, value in os.environ.items() if key not in ('BASH_ENV', 'ENV')}
+    env.update(_BUREAU_LINEAR_SINGLE_ATTEMPT='1', _BUREAU_LINEAR_FAULT_FILE='')
+    try:
+        result = subprocess.run(['bash', '--noprofile', '--norc', '-c',
+                                 'source "$1" >&2 || exit; bureau_load_env --export "$BUREAU_ENV_FILE" >&2 || exit; '
+                                 'bureau_secret_copy API_KEY LINEAR_API_KEY || exit; linear_raw "$2" "$3"', 'bureau-charter',
+                                 str(Path(__file__).resolve().with_name('bureau-config.sh')),
+                                 json.dumps(dict(query=query)), '((.data.issues.nodes | type) == "array")'],
+                                cwd=repo, capture_output=True, timeout=45, env=env)
+        if result.returncode:
+            raise ValueError('charter Linear read failed')
+        return parse_issue_snapshot(result.stdout, issue, with_cycle)
+    except (OSError, subprocess.TimeoutExpired, ValueError, UnicodeError, KeyError, TypeError):
+        raise ValueError('charter ticket snapshot could not be read completely') from None
+
+
+def selector_gates(policy, paths, read_issue):
+    queue, entries = policy['approved_queue'], policy['exceptions']
+    label_exceptions = any(entry.get('labels') for entry in entries)
+    ticket, failed = None, False
+    if queue is not None or label_exceptions:
+        try:
+            ticket = read_issue(queue is not None and 'cycle_id' in queue)
+        except (ValueError, OSError):
+            failed = True
+    labels = ticket['labels'] if ticket is not None else []
+    classes = []
+    for entry in entries:
+        path_match = any(path_matches(pattern, path) for pattern in entry.get('paths', []) for path in paths)
+        label_match = any(label in labels for label in entry.get('labels', []))
+        if path_match or label_match:
+            classes.append(entry['class'])
+    lines = []
+    if classes:
+        lines.append('charter-exception: classes ' + json.dumps(classes) + '; a maintainer must inspect and merge exceptions')
+    if failed and label_exceptions:
+        lines.append('charter-unclassified: exception labels require a complete ticket snapshot; a maintainer must inspect')
+    # Exception holds always dominate an absent approval or an approval read failure.
+    if lines:
+        return 25, '\n'.join(lines)
+    if queue is not None:
+        approved = ticket is not None and (queue['label'] in labels if 'label' in queue
+                                           else ticket['cycle_id'] is not None and ticket['cycle_id'].lower() == queue['cycle_id'].lower())
+        if not approved:
+            return 2, 'charter-queue: ' + ('ticket snapshot unavailable' if failed else 'approval outstanding') + '; waiting for the approved queue'
+    return 0, ''
+
+
+def gate(repo, source, pin, base_branch, head, issue=None):
     try:
         snapshot = load_policy(repo, source, pin)
         if snapshot['kind'] == 'not-enrolled':
@@ -294,19 +433,22 @@ def gate(repo, source, pin, base_branch, head):
     try:
         base = source.tip(base_branch)
         source.fetch(base); source.fetch(head)
-        classification = policy_change_class(repo, base, head)
+        paths = changed_paths(repo, base, head)
+        classification = policy_change_class(repo, base, head, paths)
     except (ValueError, OSError, UnicodeError) as exc:
         return 25, 'charter-unclassified: ' + str(exc)
+    code, message = selector_gates(snapshot['policy'], paths, lambda cycle: issue_snapshot(repo, issue, cycle))
     if classification:
-        return 25, 'charter-policy: PR changes .bureau.json; a maintainer must merge policy changes'
+        policy_line = 'charter-policy: PR changes .bureau.json; a maintainer must merge policy changes'
+        return 25, policy_line + ('\n' + message if message else '')
+    if code == 25:
+        return code, message
     try:
         if not source.revalidate(pin):
             return 2, 'charter-retry: default-branch policy changed during evaluation; retry with a fresh pin'
     except (ValueError, OSError):
         return 25, 'charter-unreadable: default-branch policy could not be revalidated'
-    # Future gates consume snapshot['policy'], D and policy_digest here. No
-    # queue, selector, suite, red-main or report success is claimed by this pass.
-    return 0, ''
+    return code, message
 
 
 def static_inputs(policy, read):
@@ -361,7 +503,7 @@ def enroll(repo, source):
     return record
 
 
-def diagnose(repo, config):
+def diagnose(repo, config, details=None):
     """Offline diagnostics: current means locally fetched default-branch policy."""
     errors, warnings = [], []
     raw_agents = config.get('agents', {}) if isinstance(config, dict) else {}
@@ -396,6 +538,12 @@ def diagnose(repo, config):
                 warnings.append('Charter policy digest drift: locally fetched default-branch policy differs from enrollment; inspect and explicitly enroll again to acknowledge')
             warnings.append('Charter policy checked at locally fetched origin/' + branch + '; remote default-branch changes are not checked by doctor')
         if policy and policy['enabled']:
+            if details is not None:
+                queue = policy['approved_queue']
+                details.update(enrolled=record is not None, queue_mode=next(iter(queue)) if queue else 'none',
+                               approved_queue=queue, exception_classes=[entry['class'] for entry in policy['exceptions']])
+            if record is not None and not policy['exceptions']:
+                warnings.append('Enrolled charter has no configured exception classes; only the mandatory charter-policy class applies')
             teams = config.get('linear', {}).get('teams', [])
             if not teams or not isinstance(teams[0].get('states', {}).get('merge'), str) or not teams[0]['states']['merge'].strip():
                 errors.append('Enabled charter requires a Merge state for human handoff')
@@ -429,6 +577,7 @@ def main(argv=None):
     check.add_argument('--pin', required=True)
     check.add_argument('--base', required=True)
     check.add_argument('--head', required=True)
+    check.add_argument('--issue')
     args = parser.parse_args(argv)
     try:
         if args.command == 'status':
@@ -444,7 +593,7 @@ def main(argv=None):
             return 0
         source = GitHub(args.repo, args.github)
         if args.command == 'gate':
-            code, message = gate(args.repo, source, read_json(args.pin), args.base, args.head)
+            code, message = gate(args.repo, source, read_json(args.pin), args.base, args.head, args.issue)
             if message:
                 print(message)
             return code

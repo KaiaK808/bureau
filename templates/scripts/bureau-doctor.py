@@ -662,13 +662,13 @@ def test_wrapper_diagnostics(repo, operator_config=None, trusted_base=None, conf
 def diagnose(repo, mode, wrapper_config=None, wrapper_base=None):
     runtime = module('runtime'); provider = module('provider')
     repo = runtime.root_for(repo); path = runtime.config_for(repo); config = json.loads(path.read_text())
-    errors = validate(config); warnings = []; effective = {}
+    errors = validate(config); warnings = []; effective = {}; charter_details = {}
     # No new output, policy reads or state writes for installations without
     # the block and without explicit shared-Git enrollment.
     if (isinstance(config, dict) and isinstance(config.get('agents'), dict) and 'merge_charter' in config['agents']) \
             or os.path.lexists(runtime.common_for(repo) / 'bureau/charter/enrollment.json'):
         try:
-            charter_errors, charter_warnings = module('charter').diagnose(repo, config)
+            charter_errors, charter_warnings = module('charter').diagnose(repo, config, charter_details)
             errors.extend(charter_errors); warnings.extend(charter_warnings)
         except (ValueError, OSError) as exc: errors.append('Charter diagnostics unavailable: ' + str(exc))
     if isinstance(config, dict) and isinstance(config.get('agents'), dict) \
@@ -800,7 +800,7 @@ def diagnose(repo, mode, wrapper_config=None, wrapper_base=None):
     claude_dirs = claude_config_dirs(config, effective, provider, warnings)
     return dict(ok=not errors, mode=mode, workspace=str(repo), config=str(path), version=config.get('version', 1),
                 merge_mode=merge, post_implement_command=hook if isinstance(hook, str) and hook.strip() else None,
-                remote_git_hooks=remote_mode,
+                remote_git_hooks=remote_mode, **({'merge_charter': charter_details} if charter_details else {}),
                 main_checkout=str(main) if main is not None else None, worktree_links=links, claude_config_dirs=claude_dirs,
                 interfaces=interfaces, active_integration=active.get('integration'), effective_stages=effective,
                 template_source=source, test_wrapper=wrapper, drift=drift, errors=errors, warnings=warnings,
