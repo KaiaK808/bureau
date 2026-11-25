@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="58e51574236dd68c046366b147b898b23ab8163007b1161d98aa6756360d9a31">
+<meta name="bureau-source-sha256" content="7cf9142e3e3b5bf7116b11eaa341ea6be6c8f24462e2f8caa6aa40d34f40fa3c">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1903,12 +1903,12 @@ move for every updated driver, including pending moves absent from
 lagging snapshots.</p>
 <h3 id="merge-charter-foundation">Merge charter foundation</h3>
 <p>The charter is off by default. Omission or
-<code>enabled: false</code> in an unenrolled repository adds no remote
-reads, charter files or merge blockers. An enabled block alone also
-activates no gate: enrollment is an explicit maintainer operation
-outside the checkout, never a side effect of installation, migration or
-scripts resync. Doctor validates explicit declarations even while
-disabled.</p>
+<code>enabled: false</code> in an unenrolled repository adds no Git,
+GitHub CLI or network calls, charter files or merge blockers. An enabled
+block alone also activates no gate: enrollment is an explicit maintainer
+operation outside the checkout, never a side effect of installation,
+migration or scripts resync. Doctor validates explicit declarations even
+while disabled.</p>
 <div class="sourceCode" id="cb10"><pre
 class="sourceCode json"><code class="sourceCode json"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
 <span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
@@ -1987,11 +1987,17 @@ submodule recursion disabled regardless of checkout
 <code>repo.remote_git_runs_hooks</code>.</p>
 <p>Only a successful local enrollment probe can confirm absence. An
 unreadable or non-searchable shared-state directory, an invalid
-enrollment record or a failed Git common-directory lookup blocks merging
+enrollment record or a failed common-directory resolution blocks merging
 with <code>charter-policy</code>, exit <code>25</code> and the human
-handoff. The offline <code>status</code> command prints
-<code>enrolled</code> or <code>not-enrolled</code> on success; errors
-return <code>25</code> and never confirm absence.</p>
+handoff. The merge probe reads <code>.git</code> and
+<code>commondir</code> metadata directly from the filesystem, including
+linked worktrees and separate Git directories, without starting Git or a
+service. The offline <code>status</code> command prints
+<code>enrolled</code> or <code>not-enrolled</code> on success;
+<code>status --local</code> uses the merge probe's filesystem resolution
+instead of a Git lookup. Unrecognized or unreadable metadata returns
+<code>25</code> and never confirms absence. Both forms retain the same
+enrollment parent-directory validation.</p>
 <p>Both initial and just-in-time merge evaluations use the same pinned D
 and revalidate the live default branch. Enrolled policy that is missing,
 disabled, malformed or unreadable refuses with

@@ -3,7 +3,7 @@
 - **Status**: accepted (derived)
 - **Date**: 2026-10-26
 - **Decided by**: Kai Ebert
-- **Sources**: `8fdde36` (manual mode refuses without a Merge state and disables dispatch); `docs/release-notes-v3.0.0.md:15` (released merge policy); `docs/configuration.md:76` (mode and defaults); `docs/configuration.md:78` (CI/base gates); `docs/stage-protocol.md:86` (stop and app boundaries); `templates/scripts/merge-pipeline.sh:589` (final gate rerun and pinned merge); `templates/scripts/bureau-config.sh:2037` (actual PR-base check).
+- **Sources**: `8fdde36` (manual mode refuses without a Merge state and disables dispatch); `docs/release-notes-v3.0.0.md:15` (released merge policy); `docs/configuration.md:76` (mode and defaults); `docs/configuration.md:78` (CI/base gates); `docs/stage-protocol.md:86` (stop and app boundaries); `templates/scripts/merge-pipeline.sh:589` (final gate rerun and pinned merge); `templates/scripts/bureau-config.sh:2037` (actual PR-base check); `templates/scripts/bureau-charter.py:2` (explicit shared-Git charter authority).
 
 ## Context
 
@@ -21,7 +21,7 @@ Honor agents.merge_mode: manual disables merge and rebase before external work, 
 
 In auto mode, route inline review merges and dedicated Merge workers through the same merge pipeline, independently check CI and the current PR base, rerun the gates immediately before merging and pin the merged head. App finish and an outside green test do not execute or authorize a merge. Sources: `templates/scripts/merge-pipeline.sh:589`; `docs/configuration.md:78`; `docs/stage-protocol.md:86`.
 
-Explicit shared-Git charter enrollment adds policy-integrity conditions to that same automated gate. Resolve the actual default branch, pin commit D and read its `.bureau.json` directly from that commit, independently of checkout discovery. Revalidate D at the merge evaluations. An enrolled unreadable/invalid policy or a PR changing `.bureau.json` requires a human exception, exit 25, even when its approval needs routine re-review. A checkout flag cannot remove enrollment; only the maintainer's explicit unenroll command does. This foundation defines queue, selector, suite, red-main and report configuration without enforcing those future gates. Sources: `templates/scripts/bureau-charter.py`; `templates/scripts/merge-pipeline.sh`; [configuration](../configuration.md#merge-charter-foundation).
+Explicit shared-Git charter enrollment adds policy-integrity conditions to that same automated gate. Resolve the actual default branch, pin commit D and read its `.bureau.json` directly from that commit, independently of checkout discovery. Revalidate D at the merge evaluations. An enrolled unreadable/invalid policy or a PR changing `.bureau.json` requires a human exception, exit 25, even when its approval needs routine re-review. A checkout flag cannot remove enrollment; only the maintainer's explicit unenroll command does. This foundation defines queue, selector, suite, red-main and report configuration without enforcing those future gates. Sources: `templates/scripts/bureau-charter.py:2`; `templates/scripts/merge-pipeline.sh`; [configuration](../configuration.md#merge-charter-foundation).
 
 ## Rationale
 
