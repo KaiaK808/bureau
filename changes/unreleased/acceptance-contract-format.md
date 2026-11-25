@@ -1,0 +1,3 @@
+section: Added
+
+- Optional version 1 acceptance-contract declarations, synthetic machine and human-reserved examples, and a standard-library offline validator with strict schema, limits and Spec Kit reference checks. **Upgrade:** no action is required; to use the standalone CLI, compare installed script drift and resync the scripts scope. No stage, gate, prompt, configuration or installer behavior changes; enforcement is not active. Validation: focused offline parser and real-CLI cases only, without full-suite or platform qualification. A well formed declaration does not prove requirement completeness, verifier existence or success, or product acceptance.

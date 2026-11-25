@@ -41,6 +41,8 @@ class MergeTests(unittest.TestCase):
         self.m = load('review')
         self.temp = tempfile.TemporaryDirectory(prefix='bureau-review-merge-'); self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
+        boundary = patch.dict(os.environ, {'GIT_CEILING_DIRECTORIES': str(self.root)})
+        boundary.start(); self.addCleanup(boundary.stop)
         self.repo = self.root / 'repo'; self.repo.mkdir()
         self.git('init', '-qb', 'main'); git_maintenance.disable(self.repo); self.git('config', 'user.name', 'Test'); self.git('config', 'user.email', 'test@bureau')
         (self.repo / 'kept.txt').write_bytes(b'first\r\nsecond\nthird')
@@ -322,7 +324,8 @@ class MergeTests(unittest.TestCase):
         for agents in ({'review_grounding':'optional'}, {'review_grounding':True}, {'finding_verifier':True},
                        {'finding_verifier':{'enabled':'false'}}, {'finding_verifier':{'enabled':True, 'mode':'enforced'}}):
             with self.assertRaises(ValueError): self.m.settings(dict(agents=agents))
-        config = dict(linear=dict(teams=[dict(id='team', key='T', states=dict(build='build'))]), agents={}, repo={})
+        config = dict(linear=dict(teams=[dict(id='team', key='T', states=dict(build='build'))]),
+                      agents=dict(merge_publishers=['app:bureau-reviewer']), repo={})
         doctor = load('doctor'); self.assertEqual(doctor.validate(config), [])
         config['agents']['review_grounding'] = 'bad'
         self.assertTrue(any('review_grounding' in e for e in doctor.validate(config)))

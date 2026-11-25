@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="0ece258ef82fc96447243ae12d5bdc811bbe21d68982ab8b55aca07fd0904c0c">
+<meta name="bureau-source-sha256" content="b26d5a2bd46474aea9bce1a8e61a0ae42e3a2574fa3282d6c88df55fbcb72121">
 <title>exit-codes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -22,6 +22,14 @@ alerts</h1>
 and (optionally) fires a Telegram message — throttled so a stuck issue
 doesn't spam you 30 times an hour.</p>
 <p>This page is the complete table + how the alerter behaves.</p>
+<p>Publisher authentication keeps the existing exit meanings:
+incomplete, unreadable or inconsistent snapshots and unknown review
+authors return <code>2</code>; missing or invalid
+<code>agents.merge_publishers</code>, no authorised verdict and valid
+BLOCK/REQUEST_CHANGES return <code>25</code>. An edited selected review
+returns <code>20</code> with the existing fresh-review handoff. A
+decided ordinary blocker takes precedence over read uncertainty. Review
+publication failure is explicit and returns <code>18</code>.</p>
 <hr />
 <h2 id="exit-code-table">Exit code table</h2>
 <table>

@@ -57,6 +57,8 @@ class IndexTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix='bureau-adr-index-')
         self.addCleanup(self.temp.cleanup)
         self.repo = Path(self.temp.name).resolve()
+        boundary = patch.dict(os.environ, {'GIT_CEILING_DIRECTORIES': str(self.repo)})
+        boundary.start(); self.addCleanup(boundary.stop)
         self.git('init', '-q'); git_maintenance.disable(self.repo); self.git('config', 'user.name', 'Bureau Test')
         self.git('config', 'user.email', 'test@bureau')
         self.directory = self.repo / 'docs/adr'; self.directory.mkdir(parents=True)
@@ -144,7 +146,8 @@ class IndexTests(unittest.TestCase):
 
     def test_configuration_doctor_and_codex_optional_wire_projection(self):
         doctor, provider, gates = load('doctor'), load('provider'), load('gates')
-        config = dict(linear=dict(teams=[dict(id='team', key='T', states=dict(build='build'))]), agents={}, repo={})
+        config = dict(linear=dict(teams=[dict(id='team', key='T', states=dict(build='build'))]),
+                      agents=dict(merge_publishers=['app:bureau-reviewer']), repo={})
         self.assertEqual(self.adr.settings(config), (False, 'docs/adr', 4096))
         self.assertEqual(doctor.validate(config), [])
         for key, bad_values in [('review_adr_context', ('true', 1, None)),
