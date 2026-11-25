@@ -220,7 +220,9 @@ class WithdrawalFixture(unittest.TestCase):
         self.env.update(PATH=str(self.bin)+':'+os.environ['PATH'], PR9_FIXTURE=str(self.root),
                         PR9_REAL_GIT=REAL_GIT, BUREAU_IMPL_MAX_ITER='3', BUREAU_LINEAR_RETRIES='0',
                         BUREAU_ALERT_THROTTLE_FILE=str(self.root/'alerts'), TMUX='', PYTHONDONTWRITEBYTECODE='1',
-                        GIT_CEILING_DIRECTORIES=str(self.root))
+                        GIT_CEILING_DIRECTORIES=str(self.root), HOME=str(self.root/'home'),
+                        CLAUDE_CONFIG_DIR=str(self.root/'claude-profile'))
+        (self.root/'home').mkdir(); (self.root/'claude-profile').mkdir()
         for name, body in [('curl',CURL),('claude',PROVIDER),('gh',GH),('git',GIT)]:
             body=body.replace('# review transport helpers',(ROOT/'tests/lib/review-transport.py').read_text())
             p=self.bin/name; p.write_text(body); p.chmod(0o755)

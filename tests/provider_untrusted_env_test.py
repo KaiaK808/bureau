@@ -86,7 +86,10 @@ class UntrustedEnvProviderTests(unittest.TestCase):
         self.env = {**base, **SECRETS, **ALIASES, **OPERATOR, **AGENT, **PATHS, **HOST, 'BASH_ENV': '/dev/null', 'ENV': '/dev/null',
                     'LANG': 'C',
                     'PATH': str(self.bin) + os.pathsep + os.environ['PATH'],
-                    'BUREAU_PROVIDER_LOG_DIR': str(self.root / 'evidence')}
+                    'BUREAU_PROVIDER_LOG_DIR': str(self.root / 'evidence'),
+                    'HOME': str(self.root / 'home'), 'CLAUDE_CONFIG_DIR': str(self.root / 'claude-profile')}
+        (self.root / 'home').mkdir(); (self.root / 'claude-profile').mkdir()
+        self.env.pop('BUREAU_CLAUDE_CONFIG_DIR', None)
 
     def provider(self, runner, untrusted=None, *extra, code=0, env=None, credentials=None):
         config = {'agents': {'runner': runner}}
