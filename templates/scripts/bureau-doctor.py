@@ -25,8 +25,15 @@ STAGES = ('spec', 'spec_review', 'research', 'ux', 'copy', 'implement', 'qa', 'c
 @lru_cache(maxsize=None)
 def module(name):
     spec = importlib.util.spec_from_file_location(name, SCRIPTS / ('bureau-' + name + '.py'))
-    value = importlib.util.module_from_spec(spec); spec.loader.exec_module(value)
+    value = importlib.util.module_from_spec(spec)
+    if name == 'test-wrapper': sys.modules[spec.name] = value  # Its dataclasses resolve their module.
+    spec.loader.exec_module(value)
     return value
+
+
+def wrapper_configured(config):
+    section = config.get('repo') if isinstance(config, dict) else None
+    return isinstance(section, dict) and any(key in section for key in ('test_wrapper', 'test_wrapper_start_timeout_seconds'))
 
 
 def merge_mode(config):
@@ -67,6 +74,10 @@ def validate(config):
         value = agents.get(stage, False)
         if not isinstance(value, (bool, str, dict)): errors.append('agents.' + stage + ' must be a boolean, legacy string or object')
         elif isinstance(value, dict) and type(value.get('enabled', True)) is not bool: errors.append(stage + '.enabled must be boolean')
+    if wrapper_configured(config):
+        try: module('test-wrapper').validate_policy(config)
+        except (ValueError, TypeError) as exc: errors.append(str(exc))
+        except FileNotFoundError: errors.append('Missing runtime asset: scripts/bureau-test-wrapper.py; resync scripts')
     try: module('adr').settings(config)
     except (ValueError, TypeError, AttributeError) as exc: errors.append(str(exc))
     try: module('review').settings(config)
@@ -590,10 +601,62 @@ def claude_config_dirs(config, effective, provider, warnings):
     return report
 
 
-def diagnose(repo, mode):
+def test_wrapper_diagnostics(repo, operator_config=None, trusted_base=None, config=None):
+    repo = Path(repo).resolve()
+    try: primary, _ = main_checkout(repo)
+    except OSError: primary = None
+    if primary is None: primary = repo
+    selected = Path(operator_config) if operator_config is not None else primary / '.bureau.json'
+    paths = (Path(os.path.abspath(selected)), selected.resolve())
+    controlled = any(path == repo or repo in path.parents for path in paths)
+    if trusted_base is None and controlled:
+        command = ['git', '-C', str(repo), 'rev-parse', '--verify', 'refs/remotes/origin/main^{commit}']
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, env=module('provider').process_env(command))
+            if result.returncode == 0: trusted_base = result.stdout.strip()
+        except OSError: pass
+    try:
+        wrapper = module('test-wrapper')
+    except FileNotFoundError:
+        report = dict(enabled=None, reason='Test wrapper script is not installed; resync scripts.',
+                      routing_installed=False, routing='Stage routing is not installed yet.')
+        visible = [config]
+        authority = None
+        for path in {primary / '.bureau.json', selected}:
+            try:
+                value = json.loads(path.read_text())
+                visible.append(value)
+                if path == selected and not controlled: authority = value
+            except (OSError, ValueError) as exc:
+                if operator_config is not None and path == selected: report['error'] = str(exc)
+        if controlled and trusted_base is not None:
+            try:
+                text = module('review-config').Blobs(trusted_base, repo).read(paths[0].relative_to(repo).as_posix())
+                authority = json.loads(text) if text is not None else {}
+            except (OSError, ValueError, subprocess.SubprocessError): pass
+        configured = wrapper_configured(authority) if authority is not None else any(wrapper_configured(value) for value in visible)
+        if configured:
+            report['error'] = 'Missing runtime asset: scripts/bureau-test-wrapper.py; resync scripts'
+        return report
+    report = wrapper.diagnose_policy(repo, primary_config=primary / '.bureau.json',
+                                     operator_config=operator_config, trusted_base=trusted_base)
+    if report.get('authority_unavailable') and operator_config is None:
+        seen = [config]
+        try: seen.append(json.loads((primary / '.bureau.json').read_text()))
+        except (OSError, ValueError): pass
+        if not any(wrapper_configured(value) for value in seen):
+            # Nothing asks for a wrapper, so an unavailable trusted base is not a doctor finding.
+            return dict(enabled=None, reason='No wrapper key is visible; trusted policy unavailable: ' + report['error'],
+                        routing_installed=False, routing=report['routing'])
+    return report
+
+
+def diagnose(repo, mode, wrapper_config=None, wrapper_base=None):
     runtime = module('runtime'); provider = module('provider')
     repo = runtime.root_for(repo); path = runtime.config_for(repo); config = json.loads(path.read_text())
     errors = validate(config); warnings = []; effective = {}
+    wrapper = test_wrapper_diagnostics(repo, wrapper_config, wrapper_base, config)
+    if wrapper.get('error'): warnings.append('Test wrapper policy unavailable: ' + wrapper['error'])
     if not errors:
         try: env_path = stage_env_file(path)
         except (OSError, ValueError, RuntimeError) as exc: errors.append(str(exc))
@@ -610,7 +673,7 @@ def diagnose(repo, mode):
     missing = [name for name in required if not shutil.which(name)]
     errors.extend('Missing executable: ' + name for name in missing)
     if not isinstance(config, dict): return dict(ok=False, errors=errors)
-    if errors: return dict(ok=False, workspace=str(repo), config=str(path), errors=errors)
+    if errors: return dict(ok=False, workspace=str(repo), config=str(path), test_wrapper=wrapper, errors=errors)
     if not config.get('repo', {}).get('test_command'):
         # BUREAU_RUNNER_IMPLEMENT is a .env key the stages load; the stage's value decides.
         stage_env = {key: value for key, value in os.environ.items() if key != 'BUREAU_RUNNER_IMPLEMENT'}
@@ -666,7 +729,7 @@ def diagnose(repo, mode):
     for helper in sorted((repo / '.specify/scripts').rglob('*.sh')):
         if helper.is_file() and not os.access(helper, os.X_OK):
             warnings.append('Spec Kit helper is not executable: ' + str(helper.relative_to(repo)) + '; run Bureau Spec Kit resync to repair its mode')
-    for name in ('bureau-runtime.py', 'bureau-provider.py', 'bureau-stage.md'):
+    for name in ('bureau-runtime.py', 'bureau-provider.py', 'bureau-stage.md') + (('bureau-test-wrapper.py',) if wrapper_configured(config) else ()):
         if not (repo / 'scripts' / name).is_file(): errors.append('Missing runtime asset: scripts/' + name)
     if len(config.get('linear', {}).get('teams', [])) > 1: warnings.append('Runtime routes through the first configured team; review other-team tickets manually')
     merge, raw_merge = merge_mode(config)
@@ -721,7 +784,7 @@ def diagnose(repo, mode):
                 remote_git_hooks=remote_mode,
                 main_checkout=str(main) if main is not None else None, worktree_links=links, claude_config_dirs=claude_dirs,
                 interfaces=interfaces, active_integration=active.get('integration'), effective_stages=effective,
-                template_source=source, drift=drift, errors=errors, warnings=warnings,
+                template_source=source, test_wrapper=wrapper, drift=drift, errors=errors, warnings=warnings,
                 authentication='not checked', live_model_acceptance='not checked')
 
 
@@ -729,12 +792,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--repo', default='.')
     parser.add_argument('--mode', choices=('app', 'background'), default='app')
+    parser.add_argument('--wrapper-config', type=Path, help='Explicit operator-selected wrapper config')
+    parser.add_argument('--wrapper-base', help='Pinned trusted commit for wrapper config inside the tested checkout')
     parser.add_argument('--migrate', action='store_true'); parser.add_argument('--apply', action='store_true')
     args = parser.parse_args()
     try:
         runtime = module('runtime'); repo = runtime.root_for(Path(args.repo).resolve())
         if args.apply and not args.migrate: raise ValueError('--apply requires --migrate')
-        result = migration(runtime.config_for(repo), args.apply, runtime.common_for(repo) / 'bureau' / 'config-backups') if args.migrate else diagnose(repo, args.mode)
+        result = migration(runtime.config_for(repo), args.apply, runtime.common_for(repo) / 'bureau' / 'config-backups') if args.migrate else diagnose(repo, args.mode, args.wrapper_config, args.wrapper_base)
         print(json.dumps(result, indent=2)); return 0 if result.get('ok', True) else 1
     except (ValueError, OSError, TypeError, AttributeError, KeyError, subprocess.CalledProcessError) as exc:
         print(json.dumps({'ok':False, 'errors':[str(exc)]})); return 1
