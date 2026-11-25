@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="51eb6d2854be567222ff1e79d763b9625a875c7d96ca72028f20810204127b16">
+<meta name="bureau-source-sha256" content="480f6ca1f318eafe4fbfb55ca850ff51cc431d028235f8b0a0ab51b21e524644">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -116,15 +116,35 @@ approval beyond that limit leads to exit 25 with
 <code>needs-human</code> at Build Review. Security, review, hold and
 thread blockers take precedence over merge-forward. Strict CI, base and
 just-in-time gates still apply.</p>
-<p>SIGTERM/SIGINT/SIGHUP stop admission, signal only live runtime
-handles launched by this dispatcher and join nested cleanup before
-releasing the lock (130). Stored PIDs and process-name scans are never
-signal targets. Interrupted leases and unfinished work survive; only
-clean, detached, identity-matching registered workers can be removed.
-The supervisor waits for dispatcher cleanup. Resync the complete scripts
-scope and restart launchers together; mixed older writers, separate
-clones/hosts and live provider CLI qualification remain outside local
-fake-service validation.</p>
+<p>SIGTERM/SIGINT/SIGHUP stop admission and signal only live runtime
+handles launched by this dispatcher. After joining its direct lane
+children, the dispatcher waits up to five additional seconds in total by
+default for its launched runs' process holds to clear and every
+remaining lease to be marked interrupted, including runs from already
+reaped lanes. A busy ownership guard cannot extend that deadline. If
+settlement remains unconfirmed, stderr names each unresolved run and
+issue with <code>human_hold</code>; ownership stays retained and
+cancellation still exits 130. Dispatcher and runtime diagnostics are
+best effort: a closed/broken stderr or a failed flush cannot replace the
+outcome, including during interpreter shutdown. The dispatch lock
+remains held through this wait. Stored PIDs and process-name scans are
+never signal targets; this observation changes no nested runtime grace
+period and releases no lease. Interrupted leases and unfinished work
+survive; only clean, detached, identity-matching registered workers can
+be removed. The supervisor waits for dispatcher cleanup. Resync the
+complete scripts scope and restart launchers together; mixed older
+writers, separate clones/hosts and live provider CLI qualification
+remain outside local fake-service validation.</p>
+<p>Gated local tests may set
+<code>BUREAU_TEST_DISPATCH_SETTLE_SECONDS</code> to an integer from 1
+through 600; unset, malformed and out-of-range values use the
+five-second default. This test override changes only the shared
+settlement deadline. A test that holds inner cleanup open must also give
+its runtime wrappers compatible <code>BUREAU_STOP_GRACE_SECONDS</code>;
+the gated success regression uses 120 seconds for settlement and a
+60-second grace unit (180 seconds at depth 1). The unresolved-run
+regression separately checks the production five-second deadline with a
+controlled monotonic clock.</p>
 <p>Cancellation received while constructing the dispatcher is carried
 into its run handlers before selection. After dispatcher loss,
 supervisor exit 21 enters <code>bureau-dispatch.py wait</code>: it waits

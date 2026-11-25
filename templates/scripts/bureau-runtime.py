@@ -51,6 +51,19 @@ class AdmissionStop(Exception):
         self.code = code
 
 
+def note(message):
+    """Diagnostics cannot replace an outcome, even when stderr cannot flush."""
+    if sys.stderr is None:
+        return
+    try:
+        print(message, file=sys.stderr, flush=True)
+    except (OSError, ValueError):
+        # A closed terminal/pipe or stream can fail during write or flush.
+        # Disable Python's final retry too: a failed exit flush changes 130 to
+        # 120. This fallback needs no working file descriptor or /dev/null.
+        sys.stderr = None
+
+
 def overlap(repo, action, issue, branch, *args, run=None):
     config = read(config_for(repo))
     if config.get('agents', {}).get('file_overlap_gate', False) is False:
@@ -212,7 +225,7 @@ class Store:
                     self.assert_groups_stopped({child.pid})
                 except (OSError, Conflict, subprocess.TimeoutExpired) as exc:
                     self.failed_registration = run
-                    print('bureau: registration cleanup failed: ' + str(exc), file=sys.stderr)
+                    note('bureau: registration cleanup failed: ' + str(exc))
                 else:
                     # Confirmation survives a failed write-ahead recovery save.
                     self.stopped_registration = run
@@ -225,7 +238,7 @@ class Store:
             interrupted = interrupted or getattr(self, 'failed_registration', None) == run
             if pg.process_holds(self.root, run):
                 # Uncertain gate ownership/worktree state stays exactly as it is.
-                print('bureau: human_hold: unfinished process hold; ownership retained', file=sys.stderr)
+                note('bureau: human_hold: unfinished process hold; ownership retained')
                 return
             path = self.process_path(run)
             record = read(path, {'groups': [], 'interrupted': False})
@@ -261,14 +274,7 @@ class Store:
             except Exception:  # the exit code is the protocol; the steps are help
                 message = ('Interrupted Bureau run ' + run + ': work preserved; release it (bureau-runtime.py release '
                            + run + '), then drop or replace its worktree before a rerun.')
-            try:
-                print(message, file=sys.stderr)
-            except OSError:
-                # The terminal is gone (a hang-up): the steps are lost, `status`
-                # still shows the run, and the exit code must stay. Python's last
-                # flush of stderr would fail again and end the runtime with 120.
-                devnull = os.open(os.devnull, os.O_WRONLY)
-                os.dup2(devnull, 2); os.close(devnull)
+            note(message)
 
     def preserve(self, key, run, issue, workspace, reason):
         # The record reset_worktree reads when it refuses the unregistered
@@ -446,15 +452,15 @@ def report_conflict(repo, store, args, exc):
         except ProcessLookupError: gone = 'lost its process (pid ' + str(prior['pid']) + ')'
         except PermissionError: pass
     if not gone:
-        print(resource + ' is held by run ' + holder + ' (' + str(prior.get('owner')) + '), which is still active: '
-              'wait for it or stop it; nothing was written.', file=sys.stderr)
+        note(resource + ' is held by run ' + holder + ' (' + str(prior.get('owner')) + '), which is still active: '
+             'wait for it or stop it; nothing was written.')
         return
     leases = read(store.leases, {})
     issue, workspace = held_issue(leases, holder), held_workspace(leases, holder)
     rerun = 'Remove `needs-human` from ' + (issue or 'the ticket') + ' and rerun.'
     steps = resume_steps(store, repo, holder, workspace, rerun)
     why = resource + ' is held by run ' + holder + ', which ' + gone + '; no new run can start until it is released.'
-    print(why + '\n  To resume, from ' + str(repo) + ':\n' + render_steps(steps), file=sys.stderr)
+    note(why + '\n  To resume, from ' + str(repo) + ':\n' + render_steps(steps))
     if not issue:
         return
     stage = Path(args.entry or 'exec').name
@@ -465,7 +471,7 @@ def report_conflict(repo, store, args, exc):
     try:
         shell(repo, 'bureau_ownership_trace', issue, stage, workspace or '', body)
     except (OSError, subprocess.CalledProcessError) as error:
-        print('bureau: could not leave the halt on ' + issue + ' (' + str(error) + ')', file=sys.stderr)
+        note('bureau: could not leave the halt on ' + issue + ' (' + str(error) + ')')
 
 
 def shell(repo, function, *args, timeout=None, environ=None):
@@ -490,7 +496,7 @@ shift
             signal_group(child, signal.SIGKILL)
             child.communicate(timeout=1)
         except (OSError, subprocess.TimeoutExpired) as exc:
-            print('bureau: timed-out helper termination uncertain: ' + str(exc), file=sys.stderr)
+            note('bureau: timed-out helper termination uncertain: ' + str(exc))
         finally:
             if child.stdout is not None: child.stdout.close()
         raise
@@ -806,7 +812,7 @@ def execute(repo, args, store):
             except OSError as exc:
                 # The stop is already latched. Keep ownership interrupted and
                 # report uncertainty rather than throwing out of the handler.
-                print('bureau: run termination uncertain: ' + str(exc), file=sys.stderr)
+                note('bureau: run termination uncertain: ' + str(exc))
 
     def stop(signum, frame):
         nonlocal interrupted
@@ -881,11 +887,11 @@ def execute(repo, args, store):
             # A cancelled run writes nothing, not even the halt of a conflict.
             if interrupted:
                 code = 130; return code
-            print('bureau conflict: ' + str(exc), file=sys.stderr)
+            note('bureau conflict: ' + str(exc))
             try:
                 report_conflict(repo, store, args, exc)
             except Exception as error:  # the exit code is the protocol; the halt is help
-                print('bureau: could not report the conflict (' + repr(error) + ')', file=sys.stderr)
+                note('bureau: could not report the conflict (' + repr(error) + ')')
             code = 21; return code
         if interrupted:
             code = 130; return code
@@ -934,7 +940,7 @@ def execute(repo, args, store):
                         signal_child(signal.SIGKILL)
                         try: child.wait(timeout=1)
                         except subprocess.TimeoutExpired:
-                            print('bureau: run termination uncertain: leader did not exit', file=sys.stderr)
+                            note('bureau: run termination uncertain: leader did not exit')
                     code = 130; return code
     except AdmissionStop as exc:
         code = exc.code
@@ -1185,11 +1191,11 @@ def main():
     except AdmissionStop as exc:
         return exc.code
     except Conflict as exc:
-        print('bureau conflict: ' + str(exc), file=sys.stderr); return 21
+        note('bureau conflict: ' + str(exc)); return 21
     except (ValueError, OSError, subprocess.CalledProcessError, KeyError) as exc:
         if args.action in ('wait-open', 'wait-resolve', 'observe', 'observe-open', 'evidence-gate', 'evidence-pr'):
             e.warn(); return 0
-        print('bureau: ' + str(exc), file=sys.stderr); return 1
+        note('bureau: ' + str(exc)); return 1
 
 
 if __name__ == '__main__':

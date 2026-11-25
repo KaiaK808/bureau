@@ -20,6 +20,16 @@ SCRIPTS = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location('dispatch_runtime', SCRIPTS / 'bureau-runtime.py')
 r = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(r)
+SHUTDOWN_SETTLE_SECONDS = 5.0
+
+
+def shutdown_settle_seconds():
+    """Let gated tests outwait their parent without unbounding shutdown."""
+    raw = os.environ.get('BUREAU_TEST_DISPATCH_SETTLE_SECONDS', '')
+    if re.fullmatch(r'[0-9]{1,3}', raw) and 1 <= int(raw) <= 600:
+        return float(raw)
+    return SHUTDOWN_SETTLE_SECONDS
+
 
 # Every policy read uses the installed runtime, never a ticket's scripts.
 SOURCE = '''source "$1/bureau-config.sh"
@@ -75,7 +85,7 @@ class Helpers:
 
     def uncertain(self, child, reason):
         self.termination_failure = dict(group=child.pid, reason='dispatcher helper termination uncertain', detail=str(reason))
-        print('dispatch: ' + self.termination_failure['reason'] + ': ' + str(reason), file=sys.stderr)
+        r.note('dispatch: ' + self.termination_failure['reason'] + ': ' + str(reason))
         # The unfinished helper record was fsynced before Popen. No write here
         # is needed to make uncertainty survive a restart or a full filesystem.
 
@@ -186,7 +196,7 @@ def spec_start(repo, issue):
                    if key not in counted and leases.get('issue:' + key, {}).get('run_id') == run}
         if cap and issue not in counted and issue not in pending and len(counted | pending.keys()) >= cap:
             r.save(path, pending)
-            print('Spec gate: atomic admission waits for capacity', file=sys.stderr)
+            r.note('Spec gate: atomic admission waits for capacity')
             return 28
         run = os.environ.get('BUREAU_RUN_ID')
         if cap:
@@ -211,6 +221,7 @@ class Dispatcher:
         self.helpers = Helpers(repo, self.store.root)
         self.lanes = {}
         self.ready = {}
+        self.runs = {}
         self.path = self.store.root / 'dispatch-skips.json'
         self.journal = self.store.root / 'dispatch-lanes'
         self.skips = r.read(self.path, {})
@@ -306,7 +317,7 @@ class Dispatcher:
             r.git(self.repo, 'worktree', 'remove', str(workspace))
             registry.unlink(missing_ok=True)
         except (OSError, subprocess.CalledProcessError):
-            print('dispatch: retaining worktree ' + str(workspace), file=sys.stderr)
+            r.note('dispatch: retaining worktree ' + str(workspace))
 
     def reap(self):
         for issue, (child, workspace, output) in list(self.lanes.items()):
@@ -314,9 +325,43 @@ class Dispatcher:
             if code is None: continue
             child.wait()
             output.close()
+            self.remember_run(issue)
             del self.lanes[issue]
             ready = self.ready.pop(issue)
             self.reconcile_lane(self.journal / (ready.name + '.json'))
+
+    def remember_run(self, issue):
+        # Only journals for handles launched here confer membership. Keep the
+        # identity after reap removes the journal; never use stored group IDs.
+        row = r.read(self.journal / (self.ready[issue].name + '.json'), {})
+        if row.get('run_id'):
+            self.runs[row['run_id']] = issue
+
+    def settle_shutdown(self):
+        # A direct lane can exit while an inner wrapper still owns a hold or
+        # has yet to mark its leases. Observe both under one shared deadline;
+        # never release ownership or signal a process to make it settle.
+        pending = dict(self.runs)
+        settle_seconds = shutdown_settle_seconds()
+        deadline = time.monotonic() + settle_seconds
+        while pending:
+            try:
+                with locked(self.store.root / 'guard', nonblocking=True):
+                    leases = r.read(self.store.leases, {})
+                    pending = {run: issue for run, issue in pending.items()
+                               if r.pg.process_holds(self.store.root, run)
+                               or any(lease['run_id'] == run and not lease.get('interrupted')
+                                      for lease in leases.values())}
+            except (OSError, ValueError, KeyError):
+                # A busy guard or unreadable coordination cannot prove that
+                # ownership settled. Retry without extending the deadline.
+                pass
+            remaining = deadline - time.monotonic()
+            if not pending or remaining <= 0: break
+            time.sleep(min(.05, remaining))
+        for run, issue in sorted(pending.items()):
+            r.note(f'dispatch: human_hold: run {run} ({issue}) did not settle within '
+                   f'{settle_seconds:g} s; ownership retained')
 
     def launch(self, issue, stage):
         # One final authoritative shell read, then runtime admission and atomic
@@ -428,9 +473,11 @@ printf "%s %s %s %s" "$BUREAU_PARALLEL_LANES" "$BUREAU_POLL_INTERVAL" '''
             self.stop()
             # Runtime owns nested shutdown/grace and preservation. Do not kill
             # its wrapper early or consult process records from an old run.
-            for child, _, output in self.lanes.values():
+            for issue, (child, _, output) in self.lanes.items():
                 child.wait()
                 output.close()
+                self.remember_run(issue)
+            self.settle_shutdown()
         return 130
 
 
@@ -474,13 +521,13 @@ def main():
                 os.execvpe(command[0], command, {**os.environ, 'BUREAU_POLLER_LOCKED': '1'})
             return Dispatcher(repo, args, lock.fileno()).run(cancelled=lambda: stopped)
     except Stop as exc:
-        if exc.output: print('dispatch: ' + exc.output, file=sys.stderr)
+        if exc.output: r.note('dispatch: ' + exc.output)
         return exc.code
     except BlockingIOError:
-        print('dispatch: another dispatcher or stage poller owns this common Git directory', file=sys.stderr)
+        r.note('dispatch: another dispatcher or stage poller owns this common Git directory')
         return 21
     except (ValueError, OSError, KeyError, subprocess.CalledProcessError) as exc:
-        print('dispatch: ' + str(exc), file=sys.stderr)
+        r.note('dispatch: ' + str(exc))
         return 24
 
 
