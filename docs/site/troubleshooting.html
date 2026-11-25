@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="972b95060670f4975c8afa831b1c58ecaf71bf32f4d071e8ce63ba4323aec999">
+<meta name="bureau-source-sha256" content="088aa0a1272ec676b6ce04cb72177b1b21eb57c2117609eeade87ed260f35015">
 <title>troubleshooting · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -365,7 +365,7 @@ prefixes instead of guessing another feature.</p>
 <p>Every stage finds the spec directory with
 <code>bureau_spec_dir_for_branch</code> (<code>bureau-config.sh</code>).
 It first drops everything up to the branch's last <code>/</code> and a
-leading issue key such as <code>exp-1444-</code>, then takes: a
+leading issue key such as <code>team-123-</code>, then takes: a
 directory named exactly like the branch or its last segment; else the
 one directory whose slug (the name without <code>NNN-</code>) fits the
 branch slug — equal, the branch slug as its start up to a <code>-</code>
@@ -373,7 +373,7 @@ branch slug — equal, the branch slug as its start up to a <code>-</code>
 words inside the branch slug; when several fit, the branch's number
 narrows them first (the fits that carry it, if any, are the only ones
 left), and among the fits left the one whose slug equals the branch slug
-wins (v3.1: <code>codex/exp-9-report-builder-wireup</code> takes
+wins (v3.1: <code>codex/team-9-report-builder-wireup</code> takes
 <code>128-report-builder-wireup</code> over
 <code>117-report-builder</code>, where v3.0.2 stopped on a tie; a branch
 cut down to exactly a shorter directory's slug therefore takes that

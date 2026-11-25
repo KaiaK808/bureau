@@ -4,9 +4,7 @@
 
 Do NOT open a public GitHub issue for a security vulnerability. Public issues are indexed and searchable immediately.
 
-Instead, email the maintainer directly:
-
-- **Kai Ebert** — 808.meets.303@gmail.com
+Instead, report it privately through GitHub: open the repository's **Security** tab and choose **Report a vulnerability** ([direct link](https://github.com/KaiaK808/bureau/security/advisories/new)). The report is visible only to the maintainers until an advisory is published.
 
 Include:
 - A clear description of the vulnerability
@@ -18,9 +16,7 @@ You should get an initial acknowledgement within a few days. If the vulnerabilit
 
 ## Supported versions
 
-Only `main` is supported. Bureau doesn't cut tagged releases; every merged PR ships to every installed clone the next time an operator runs `git pull` in `~/.claude/skills/bureau-init/` or `/bureau-init --resync-scripts` in a target repo.
-
-If you're pinned to an older SHA, upgrading to current `main` is the fix. There's no LTS branch.
+The latest published release tag is supported; [release status](docs/releases.md) names it. Security fixes land on `main` and ship in the next tagged release. Older tags get no backports: upgrade to the latest release as described in the [migration guide](docs/migration.md). There's no LTS branch.
 
 ## Scope
 
