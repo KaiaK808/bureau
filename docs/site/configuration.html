@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="d917ca222c7317c60861bb13e43af378cc0b810cdd4d771d3a815ae99fd41e12">
+<meta name="bureau-source-sha256" content="d831e17c6f4701389a43a00033bcde6a58837deb97e1e2a99fffdf52c51a48e8">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1077,10 +1077,13 @@ results and a derived blocking flag other than exactly <code>0</code> or
 <code>1</code> are <strong>not_measured</strong>. A missing/crashing
 helper, unreadable diff/blob/policy, exceeded bound or malformed diff is
 also <strong>not_measured</strong> and enforces the same floor, never a
-pass. A fully measured empty result passes this floor and leaves the
-ordinary review checks in force. The scan runs again before every
-approval reuse, so exceptions and their expiry are re-evaluated without
-relying on a saved scan.</p>
+pass. Any ordinary exception during scanning, metadata redaction or
+locator computation discards all partial findings and counts and returns
+a blocking <strong>not_measured</strong> result with a generic reason;
+raw diagnostics are never emitted. A fully measured empty result passes
+this floor and leaves the ordinary review checks in force. The scan runs
+again before every approval reuse, so exceptions and their expiry are
+re-evaluated without relying on a saved scan.</p>
 <p>Every finding carries <code>locator.blob</code>, the pinned head
 entry's full Git blob ID, and <code>locator.path_sha256</code>, the
 first 16 lowercase hexadecimal characters of SHA-256 over the original

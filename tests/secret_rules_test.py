@@ -1,6 +1,6 @@
 """Pure Python rule checks; no Git, providers, network or fixture repositories."""
 import importlib.util
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 import hashlib
 import io
 import json
@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
@@ -169,9 +169,11 @@ class SecretMeasurementUnitTests(unittest.TestCase):
         with patch.object(self.m.scan, 'tree', side_effect=(old, head, old)), \
                 patch.object(self.m.scan, 'git', side_effect=git):
             if cli:
-                output = io.StringIO()
-                with patch.object(sys, 'argv', ['secrets', '--base', self.base, '--head', self.head]), redirect_stdout(output):
+                output, errors = io.StringIO(), io.StringIO()
+                with patch.object(sys, 'argv', ['secrets', '--base', self.base, '--head', self.head]), \
+                        redirect_stdout(output), redirect_stderr(errors):
                     self.assertEqual(self.m.main(), 0)
+                self.assertEqual(errors.getvalue(), '')
                 return output.getvalue()
             return self.m.measure(Path('.'), self.base, self.head)
 
@@ -185,6 +187,69 @@ class SecretMeasurementUnitTests(unittest.TestCase):
             blobs[blob] = content
             patches[name] = b'@@ -0,0 +1 @@\n+' + content
         return self.measure({}, head, blobs, patches, cli=cli), head
+
+    def assert_not_measured(self, output):
+        result = json.loads(output)
+        self.assertEqual((result['status'], result['blocking']), ('not_measured', True))
+        self.assertEqual(result['reason'], 'secret scan inputs or result unavailable')
+        self.assertEqual(result['findings'], [])
+        self.assertEqual((result['findings_count'], result['findings_omitted'], result['findings_suppressed']), (0, 0, 0))
+        for _, value in fake_keys():
+            self.assertNotIn(value, output)
+
+    def test_scanner_failures_after_an_earlier_finding_are_not_measured(self):
+        key, later = fake_keys()[0][1], fake_keys()[2][1]
+        files = {'a/' + key + '.txt': key, 'z/source.txt': later}
+        for target in ('rule_ids', 'rule_matches'):
+            original = getattr(self.m, target)
+            for error in (ValueError, RuntimeError):
+                def fail(text, **kwargs):
+                    if text == later:
+                        raise error(later)
+                    return original(text, **kwargs)
+
+                with self.subTest(target=target, error=error.__name__), patch.object(self.m, target, side_effect=fail) as scanner:
+                    output, _ = self.measure_additions(files, cli=True)
+                    self.assert_not_measured(output)
+                    self.assertTrue(any(call.args[0] == later for call in scanner.call_args_list))
+
+    def test_redaction_failures_are_not_measured(self):
+        key = fake_keys()[0][1]
+        files = {'a/' + key + '.txt': key, 'z/source.txt': fake_keys()[2][1]}
+        original = self.m.mask_metadata
+        for stage in ('masked-values', 'file', 'rule-id'):
+            for error in (ValueError, RuntimeError):
+                failed = []
+
+                def fail(text, values=()):
+                    if ((stage == 'masked-values' and not values)
+                            or (stage == 'file' and values and text == 'z/source.txt')
+                            or (stage == 'rule-id' and values and text == 'github-token')):
+                        failed.append(stage)
+                        raise error(key)
+                    return original(text, values)
+
+                with self.subTest(stage=stage, error=error.__name__), patch.object(self.m, 'mask_metadata', side_effect=fail):
+                    output, _ = self.measure_additions(files, cli=True)
+                    self.assert_not_measured(output)
+                    self.assertEqual(failed, [stage])
+
+    def test_locator_failures_after_an_earlier_finding_are_not_measured(self):
+        key = fake_keys()[0][1]
+        first, later = 'a/' + key + '.txt', 'z/source.txt'
+        files = {first: key, later: fake_keys()[2][1]}
+        for stage in ('sha256', 'hexdigest'):
+            for error in (ValueError, RuntimeError):
+                first_hash = hashlib.sha256(first.encode())
+                failure = error(key)
+                if stage == 'hexdigest':
+                    failure = Mock()
+                    failure.hexdigest.side_effect = error(key)
+                with self.subTest(stage=stage, error=error.__name__), \
+                        patch.object(self.m.hashlib, 'sha256', side_effect=(first_hash, failure)) as locator:
+                    output, _ = self.measure_additions(files, cli=True)
+                    self.assert_not_measured(output)
+                    self.assertEqual(locator.call_count, 2)
 
     def test_later_detected_values_and_masked_forms_leave_no_finding_metadata(self):
         key = fake_keys()[0][1]

@@ -9,7 +9,6 @@ import json
 import math
 from pathlib import Path
 import re
-import subprocess
 import sys
 
 sys.dont_write_bytecode = True
@@ -63,8 +62,14 @@ def rule_matches(text):
             yield rule, match
 
 
-def rule_ids(text):
-    return list(dict.fromkeys(rule for rule, _ in rule_matches(text)))
+def rule_ids(text, *, values=None):
+    """Return distinct rule IDs, optionally collecting every matched value."""
+    rules = {}
+    for rule, match in rule_matches(text):
+        if values is not None:
+            values.add(match.groupdict().get('value', match.group()))
+        rules[rule] = None
+    return list(rules)
 
 
 def metadata_matches(text):
@@ -181,11 +186,7 @@ def measure(repo, base, head, *, now=None):
                              '--output-indicator-new=+', '--output-indicator-old=-', '--output-indicator-context= ',
                              merge_base, head, '--', ':(literal)' + name)
             for line, content in added_lines(patch, before, after):
-                rules = {}
-                for rule, match in rule_matches(content.decode('utf-8', errors='replace')):
-                    values.add(match.groupdict().get('value', match.group()))
-                    rules[rule] = None
-                for rule in rules:
+                for rule in rule_ids(content.decode('utf-8', errors='replace'), values=values):
                     values.update(match.groupdict().get('value', match.group()) for _, match, _ in metadata_matches(rule))
                     if any(all(row[key] == {'id': rule, 'file': name}[key] for key in ('id', 'file') if key in row)
                            for row in ignores):
@@ -204,7 +205,8 @@ def measure(repo, base, head, *, now=None):
                 finding[key] = mask_metadata(finding[key], values)
         result.update(status='measured', reason=None, findings=found, findings_count=count,
                       findings_omitted=max(0, count - MAX_FINDINGS), findings_suppressed=suppressed, blocking=bool(count))
-    except (OSError, ValueError, TypeError, KeyError, UnicodeError, subprocess.SubprocessError):
+    except Exception:
+        # Scanner, redaction and locator failures all leave the default held result.
         # Never render an exception, patch, source line or matched value, including
         # when an earlier file already produced findings before a later failure.
         pass
