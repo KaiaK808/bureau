@@ -16,6 +16,9 @@
 #      and the current base branch (the reviewed base SHA may have advanced)
 #   6. No `needs-human`, `blocked`, or `wip` label on the PR
 #   7. Zero unresolved review threads (GraphQL: pullRequest.reviewThreads)
+#   8. Explicitly enrolled charter: readable pinned default-branch policy;
+#      no .bureau.json change from the PR merge base (charter-policy, exit 25)
+#      Queue, selector, suite, report and red-main gates are not implemented yet.
 #
 # Gates 3 and 4 enforce the Not-Rocket-Science Rule independently of GitHub's
 # mergeStateStatus — they catch (a) PRs that merge with red CI when no
@@ -67,6 +70,8 @@
 # Both must be set; missing either makes this pipeline a queue-empty no-op.
 # agents.merge_mode: "manual" switches it off regardless of both (exit 2
 # before anything else); a human merges.
+# Charter enrollment is a separate maintainer command (bureau-charter.py),
+# stored in the Git common dir. Checkout configuration cannot unenroll it.
 #
 # --dry-run: print the gate verdicts and the action that would be taken, but
 # never call `gh pr merge` and never post comments. Use to audit before
@@ -221,6 +226,22 @@ fi
 MERGE_PUBLISHER_POLICY=$(python3 -I -B "$(dirname "$0")/bureau-merge-review.py" policy "$(_bureau_gh_owner_repo)") \
   || MERGE_PUBLISHER_POLICY='{"kind":"read","message":"publisher policy could not be read"}'
 
+# Probe only shared local state. Unenrolled installations do not load policy,
+# contact a new service or create any charter files, even with an enabled block.
+charter_enrolled() {
+  local common path
+  common=$(git rev-parse --git-common-dir 2>/dev/null) || return 1
+  path="$common/bureau/charter/enrollment.json"
+  [ -e "$path" ] || [ -L "$path" ]
+}
+MERGE_CHARTER_PIN='{}'
+if charter_enrolled; then
+  # Keep D across both evaluations; neither a JIT default-branch advance nor a
+  # PR-controlled enabled:false can replace that authority mid-run.
+  MERGE_CHARTER_PIN=$(python3 -I -B "$(dirname "$0")/bureau-charter.py" --repo "$PWD" \
+    --github "$(_bureau_gh_owner_repo)" pin) || MERGE_CHARTER_PIN='{}'
+fi
+
 # Keep the mismatch diagnostic identical across gate passes and the live base
 # check so refresh_stale_approval recognizes an unchanged blocker.
 approval_target_mismatch() {
@@ -275,6 +296,17 @@ evaluate_merge_gates() {
   done
 
   local _blockers=()
+  if charter_enrolled; then
+    local _charter_lines _charter_rc=0
+    _charter_lines=$(python3 -I -B "$(dirname "$0")/bureau-charter.py" --repo "$PWD" \
+      --github "$owner_repo" gate --pin "$MERGE_CHARTER_PIN" --base "$_base_ref" --head "$head") || _charter_rc=$?
+    if [ "$_charter_rc" != 0 ]; then
+      case "$_charter_lines" in
+        charter-*:*) _blockers+=("$_charter_lines") ;;
+        *) _blockers+=("charter-unreadable: enrolled policy helper failed") ;;
+      esac
+    fi
+  fi
   [ -n "$head" ] || _blockers+=("head_read: the PR's head commit could not be read")
   if [ "$_pr_read" = failed ]; then
     _blockers+=("pr_read: the PR's state, mergeStateStatus and labels could not be read")
@@ -409,6 +441,8 @@ merge_gate_outcome() {
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     case "$line" in
+      "charter-retry: "*) ;;
+      "charter-policy: "*|"charter-unreadable: "*|"charter-unclassified: "*) outcome=blocked ;;
       "ci_green: ci: "*" still pending on "*) ;;
       "ci_green: ci: only "*" completed check(s) on "*) ;;
       "ci_green: ci: cannot resolve "*|"ci_green: ci: gh check-runs query failed"*) ;;
@@ -447,6 +481,13 @@ merge_gate_key() {
 merge_gate_exit() {
   local outcome="$1" lines="$2" code=25
   [ "$outcome" = not-yet ] && code=2
+  # Dedicated Merge workers need the same human handoff as inline review.
+  # Keep this limited to charter exceptions; existing gate routing is unchanged.
+  if [ "$code" = 25 ] && [ "$DRY_RUN" != true ] && [ "${BUREAU_INLINE_MERGE:-0}" != 1 ]; then
+    case "$lines" in
+      charter-*|*$'\n'charter-*) mark_needs_human "$ISSUE" merge 25 || true ;;
+    esac
+  fi
   merge_gate_mark "$outcome"
   if [ -n "${BUREAU_MERGE_GATE_REPORT:-}" ]; then
     printf '%s\n%s\n' "$outcome" "$lines" > "$BUREAU_MERGE_GATE_REPORT" 2>/dev/null \
@@ -482,6 +523,10 @@ merge_gate_mark() {
 # The final check runs in _merge_pr's if condition, which suspends errexit.
 refresh_stale_approval() {
   local gates="$1" lines body last_body last_key current_key
+  # A policy exception must not be softened into routine re-review (exit 20).
+  case "$gates" in
+    charter-policy:*|charter-unreadable:*|charter-unclassified:*|*$'\n'charter-policy:*|*$'\n'charter-unreadable:*|*$'\n'charter-unclassified:*) return 0 ;;
+  esac
   lines=$(printf '%s\n' "$gates" | sed -n 's/^approval_binding: /- /p') || exit $?
   [ -n "$lines" ] || return 0
   printf '  %s\n' "$gates"
@@ -539,6 +584,7 @@ merge_record_gate() {
   if [ -n "$2" ]; then
     if [ "$(printf '%s\n' "$2" | merge_gate_outcome)" = not-yet ]; then rc=2; else rc=25; fi
     case "$2" in "approval_binding: "*|*$'\n'"approval_binding: "*) rc=20 ;; esac
+    case "$2" in charter-policy:*|charter-unreadable:*|charter-unclassified:*|*$'\n'charter-policy:*|*$'\n'charter-unreadable:*|*$'\n'charter-unclassified:*) rc=25 ;; esac
   fi
   [[ "$1" =~ ^[0-9a-f]{40,64}$ ]] || kind=artifact
   bureau_evidence evidence-gate --kind "$kind" --path "$file" --head "$1" --end-head "$1" \
