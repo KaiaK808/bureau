@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real Git fixtures; only Linear and GitHub transport answers are fake."""
+"""Real Git fixtures; fake service transport and inject selected fetch errors."""
 import importlib.util
 import json
 import os
@@ -383,19 +383,32 @@ class SelectorGitTests(unittest.TestCase):
                 (repo / 'ordinary.txt').write_text('unpublished local commit\n')
                 git(repo, 'add', 'ordinary.txt'); git(repo, 'commit', '-m', 'feat: unpublished candidate')
                 unpublished = git(repo, 'rev-parse', 'HEAD')
-                class MissingSource(foundation.LocalGitHub):
+                self.assertEqual(git(repo, 'rev-parse', '--verify', unpublished + '^{commit}'), unpublished)
+                class PinnedSource(foundation.LocalGitHub):
                     def api(self, route):
                         if route == '/commits/release': return dict(sha=unpublished)
                         return super().api(route)
-                source = MissingSource(repo, default)
+                source = PinnedSource(repo, default)
                 pin = source.pin(); charter.enroll(repo, source)
                 branch = 'release' if endpoint == 'base' else 'main'
                 head = unpublished if endpoint == 'head' else head
+                real_run = subprocess.run
                 def observe(module):
-                    with patch.object(module, 'issue_snapshot', return_value=dict(labels=['approved-for-merge'], cycle_id=None)):
+                    failed_fetches = []
+                    def transport(args, **options):
+                        # Git can satisfy a SHA fetch locally; an unpublished object does not guarantee a failed fetch.
+                        fetch = ['fetch', '--no-tags', '--no-write-fetch-head', 'origin', unpublished]
+                        if args[-len(fetch):] == fetch:
+                            failed_fetches.append(unpublished)
+                            return subprocess.CompletedProcess(args, 1, b'', b'forced pinned-commit fetch failure\n')
+                        return real_run(args, **options)
+                    with patch.object(module.subprocess, 'run', side_effect=transport), \
+                            patch.object(module, 'issue_snapshot', return_value=dict(labels=['approved-for-merge'], cycle_id=None)):
                         code, line = module.gate(repo, source, pin, branch, head, ISSUE)
                     self.assertEqual(code, 25)
-                    self.assertIn('charter-unclassified:', line)
+                    self.assertTrue(line.startswith('charter-unclassified:'), line)
+                    self.assertIn('charter Git operation failed: fetch', line)
+                    self.assertEqual(failed_fetches, [unpublished])
                 observe(charter)
                 old = 'source.fetch(base); source.fetch(head)'
                 new = 'source.fetch(head)' if endpoint == 'base' else 'source.fetch(base)'

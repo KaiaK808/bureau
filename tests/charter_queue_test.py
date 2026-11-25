@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import tempfile
 import types
 import unittest
 from unittest.mock import Mock, patch
@@ -254,6 +255,82 @@ class TargetPinTests(unittest.TestCase):
         with patch.object(charter, 'gate', return_value=(2, 'charter-queue: waiting')), patch('sys.stdout', output):
             self.assertEqual(charter.main(args + ['--emit-target']), 2)
         self.assertEqual(output.getvalue(), 'charter-queue: waiting\n')
+
+
+class PinnedFetchTests(unittest.TestCase):
+    base, head = 'b' * 40, 'a' * 40
+
+    def evaluate(self, module, failed=None):
+        fetched, verified = [], []
+        source = module.GitHub(Path('.'), 'owner/repository')
+        def run(command, **options):
+            args = command[command.index('-C') + 2:]
+            if args[:-1] == ['fetch', '--no-tags', '--no-write-fetch-head', 'origin']:
+                sha = args[-1]
+                fetched.append(sha)
+                return subprocess.CompletedProcess(command, int(sha == failed), b'', b'forced fetch failure' if sha == failed else b'')
+            if args[:2] == ['rev-parse', '--verify']:
+                sha = args[2].split('^', 1)[0]
+                self.assertIn(sha, (self.base, self.head))
+                self.assertEqual(args[2], sha + '^{commit}')
+                verified.append(sha)
+                # Both commit objects remain available even when fetching fails.
+                return subprocess.CompletedProcess(command, 0, (sha + '\n').encode(), b'')
+            raise AssertionError('unexpected Git operation: ' + repr(args))
+        with patch.object(module, 'load_policy', return_value=dict(kind='ok', policy=policy())), \
+                patch.object(source, 'tip', return_value=self.base), patch.object(source, 'revalidate', return_value=True), \
+                patch.object(module, 'changed_paths', return_value=['ordinary.txt']), \
+                patch.object(module.subprocess, 'run', side_effect=run):
+            result = module.gate(Path('.'), source, {}, 'release', self.head, ISSUE)
+        return result, fetched, verified
+
+    def test_successful_fetches_verify_both_pins(self):
+        result, fetched, verified = self.evaluate(charter)
+        self.assertEqual(result, (0, ''))
+        self.assertEqual(fetched, [self.base, self.head])
+        self.assertEqual(verified, fetched)
+
+    def test_failed_fetch_cannot_fall_back_to_a_local_commit(self):
+        for endpoint, sha in (('base', self.base), ('head', self.head)):
+            def observe(module):
+                (code, message), fetched, verified = self.evaluate(module, failed=sha)
+                self.assertEqual(code, 25)
+                self.assertTrue(message.startswith('charter-unclassified:'), message)
+                self.assertIn('charter Git operation failed: fetch', message)
+                self.assertEqual(fetched, [self.base] if endpoint == 'base' else [self.base, self.head])
+                self.assertEqual(verified, [] if endpoint == 'base' else [self.base])
+            with self.subTest(endpoint=endpoint):
+                observe(charter)
+                old = 'source.fetch(base); source.fetch(head)'
+                new = 'source.fetch(head)' if endpoint == 'base' else 'source.fetch(base)'
+                with self.assertRaises(AssertionError):
+                    observe(mutated(old, new))
+                with self.assertRaises(AssertionError):
+                    observe(mutated('if result.returncode not in codes:', 'if False:'))
+
+
+class InlineControlTests(unittest.TestCase):
+    def test_target_control_applies_to_current_runtime_and_preserves_the_merge_call(self):
+        helper = (Path(__file__).with_name('lib') / 'pr2-gate.sh').read_text()
+        start = 'pr2_revert_merge_base_fix() {\n  python3 - "$SCRIPTS_DIR" "$1" <<\'PY\'\n'
+        self.assertEqual(helper.count(start), 1)
+        control = helper.split(start, 1)[1].split('\nPY\n}', 1)[0]
+        runtime = SOURCE.with_name('merge-pipeline.sh').read_text()
+        with tempfile.TemporaryDirectory(prefix='bureau-inline-control-', dir=tempfile.gettempdir()) as scratch:
+            target = Path(scratch) / 'merge-pipeline.sh'
+            target.write_text(runtime)
+            with patch('sys.argv', ['control', scratch, 'target']):
+                exec(compile(control, '<inline target control>', 'exec'), {})
+            weakened = target.read_text()
+        self.assertNotEqual(weakened, runtime)
+        for guard in ('  if [ "$_merge_base_ref" != "$APPROVED_BASE" ]; then', '  [ "$MERGED_TARGET" = "$APPROVED_BASE" ]'):
+            self.assertIn(guard, runtime)
+            self.assertNotIn(guard, weakened)
+        self.assertIn('  bureau_ticket_checkpoint "$ISSUE"\n  if _merge_output=$(gh pr merge ', weakened)
+        merge_call = next(line for line in runtime.splitlines() if 'if _merge_output=$(gh pr merge ' in line)
+        self.assertEqual(weakened.count(merge_call), 1)
+        self.assertIn('--match-head-commit "$MERGE_HEAD"', merge_call)
+        self.assertIn('read_merge_result() {', weakened)
 
 
 class HistoryTests(unittest.TestCase):
