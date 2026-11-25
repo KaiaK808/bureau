@@ -43,12 +43,12 @@ SECRET_RULES = (
     ('google-api-key', token(r'AIza[A-Za-z0-9_-]{35}'), None),
     ('private-key-header', re.compile(r'-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----'), None),
     ('generic-secret-assignment', re.compile(
-        r'''(?i)(?<![A-Za-z0-9_])(?:password|secret)[ \t]*=[ \t]*["']?(?P<value>[A-Za-z0-9_+/!@#$%^&*.=-]{24,256})(?![A-Za-z0-9_+/!@#$%^&*.=-])'''), 4.0),
+        r'''(?i)(?<![A-Za-z0-9_])(?:password|secret)[ \x09]*=[ \x09]*["']?(?P<value>[A-Za-z0-9_+/!@#$%^&*.=-]{24,256})(?![A-Za-z0-9_+/!@#$%^&*.=-])'''), 4.0),
 )
 
 
-def rule_ids(text):
-    found = []
+def rule_matches(text):
+    """Yield every qualifying span, using the same thresholds for all consumers."""
     for rule, pattern, floor in SECRET_RULES:
         for match in pattern.finditer(text):
             if floor is not None:
@@ -59,9 +59,23 @@ def rule_ids(text):
                 entropy = -sum((n / len(value)) * math.log2(n / len(value)) for n in Counter(value).values())
                 if classes < 3 or entropy < floor:
                     continue
-            found.append(rule)
-            break
-    return found
+            yield rule, match
+
+
+def rule_ids(text):
+    return list(dict.fromkeys(rule for rule, _ in rule_matches(text)))
+
+
+def mask_metadata(text):
+    """Replace all rule-matching spans, including overlapping matches."""
+    pieces, end = [], 0
+    for _, match in sorted(rule_matches(text), key=lambda row: row[1].start()):
+        start, stop = match.span()
+        if start >= end:
+            pieces.extend((text[end:start], MASK))
+        end = max(end, stop)
+    pieces.append(text[end:])
+    return ''.join(pieces)
 
 
 def lines(data):
@@ -130,9 +144,10 @@ def measure(repo, base, head, *, now=None):
             raise ValueError('secret exceptions support finding IDs and files only')
         ignores = policy.active_exceptions(rows, now or datetime.now(timezone.utc))
         flags = ('--no-ext-diff', '--no-textconv', '--no-renames', '--no-color', '--text', '--ignore-submodules=none')
-        # Derive coverage from the objects, not a second diff's potentially empty
-        # file list. Every changed blob must produce a fully validated patch.
-        names = [name for name in old_tree.keys() | head_tree.keys() if old_tree.get(name) != head_tree.get(name)]
+        # The complete pinned head tree proves deleted paths have no additions.
+        # Exclude them before path budgets, content limits or old blob reads.
+        # Every remaining changed blob must produce a fully validated patch.
+        names = [name for name in head_tree if old_tree.get(name) != head_tree[name]]
         if len(names) > MAX_FILES or any(not scan.relative(name) for name in names):
             raise ValueError('unsupported diff paths or size')
         found, count, suppressed = [], 0, 0
@@ -150,7 +165,8 @@ def measure(repo, base, head, *, now=None):
                     else:
                         count += 1
                         if len(found) < MAX_FINDINGS:
-                            found.append(dict(file=name, line=line, rule_id=rule, value=MASK))
+                            found.append(dict(file=mask_metadata(name), line=line,
+                                              rule_id=mask_metadata(rule), value=MASK))
         result.update(status='measured', reason=None, findings=found, findings_count=count,
                       findings_omitted=max(0, count - MAX_FINDINGS), findings_suppressed=suppressed, blocking=bool(count))
     except (OSError, ValueError, TypeError, KeyError, UnicodeError, subprocess.SubprocessError):

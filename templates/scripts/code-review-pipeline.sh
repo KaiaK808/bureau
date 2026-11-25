@@ -432,12 +432,14 @@ fi
 SECRETS_BLOCKED=1
 SECRETS_REVIEW_NOTE=""
 _secrets_rc=0
+_secrets_flag=""
 bureau_without_secrets python3 -I -B "$SCRIPT_REPO/scripts/bureau-secrets.py" --repo "$PWD" \
   --base "$REVIEW_BASE" --head "$REVIEW_HEAD" > "$REVIEW_TMP/secrets.json" 2>/dev/null || _secrets_rc=$?
 [ "$_secrets_rc" != 130 ] || exit 130
-if [ "$_secrets_rc" = 0 ] && jq -e --arg base "$REVIEW_BASE" --arg head "$REVIEW_HEAD" '
+if [ "$_secrets_rc" = 0 ] && jq -se --arg base "$REVIEW_BASE" --arg head "$REVIEW_HEAD" '
   def count: type == "number" and . >= 0 and . == floor;
-  .tool == "secrets" and .base == $base and .head == $head
+  length == 1 and (.[0] | type == "object"
+  and .tool == "secrets" and .base == $base and .head == $head
   and (.findings_count | count) and (.findings_omitted | count) and (.findings_suppressed | count)
   and (.findings | type == "array" and length <= 20 and all(.[];
     (keys == ["file","line","rule_id","value"]) and (.file | type == "string")
@@ -445,12 +447,15 @@ if [ "$_secrets_rc" = 0 ] && jq -e --arg base "$REVIEW_BASE" --arg head "$REVIEW
   and .findings_count == ((.findings | length) + .findings_omitted)
   and ((.status == "measured" and .reason == null and .blocking == (.findings_count > 0))
     or (.status == "not_measured" and .blocking == true and .findings_count == 0
-      and .reason == "secret scan inputs or result unavailable"))
+      and .reason == "secret scan inputs or result unavailable")))
   ' "$REVIEW_TMP/secrets.json" >/dev/null 2>&1; then
-  SECRETS_BLOCKED=$(jq -r 'if .blocking then 1 else 0 end' "$REVIEW_TMP/secrets.json")
-else
-  printf '%s\n' '{"tool":"secrets","status":"not_measured","reason":"secret scan helper or output unavailable","findings":[],"blocking":true}' > "$REVIEW_TMP/secrets.json"
+  _secrets_flag=$(jq -r 'if .blocking then 1 else 0 end' "$REVIEW_TMP/secrets.json") || _secrets_flag=""
 fi
+# Any non-binary extraction, including multiple lines, is unmeasured and held.
+case "$_secrets_flag" in
+  0|1) SECRETS_BLOCKED=$_secrets_flag ;;
+  *) printf '%s\n' '{"tool":"secrets","status":"not_measured","reason":"secret scan helper or output unavailable","findings":[],"blocking":true}' > "$REVIEW_TMP/secrets.json" ;;
+esac
 if [ "$SECRETS_BLOCKED" = 1 ]; then
   SECRETS_REVIEW_NOTE=$'\n\n### Committed secret scan\n'"$(jq -c '{tool,status,reason,findings_count,findings_omitted,findings_suppressed,findings}' "$REVIEW_TMP/secrets.json")"
 fi

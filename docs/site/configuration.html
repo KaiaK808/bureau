@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="a7d47e95d9478c06acd5c574f8aa7a738e7b06b0acd5bee0d78b33f4c844cef5">
+<meta name="bureau-source-sha256" content="c7799e67a88d9837791abd67b5fcb53ac2616f0ea811a231cb3aea5a99cd1d12">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1039,30 +1039,8 @@ embedded-check behavior, engine resource metadata and
 adopting-repository validation remain separate qualification steps until
 that job or a maintainer run succeeds.</p>
 <h3 id="committed-secrets">Committed secrets</h3>
-<p>Code review always runs <code>bureau-secrets.py</code> on added lines
-between the merge base of the pinned PR base/head and the pinned head,
-in every changed file. It reads committed Git blobs and a local text
-diff, with external diff drivers and text conversion disabled; it runs
-no repository-controlled commands, providers or downloads. Unchanged
-pre-branch keys and deleted lines do not count. A renamed/copied file is
-an addition. The existing Trivy pin/qualifier covers
-<code>vuln,misconfig</code> filesystem scans with an external database
-cache, without qualifying offline secret-only scanning; this separate
-local check needs no Trivy binary, database or enable switch.</p>
-<p>An open finding lowers APPROVE to REQUEST_CHANGES after the build
-fold and before both review caps; BLOCK survives, and the caps can
-escalate unresolved work for a human. Each finding reports file, head
-line and stable rule ID with <code>[REDACTED]</code> in place of the
-entire value. Matched values, value hashes, source lines and raw
-diagnostics are never retained by this scanner or included in its review
-note. The bounded masked report joins the review's existing evidence
-archive. A missing/crashing helper, unreadable diff/blob/policy,
-exceeded bound, malformed diff or invalid JSON result is
-<strong>not_measured</strong> and enforces the same floor, never a pass.
-A fully measured empty result passes this floor and leaves the ordinary
-review checks in force. The scan runs again before every approval reuse,
-so exceptions and their expiry are re-evaluated without relying on a
-saved scan.</p>
+<p>Code review always runs <code>bureau-secrets.py</code> on added lines between the merge base of the pinned PR base/head and the pinned head, in every changed file. It reads committed Git blobs and a local text diff, with external diff drivers and text conversion disabled; it runs no repository-controlled commands, providers or downloads. Unchanged pre-branch keys and deleted lines do not count. Paths proven absent from the complete pinned head tree are excluded before path budgets, content limits and old blob reads, including deleted oversized files and symlinks; failure to establish that tree remains <strong>not_measured</strong>. A renamed/copied file is an addition. The existing Trivy pin/qualifier covers <code>vuln,misconfig</code> filesystem scans with an external database cache, without qualifying offline secret-only scanning; this separate local check needs no Trivy binary, database or enable switch.</p>
+<p>An open finding lowers APPROVE to REQUEST_CHANGES after the build fold and before both review caps; BLOCK survives, and the caps can escalate unresolved work for a human. Each finding reports file, head line and stable rule ID with <code>[REDACTED]</code> in place of the entire value. Before output, every substring in the file path and rule ID that matches <code>SECRET_RULES</code>, including its boundaries, entropy and character-class requirements, is also replaced with <code>[REDACTED]</code>; strings outside those rules are not guaranteed to be masked. Source lines, value hashes and raw diagnostics are omitted from scanner output and its review note. Exception matching uses the original unmasked paths and rule IDs. The bounded masked report joins the review's existing evidence archive. The helper must return exactly one JSON object; empty, multiple or malformed results and a derived blocking flag other than exactly <code>0</code> or <code>1</code> are <strong>not_measured</strong>. A missing/crashing helper, unreadable diff/blob/policy, exceeded bound or malformed diff is also <strong>not_measured</strong> and enforces the same floor, never a pass. A fully measured empty result passes this floor and leaves the ordinary review checks in force. The scan runs again before every approval reuse, so exceptions and their expiry are re-evaluated without relying on a saved scan.</p>
 <p>Exceptions use the existing scanner format in the pinned PR base's
 <code>.bureau/secret-exceptions.json</code>: exact <code>id</code> (rule
 ID) and/or <code>file</code> selectors, nonempty <code>owner</code> and
@@ -1076,24 +1054,7 @@ cannot suppress that branch.</p>
 class="sourceCode json"><code class="sourceCode json"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="ot">[</span></span>
 <span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">{</span><span class="dt">&quot;id&quot;</span><span class="fu">:</span><span class="st">&quot;aws-access-key-id&quot;</span><span class="fu">,</span><span class="dt">&quot;file&quot;</span><span class="fu">:</span><span class="st">&quot;fixtures/credentials.txt&quot;</span><span class="fu">,</span><span class="dt">&quot;owner&quot;</span><span class="fu">:</span><span class="st">&quot;security-team&quot;</span><span class="fu">,</span><span class="dt">&quot;reason&quot;</span><span class="fu">:</span><span class="st">&quot;Approved synthetic fixture&quot;</span><span class="fu">,</span><span class="dt">&quot;expires&quot;</span><span class="fu">:</span><span class="st">&quot;2027-01-01&quot;</span><span class="fu">}</span></span>
 <span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a><span class="ot">]</span></span></code></pre></div>
-<p><code>SECRET_RULES</code> in <code>bureau-secrets.py</code> is the
-reusable pattern table. It covers AWS access key IDs, GitHub
-classic/prefixed and fine-grained tokens, Anthropic keys, OpenAI
-legacy/project/service-account keys, Slack tokens, Stripe live
-secret/restricted keys, Google API keys and PEM private-key headers.
-Generic <code>password=</code>/<code>secret=</code> assignments require
-a contiguous value of 24–256 characters, Shannon entropy of at least 4
-bits per character and three character classes. The patterns favor fewer
-false positives over completeness: they do not validate credentials,
-discover arbitrary/unprefixed secrets, decode encodings/archives/images,
-reconstruct split values or scan commit messages, intermediate commits,
-unchanged lines, untracked files or local credential stores. Only
-literal token formats in added physical lines are checked. The check
-allows 200 changed paths and 1 MiB per file version; non-regular inputs
-and unsafe paths fail measurement. A report retains at most 20 findings
-and counts omitted findings without releasing the floor. This is a
-review floor; direct human merges and changes after review are outside
-this scan and still require ordinary approval freshness checks.</p>
+<p><code>SECRET_RULES</code> in <code>bureau-secrets.py</code> is the reusable pattern table. It covers AWS access key IDs, GitHub classic/prefixed and fine-grained tokens, Anthropic keys, OpenAI legacy/project/service-account keys, Slack tokens, Stripe live secret/restricted keys, Google API keys and PEM private-key headers. Generic <code>password=</code>/<code>secret=</code> assignments accept spaces and tabs around <code>=</code> and require a contiguous value of 24–256 characters, Shannon entropy of at least 4 bits per character and three character classes. The patterns favor fewer false positives over completeness: they do not validate credentials, discover arbitrary/unprefixed secrets, decode encodings/archives/images, reconstruct split values or scan commit messages, intermediate commits, unchanged lines, untracked files or local credential stores. Only literal token formats in added physical lines are checked. The check allows 200 changed paths present in head and 1 MiB per file version read; non-regular inputs and unsafe paths still present in head fail measurement. A report retains at most 20 findings and counts omitted findings without releasing the floor. This is a review floor; direct human merges and changes after review are outside this scan and still require ordinary approval freshness checks.</p>
 <p><strong>Upgrade:</strong> compare installed runtime drift, resync the
 entire <code>scripts</code> scope, and restart drivers together. No
 scanner setup or configuration change is required; older approved inputs

@@ -77,6 +77,43 @@ class SecretScanTests(unittest.TestCase):
         self.commit()
         self.assertFalse(self.measure()['blocking'])
 
+    def assert_deletion_measures_clean(self, name):
+        self.commit()
+        self.base = self.head
+        self.git('checkout', '-B', 'work', 'main')
+        (self.repo / name).unlink()
+        self.commit()
+        result = self.measure()
+        self.assertEqual(result['status'], 'measured', 'deletion left the scan unmeasured')
+        self.assertFalse(result['blocking'])
+        self.assertEqual(result['findings_count'], 0)
+
+    def test_deleted_file_over_one_mib_measures_clean(self):
+        self.git('checkout', '-q', 'main')
+        self.write('large.txt', 'x' * (1024 * 1024 + 1))
+        self.assertGreater((self.repo / 'large.txt').stat().st_size, 1024 * 1024)
+        self.assert_deletion_measures_clean('large.txt')
+
+    def test_deleted_symlink_measures_clean(self):
+        self.git('checkout', '-q', 'main')
+        (self.repo / 'link').symlink_to('source.txt')
+        self.assert_deletion_measures_clean('link')
+
+    def test_credential_filename_is_masked_in_findings_and_cli_stdout(self):
+        name = self.key + '.txt'
+        self.write(name, self.key + '\n')
+        self.commit()
+        result = self.measure()
+        self.assertEqual((result['status'], result['blocking']), ('measured', True))
+        self.assertEqual(result['findings'], [dict(file='[REDACTED].txt', line=1,
+                         rule_id='aws-access-key-id', value='[REDACTED]')])
+        process = subprocess.run(['python3', '-I', '-B', self.m.__file__, '--repo', str(self.repo),
+                                  '--base', self.base, '--head', self.head], env=self.env,
+                                 capture_output=True, text=True, timeout=15)
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertEqual(json.loads(process.stdout), result)
+        self.assertNotIn(self.key, process.stdout + process.stderr)
+
     def test_uses_merge_base_and_literal_paths(self):
         name = 'nested/space [literal].txt'
         self.git('checkout', '-q', 'main')

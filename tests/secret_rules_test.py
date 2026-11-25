@@ -1,8 +1,13 @@
 """Pure Python rule checks; no Git, providers, network or fixture repositories."""
 import importlib.util
+from contextlib import redirect_stdout
+import io
+import json
 from pathlib import Path
+import re
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,6 +43,7 @@ def fake_keys():
           for kind in ('', 'RSA ', 'EC ', 'DSA ', 'OPENSSH ', 'ENCRYPTED ')],
         ('generic-secret-assignment', 'password' + '=' + mixed),
         ('generic-secret-assignment', 'SECRET' + ' = "' + mixed + '"'),
+        ('generic-secret-assignment', 'password' + '\t=\t' + mixed),
     ]
 
 
@@ -57,6 +63,39 @@ class SecretRuleTests(unittest.TestCase):
                       'secret=os.environ["SECRET"]', 'password=${PASSWORD}'):
             with self.subTest(length=len(value)):
                 self.assertEqual(self.m.rule_ids(value), [])
+
+    def assert_tab_assignments(self):
+        value = 'aB3dE6gH9jK2mN5pQ8sT1vW4yZ7'
+        for before, after in (('\t', ''), ('', '\t'), ('\t', '\t'), (' \t', '\t ')):
+            self.assertIn('generic-secret-assignment', self.m.rule_ids('password' + before + '=' + after + value),
+                          'tab-separated assignment was missed')
+
+    def test_tab_separated_assignments_and_separator_boundaries(self):
+        self.assert_tab_assignments()
+        value = 'aB3dE6gH9jK2mN5pQ8sT1vW4yZ7'
+        for separator in ('t', '\\'):
+            self.assertEqual(self.m.rule_ids('password' + separator + '=' + separator + value), [])
+
+    def test_doubled_tab_escape_control_fails_the_positive_assertion(self):
+        broken = tuple((rule, re.compile(pattern.pattern.replace(r'[ \x09]', r'[ \\t]')), floor)
+                       for rule, pattern, floor in self.m.SECRET_RULES)
+        with patch.object(self.m, 'SECRET_RULES', broken):
+            with self.assertRaisesRegex(AssertionError, 'tab-separated assignment was missed'):
+                self.assert_tab_assignments()
+
+    def test_metadata_masks_all_formats_and_overlapping_matches(self):
+        for rule, value in fake_keys():
+            with self.subTest(rule=rule):
+                masked = self.m.mask_metadata('config/' + value + '.txt')
+                self.assertNotIn(value, masked)
+                self.assertEqual(self.m.rule_ids(masked), [])
+        key = fake_keys()[2][1]
+        self.assertEqual(self.m.mask_metadata('password=' + key), self.m.MASK)
+        key = fake_keys()[0][1]
+        self.assertEqual(self.m.mask_metadata(key + '/' + key + '.txt'),
+                         self.m.MASK + '/' + self.m.MASK + '.txt')
+        for ordinary in ('config/ordinary.txt', 'password=example', 'secret=' + 'x' * 80):
+            self.assertEqual(self.m.mask_metadata(ordinary), ordinary)
 
     def test_token_boundaries_test_keys_and_split_values_are_not_findings(self):
         for rule, value in fake_keys():
@@ -88,11 +127,83 @@ class SecretRuleTests(unittest.TestCase):
             self.assertEqual(list(self.m.added_lines(diff, before, after)), expected)
 
     def test_sources_contain_no_complete_fixture_credentials(self):
-        paths = [ROOT / 'templates/scripts/bureau-secrets.py',
-                 *[ROOT / 'tests' / name for name in ('secret_rules_test.py', 'secret_scan_test.py', 'secret_scan_pipeline_test.py')]]
+        paths = [ROOT / name for name in (
+            'templates/scripts/bureau-secrets.py', 'templates/scripts/code-review-pipeline.sh',
+            'tests/secret_rules_test.py', 'tests/secret_scan_test.py', 'tests/secret_scan_pipeline_test.py',
+            'docs/configuration.md', 'docs/site/configuration.html', 'references/runtime-patterns.md',
+            'changes/unreleased/committed-secret-review-floor.md')]
         for path in paths:
             for number, line in enumerate(path.read_text().split('\n'), 1):
                 self.assertEqual(self.m.rule_ids(line), [], path.name + ':' + str(number) + ' contains a token-shaped literal')
+
+
+class SecretMeasurementUnitTests(unittest.TestCase):
+    """Exercise the real blob reader and hunk validation with only Git I/O faked."""
+    def setUp(self):
+        self.m = load()
+        self.base, self.head = 'a' * 40, 'b' * 40
+
+    def measure(self, old, head, blobs=None, patches=None, *, cli=False):
+        blobs, patches = blobs or {}, patches or {}
+
+        def git(repo, *args):
+            if args == ('merge-base', self.base, self.head):
+                return self.base.encode()
+            if args[:2] == ('cat-file', '-s'):
+                return str(len(blobs[args[2]])).encode()
+            if args[:2] == ('cat-file', 'blob'):
+                return blobs[args[2]]
+            if args[0] == 'diff':
+                return patches[args[-1].removeprefix(':(literal)')]
+            self.fail('unexpected Git operation')
+
+        with patch.object(self.m.scan, 'tree', side_effect=(old, head, old)), \
+                patch.object(self.m.scan, 'git', side_effect=git):
+            if cli:
+                output = io.StringIO()
+                with patch.object(sys, 'argv', ['secrets', '--base', self.base, '--head', self.head]), redirect_stdout(output):
+                    self.assertEqual(self.m.main(), 0)
+                return output.getvalue()
+            return self.m.measure(Path('.'), self.base, self.head)
+
+    def assert_clean(self, result):
+        self.assertEqual(result['status'], 'measured', 'proven deletion was not measured')
+        self.assertFalse(result['blocking'])
+        self.assertEqual(result['findings_count'], 0)
+
+    def test_deleted_file_over_one_mib_is_measured_clean(self):
+        blob = 'c' * 40
+        content = b'x' * (1024 * 1024 + 1)
+        self.assertGreater(len(content), self.m.MAX_BYTES)
+        self.assert_clean(self.measure({'large.txt': ['100644', 'blob', blob]}, {}, {blob: content}))
+
+    def test_deleted_symlink_is_measured_clean(self):
+        blob = 'c' * 40
+        self.assert_clean(self.measure({'link': ['120000', 'blob', blob]}, {}, {blob: b'source.txt'}))
+
+    def test_unproven_head_and_present_nonregular_or_large_inputs_stay_held(self):
+        with patch.object(self.m.scan, 'tree', side_effect=({}, OSError('tree unavailable'))):
+            result = self.m.measure(Path('.'), self.base, self.head)
+        self.assertEqual((result['status'], result['blocking']), ('not_measured', True))
+        blob = 'c' * 40
+        for mode, content in (('120000', b'source.txt'), ('100644', b'x' * (1024 * 1024 + 1))):
+            with self.subTest(mode=mode):
+                result = self.measure({}, {'present': [mode, 'blob', blob]}, {blob: content})
+                self.assertEqual((result['status'], result['blocking']), ('not_measured', True))
+
+    def test_finding_paths_and_rule_context_are_masked_in_stdout(self):
+        key = fake_keys()[0][1]
+        name, blob, content = 'config/' + key + '.txt', 'c' * 40, (key + '\n').encode()
+        head = {name: ['100644', 'blob', blob]}
+        patches = {name: b'@@ -0,0 +1 @@\n+' + content}
+        rules = (('context-' + key, self.m.SECRET_RULES[0][1], None), *self.m.SECRET_RULES[1:])
+        with patch.object(self.m, 'SECRET_RULES', rules):
+            output = self.measure({}, head, {blob: content}, patches, cli=True)
+        self.assertNotIn(key, output, 'finding metadata leaked a matched value')
+        result = json.loads(output)
+        self.assertEqual((result['status'], result['blocking']), ('measured', True))
+        self.assertEqual(result['findings'], [dict(file='config/[REDACTED].txt', line=1,
+                         rule_id='context-[REDACTED]', value='[REDACTED]')])
 
 
 if __name__ == '__main__':
