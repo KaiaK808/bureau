@@ -195,6 +195,8 @@ test_worktree_package_managers.sh	8	26
 test_semgrep_pipeline.sh	286	595
 test_trivy.sh	19	81
 test_trivy_pipeline.sh	92	265
+# Committed-secret driver is unmeasured; provisional hosted estimates.
+test_secrets.sh	60	120
 # Wrapper drivers are unmeasured on hosted runners: standard 60s/120s estimates.
 test_wrapper_policy.sh	60	120
 test_wrapper_execution.sh	60	120
