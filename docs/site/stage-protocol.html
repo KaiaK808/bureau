@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="480f6ca1f318eafe4fbfb55ca850ff51cc431d028235f8b0a0ab51b21e524644">
+<meta name="bureau-source-sha256" content="be53571acd3e18b041e218bef95833835369e0d1b782f58a8504d5dd7db26555">
 <title>stage-protocol · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1160,15 +1160,15 @@ grounding holds them through fallback; a display placeholder never
 becomes a verified source location.</p>
 <p>The shadow adapter enforces Claude <code>--tools ''</code>, strict
 empty MCP configuration, disabled skills and settings hooks, without
-<code>--dangerously-skip-permissions</code>. It sets
-<code>CLAUDE_CODE_DISABLE_AUTO_MEMORY=1</code> for this phase,
-overriding an inherited enablement; this switch was checked in Claude
-2.1.312. Normal stages retain their configured memory policy.
-Unsupported flags fail closed to unverifiable. Codex has no supported
-all-tools-off switch, so its checker attempt is recorded as unverifiable
-without launching the model. The allowlisted checker response updates
-only its verification record, never verdict/floor metadata or merged
-findings. These restrictions apply behind Headroom too.</p>
+<code>--dangerously-skip-permissions</code>. Every background Claude
+stage, including this phase, gets
+<code>CLAUDE_CODE_DISABLE_AUTO_MEMORY=1</code>, overriding an inherited
+enablement; this switch was checked in Claude 2.1.312. Unsupported flags
+fail closed to unverifiable. Codex has no supported all-tools-off
+switch, so its checker attempt is recorded as unverifiable without
+launching the model. The allowlisted checker response updates only its
+verification record, never verdict/floor metadata or merged findings.
+These restrictions apply behind Headroom too.</p>
 <p>Review policy identity includes the revised merge algorithm version,
 grounding option and verifier enablement alongside existing
 severity/caps/ADR identity. Older approvals require a fresh review.

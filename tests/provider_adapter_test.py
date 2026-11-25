@@ -287,8 +287,10 @@ else:
                   'BUREAU_PROVIDER_CONFIG_BASE':subprocess.check_output(['git','-C',str(self.root),'rev-parse','HEAD'],text=True).strip()}
         for key in list(self.env):
             if key.startswith(('BUREAU_RUNNER_','BUREAU_MODEL_','BUREAU_CODEX_MODEL_','BUREAU_STAGE_TIMEOUT')): self.env.pop(key)
-        # The provider looks for the CLI's own records here, never in the real home.
-        self.env.update(CLAUDE_CONFIG_DIR=str(self.root/'claude config'),CODEX_HOME=str(self.root/'codex home'))
+        # Keep profile selection and transcript fallbacks inside the fixture.
+        home=self.root/'fixture home'; home.mkdir()
+        self.env.pop('BUREAU_CLAUDE_CONFIG_DIR',None)
+        self.env.update(HOME=str(home),CLAUDE_CONFIG_DIR=str(self.root/'claude config'),CODEX_HOME=str(self.root/'codex home'))
         self.env['GATE_HELPER']=str(ROOT/'tests/lib/codex_gate_events.py')
 
     def command(self,*extra):
@@ -2080,7 +2082,7 @@ p.Path.open=refuse_transcript_read
                         *tools,'--append-system-prompt-file',str(evidence/'system.txt'),
                         '--effort','high','--model','claude-fixture'])
 
-    def test_shadow_disables_automatic_memory_only_for_verification(self):
+    def test_shadow_and_ordinary_reviewers_disable_automatic_memory(self):
         wrapper = self.bin/'headroom'
         wrapper.write_text('#!/bin/sh\nshift 3\nexec claude "$@"\n'); wrapper.chmod(0o755)
         for wrapped, policy in ((False, 'default'), (True, 'clean')):
@@ -2093,14 +2095,14 @@ p.Path.open=refuse_transcript_read
                 self.assertEqual(argv[argv.index('--setting-sources')+1], 'user')
                 self.assertEqual(argv[argv.index('--tools')+1], '')
                 child_env = json.loads((self.root/'claude-env.json').read_text())
-                self.assertEqual(child_env.get('CLAUDE_CODE_DISABLE_AUTO_MEMORY'), '1')
-                # Ordinary reviewers keep the installation's selected memory policy.
+                self.assertEqual(child_env.get('CLAUDE_CODE_DISABLE_AUTO_MEMORY'), '1', 'auto-memory guard missing')
+                # Ordinary reviewers also disable automatic memory.
                 self.run_provider('--stage', 'code_review', '--phase', 'correctness',
                                   CLAUDE_CODE_DISABLE_AUTO_MEMORY='0', CLAUDE_FAKE_ROOT=str(self.root))
                 argv = json.loads((self.root/'argv.json').read_text())
                 self.assertEqual(argv[argv.index('--setting-sources')+1], 'user')
                 child_env = json.loads((self.root/'claude-env.json').read_text())
-                self.assertEqual(child_env.get('CLAUDE_CODE_DISABLE_AUTO_MEMORY'), '0')
+                self.assertEqual(child_env.get('CLAUDE_CODE_DISABLE_AUTO_MEMORY'), '1', 'auto-memory guard missing')
 
     def claude_argv(self,config,**env):
         self.config.write_text(json.dumps(config))
