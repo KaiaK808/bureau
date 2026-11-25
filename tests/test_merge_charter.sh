@@ -26,7 +26,18 @@ charter_case() {
   python3 -I -B "$REPO_ROOT/tests/charter_git_test.py" --prepare "$sb" "$name" "$mutation" || return 3
   case "$name" in clean|unenrolled|disabled-unenrolled|absent) expected=0 ;; esac
   # The inherited library expects its caller's cwd to be the test repository.
-  ( cd "$sb" && BUREAU_MERGE_GATE_REPORT="$sb/stub_data/gate-report" run_pipeline "$sb" TEAM-1 ); rc=$?
+  (
+    cd "$sb" || exit 3
+    export BUREAU_CONFIG="$sb/.bureau.json"
+    export BUREAU_MERGE_TEST_CWD="$sb"
+    case "$name" in
+      environment-redirect) export GIT_DIR="$sb-redirect/.git" ;;
+      outside-config) export BUREAU_CONFIG="$sb-config/.bureau.json" ;;
+      bare) export BUREAU_MERGE_TEST_CWD="$sb/bare.git" ;;
+      no-work-tree) export BUREAU_MERGE_TEST_CWD="$sb/.git" ;;
+    esac
+    BUREAU_MERGE_GATE_REPORT="$sb/stub_data/gate-report" run_pipeline "$sb" TEAM-1
+  ); rc=$?
   # Restore traversal before assertions or the shared sandbox's EXIT cleanup.
   if [ "$name" = non-searchable ]; then chmod 700 "$sb/.git/bureau/charter" || return 3; fi
   if [ "$rc" != "$expected" ]; then
@@ -55,7 +66,7 @@ charter_case() {
   return 0
 }
 
-for name in clean policy disabled-pr unreadable stale-policy non-searchable common-dir-failed unenrolled disabled-unenrolled absent; do
+for name in clean policy disabled-pr unreadable stale-policy non-searchable common-dir-failed environment-redirect outside-config bare no-work-tree unenrolled disabled-unenrolled absent; do
   if charter_case "$name"; then echo "PASS charter $name"; else FAILS=$((FAILS + 1)); fi
 done
 # Each observation passes with production code first. Removing its enforcement

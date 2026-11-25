@@ -47,7 +47,8 @@ def build_history(repo, case='clean'):
     git(repo, 'add', '.bureau.json', 'ordinary.txt'); git(repo, 'commit', '-m', 'chore: trusted policy')
     default = git(repo, 'rev-parse', 'HEAD')
     git(repo, 'checkout', '-b', 'feat/test')
-    if case in ('policy', 'disabled-pr', 'checkout-policy', 'unenrolled', 'disabled-unenrolled', 'stale-policy'):
+    if case in ('policy', 'disabled-pr', 'checkout-policy', 'unenrolled', 'disabled-unenrolled', 'stale-policy',
+                'environment-redirect', 'outside-config'):
         config['agents']['merge_charter']['enabled'] = False
         if case in ('checkout-policy', 'unenrolled'):
             config['agents']['merge_charter'] = dict(enabled=True, exceptions=[{'class': 'checkout-only', 'labels': ['sensitive']}])
@@ -113,6 +114,66 @@ class ProbeLayoutTests(unittest.TestCase):
                                        default_commit='a' * 40, policy_digest='b' * 64)))
         return path
 
+    def merge_lookup(self, repo, module=charter):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            code = module.main(['--repo', str(repo), 'merge-common-dir'])
+        return code, output.getvalue().strip()
+
+    def test_merge_lookup_ignores_redirected_clone_and_external_configuration(self):
+        checkout = self.root / 'enrolled checkout'
+        checkout.mkdir()
+        git(checkout, 'init', '--initial-branch=main')
+        git(checkout, 'commit', '--allow-empty', '-m', 'chore: lookup fixture')
+        self.record(checkout)
+        other = self.root / 'unenrolled clone'
+        git(self.root, 'clone', '--local', '--no-hardlinks', '--', str(checkout), str(other))
+        external = self.root / 'configuration outside repositories'
+        external.mkdir()
+        config = external / '.bureau.json'
+        config.write_text('{}')
+        run = subprocess.run
+
+        def observation(module):
+            with patch.object(charter.subprocess, 'run', wraps=run) as process:
+                code, common = self.merge_lookup(checkout, module)
+                self.assertEqual(code, 0, common)
+                self.assertEqual(Path(common), checkout / '.git')
+                self.assertEqual(self.command(checkout, common), (0, 'enrolled'))
+                process.assert_called_once()
+
+        for environment in ({'GIT_DIR': str(other / '.git')}, {'BUREAU_CONFIG': str(config)},
+                            {'GIT_DIR': str(other / '.git'), 'BUREAU_CONFIG': str(config)}):
+            with self.subTest(environment=tuple(environment)), patch.dict(os.environ, environment):
+                observation(charter)
+        with patch.dict(os.environ, GIT_DIR=str(other / '.git')):
+            weakened = mutant("if not k.startswith('GIT_') and k not in ('BASH_ENV', 'ENV')",
+                              "if k not in ('BASH_ENV', 'ENV')")
+            with self.assertRaises(AssertionError):
+                observation(weakened)
+        with patch.dict(os.environ, BUREAU_CONFIG=str(config)):
+            weakened = mutant('repo = Path(repo).absolute()', "repo = Path(os.environ['BUREAU_CONFIG']).parent")
+            with self.assertRaises(AssertionError):
+                observation(weakened)
+
+    def test_merge_lookup_refuses_bare_repositories_and_directories_without_a_work_tree(self):
+        checkout = self.root / 'checkout'
+        checkout.mkdir()
+        git(checkout, 'init', '--initial-branch=main')
+        self.record(checkout)
+        bare = checkout / 'valid bare.git'
+        git(checkout, 'init', '--bare', '--initial-branch=main', str(bare))
+        self.record(bare)
+        outside = self.root / 'outside'
+        outside.mkdir()
+        run = subprocess.run
+        for repo in (bare, checkout / '.git', checkout / '.git/objects', outside):
+            with self.subTest(layout=repo.relative_to(self.root)), patch.object(charter.subprocess, 'run', wraps=run) as process:
+                code, message = self.merge_lookup(repo)
+                self.assertEqual(code, 25)
+                self.assertTrue(message.startswith('charter-policy:'), message)
+                process.assert_called_once()
+
     def test_git_output_drives_checkout_worktree_separate_bare_and_submodule_probes(self):
         checkout = self.root / 'checkout with spaces'
         checkout.mkdir()
@@ -138,6 +199,10 @@ class ProbeLayoutTests(unittest.TestCase):
             with self.subTest(layout=repo.relative_to(self.root)):
                 raw = git(repo, 'rev-parse', '--git-common-dir')
                 self.assertEqual(charter.common_dir(repo), (repo / raw).resolve())
+                if repo not in (bare, bare / 'objects', nested_bare):
+                    code, common = self.merge_lookup(repo)
+                    self.assertEqual(code, 0, common)
+                    self.assertEqual(Path(common).resolve(), charter.common_dir(repo))
                 self.assertEqual(self.command(repo), (0, 'not-enrolled'))
                 with patch.object(charter.subprocess, 'run', side_effect=AssertionError('unexpected process')):
                     self.assertEqual(self.command(repo, raw), (0, 'not-enrolled'))
@@ -423,6 +488,18 @@ def prepare_pipeline(repo, case, mutation=''):
     if case == 'common-dir-failed':
         # A failed Git lookup must block rather than confirm absence.
         (repo / '.git/commondir').write_text('missing-common-directory\n')
+    if case == 'environment-redirect':
+        git(repo, 'clone', '--local', '--no-hardlinks', '--', str(repo), str(repo.parent / (repo.name + '-redirect')))
+    if case == 'outside-config':
+        external = repo.parent / (repo.name + '-config')
+        external.mkdir()
+        shutil.copy(repo / '.bureau.json', external / '.bureau.json')
+    if case == 'bare':
+        bare = repo / 'bare.git'
+        git(repo, 'clone', '--bare', '--no-hardlinks', '--', str(repo), str(bare))
+        path = charter.enrollment_path(bare)
+        path.parent.mkdir(parents=True)
+        path.write_bytes(charter.enrollment_path(repo).read_bytes())
     if mutation:
         target = repo / ('scripts/merge-pipeline.sh' if mutation in ('wiring', 'unconditional', 'handoff', 'priority') else 'scripts/bureau-charter.py')
         old, new = {

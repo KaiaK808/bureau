@@ -155,6 +155,29 @@ def common_dir(repo):
     return (Path(repo) / value).resolve(strict=True)
 
 
+def merge_common_dir(repo):
+    """One working-directory lookup; caller configuration cannot select authority."""
+    repo = Path(repo).absolute()
+    # Drop every Git override, including counted configuration that can set
+    # core.worktree/core.bare. This environment belongs to this one call only.
+    env = {k: v for k, v in os.environ.items() if not k.startswith('GIT_') and k not in ('BASH_ENV', 'ENV')}
+    try:
+        result = subprocess.run(['git', '-c', 'core.hooksPath=/dev/null', '-C', str(repo),
+                                 'rev-parse', '--is-bare-repository', '--show-toplevel', '--git-common-dir'],
+                                capture_output=True, env=env, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        raise ValueError('charter merge repository lookup failed') from None
+    if result.returncode != 0:
+        raise ValueError('charter merge repository lookup failed')
+    lines = os.fsdecode(result.stdout).splitlines()
+    if len(lines) != 3:
+        raise ValueError('charter merge requires a non-bare repository with a work tree')
+    bare, top, common = lines
+    if bare != 'false' or not Path(top).is_absolute() or not Path(top).is_dir() or not common:
+        raise ValueError('charter merge requires a non-bare repository with a work tree')
+    return repo / common
+
+
 def enrollment_path(repo, common=None):
     return (common_dir(repo) if common is None else common) / 'bureau' / 'charter' / 'enrollment.json'
 
@@ -425,7 +448,7 @@ def main(argv=None):
     parser.add_argument('--repo', type=Path, default=Path('.'))
     parser.add_argument('--github', help='OWNER/REPO; required for remote policy operations')
     commands = parser.add_subparsers(dest='command', required=True)
-    for name in ('enroll', 'unenroll', 'pin', 'policy'):
+    for name in ('enroll', 'unenroll', 'pin', 'policy', 'merge-common-dir'):
         commands.add_parser(name)
     status = commands.add_parser('status')
     status.add_argument('--common-dir', help='Common directory already resolved by Git; skip the Git lookup')
@@ -435,6 +458,9 @@ def main(argv=None):
     check.add_argument('--head', required=True)
     args = parser.parse_args(argv)
     try:
+        if args.command == 'merge-common-dir':
+            print(merge_common_dir(args.repo))
+            return 0
         if args.command == 'status':
             common = None
             if args.common_dir is not None:
@@ -466,7 +492,8 @@ def main(argv=None):
         print(json.dumps(value, sort_keys=True))
         return 0
     except (ValueError, OSError, UnicodeError, TypeError) as exc:
-        print(('charter-unreadable: ' if args.command == 'gate' else 'charter: ') + str(exc))
+        prefix = {'merge-common-dir': 'charter-policy: ', 'gate': 'charter-unreadable: '}.get(args.command, 'charter: ')
+        print(prefix + str(exc))
         return 25
 
 
