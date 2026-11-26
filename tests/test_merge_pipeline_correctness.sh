@@ -337,7 +337,7 @@ run_pipeline() {
   local sb="$1"; shift
   # Shared enrollment belongs to this fixture, never the test runner's checkout.
   (
-    cd "$sb" || exit 1
+    cd "${BUREAU_MERGE_TEST_CWD:-$sb}" || exit 1
     MERGE_REVIEW_FAKE="$REPO_ROOT/tests/lib/merge-review-fake.py" \
     STUB_DIR="$sb/stub_data" \
       INVOCATIONS_LOG="$sb/gh_invocations.log" \

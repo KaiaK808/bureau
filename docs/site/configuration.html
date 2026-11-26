@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="f0325c5b94923a60b7f055cc5ca434c77635b889b593741a3309b33af9450039">
+<meta name="bureau-source-sha256" content="46284272f57a04cd79eb776858d4934a9b060ca030efe5d7f22db469384baea0">
 <title>configuration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -1903,9 +1903,10 @@ move for every updated driver, including pending moves absent from
 lagging snapshots.</p>
 <h3 id="merge-charter-foundation">Merge charter foundation</h3>
 <p>The charter is off by default. An unenrolled merge run adds one local
-<code>git rev-parse --git-common-dir</code> read to locate enrollment,
-with no additional GitHub CLI or network calls, charter files or policy
-gates. This also applies when the declaration is omitted or has
+<code>git rev-parse --is-bare-repository --show-toplevel --git-common-dir</code>
+read to locate enrollment from the working directory, with no additional
+GitHub CLI or network calls, charter files or policy gates. This also
+applies when the declaration is omitted or has
 <code>enabled: false</code>. An enabled block alone activates no gate:
 enrollment is an explicit maintainer operation outside the checkout,
 never a side effect of installation, migration or scripts resync. Doctor
@@ -2057,23 +2058,34 @@ submodule recursion disabled regardless of checkout
 unreadable or non-searchable shared-state directory, an invalid
 enrollment record or a failed common-directory resolution blocks merging
 with <code>charter-policy</code>, exit <code>25</code> and the human
-handoff. The merge stage calls <code>bureau_common_dir</code> once,
-caches its Git-resolved directory in an unexported shell variable and
-passes it to <code>status --common-dir</code> at the initial probe and
-both gate passes; the probe only reads enrollment under that directory
-and retains enrollment parent-directory validation, including symlink
-rejection. Git determines repository authority for normal checkouts,
-linked worktrees, separate Git directories, bare repositories and
-submodules. No filesystem repository discovery remains. The earlier
-configuration lookup can be skipped with explicit
-<code>BUREAU_CONFIG</code>, and evidence children do not return their
-common-directory result to the shell, so the probe needs its own local
-read. Both frozen scanner call baselines include that lookup in its
-actual position; existing GitHub calls and their order are unchanged.
-The offline <code>status</code> command prints <code>enrolled</code> or
-<code>not-enrolled</code> on success; without <code>--common-dir</code>
-it asks Git for the directory itself. Failed lookups and unusable
-enrollment return <code>25</code> and never confirm absence.</p>
+handoff. The merge stage uses the dedicated
+<code>merge-common-dir</code> lookup, which makes exactly one
+<code>git -c core.hooksPath=/dev/null -C "$PWD" rev-parse --is-bare-repository --show-toplevel --git-common-dir</code>
+call with every inherited <code>GIT_*</code> variable removed for that
+call only. It resolves from the working directory, never from
+<code>BUREAU_CONFIG</code>, with hooks disabled and no fallback or
+retry; any failed call, bare repository or missing work tree is
+indeterminate and blocks with <code>charter-policy</code> and
+<code>25</code>. The stage caches the Git-resolved common directory in
+an unexported shell variable and passes it to
+<code>status --common-dir</code> at the initial probe and both gate
+passes without another Git lookup; enrollment parent-directory
+validation, including symlink rejection, remains mandatory. Git
+determines authority for normal checkouts, linked worktrees, separate
+Git directories and submodules. The earlier configuration lookup can be
+skipped with explicit <code>BUREAU_CONFIG</code>, and evidence children
+do not return their common-directory result to the shell, so the probe
+needs its own local read. Both frozen scanner call baselines include
+exactly this one lookup in its actual position; existing GitHub calls
+and their order are unchanged. The offline <code>status</code> command
+prints <code>enrolled</code> or <code>not-enrolled</code> on success;
+without <code>--common-dir</code> it asks Git for the directory itself.
+Failed lookups and unusable enrollment return <code>25</code> and never
+confirm absence.</p>
+<p>A nested bare repository without <code>HEAD</code> is corrupt and
+outside the merge stage's supported inputs, which require a work tree;
+Git may discover an enclosing checkout instead, and the probe does not
+add filesystem discovery for that case.</p>
 <p>Both initial and just-in-time merge evaluations use the same pinned D
 and revalidate the live default branch. Enrolled policy that is missing,
 disabled, malformed or unreadable refuses with

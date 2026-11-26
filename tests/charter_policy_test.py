@@ -125,6 +125,108 @@ class PolicyTests(unittest.TestCase):
                     observation(mutant)
 
 
+class MergeLookupTests(unittest.TestCase):
+    """The merge probe's single process boundary uses only the supplied cwd."""
+    def setUp(self):
+        scratch = tempfile.TemporaryDirectory(prefix='bureau-charter-lookup-', dir=tempfile.gettempdir())
+        self.addCleanup(scratch.cleanup)
+        self.root = Path(scratch.name)
+        self.repo = self.root / 'checkout with spaces'
+        self.repo.mkdir()
+        self.output = os.fsencode('false\n' + str(self.repo) + '\n.git\n')
+        process = patch.object(charter.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, self.output, b''))
+        self.process = process.start()
+        self.addCleanup(process.stop)
+
+    def command(self, module=charter):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            code = module.main(['--repo', str(self.repo), 'merge-common-dir'])
+        return code, output.getvalue().strip()
+
+    def mutant(self, old, new):
+        source = SOURCE.read_text()
+        self.assertEqual(source.count(old), 1)
+        module = types.ModuleType('charter_merge_lookup_mutant')
+        module.__file__ = str(SOURCE)
+        exec(compile(source.replace(old, new), '<charter merge lookup mutation>', 'exec'), module.__dict__)
+        return module
+
+    def test_working_directory_lookup_scrubs_git_overrides_for_one_call_only(self):
+        names = ('GIT_DIR', 'GIT_COMMON_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY',
+                 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CEILING_DIRECTORIES', 'GIT_DISCOVERY_ACROSS_FILESYSTEM',
+                 'GIT_NAMESPACE', 'GIT_IMPLICIT_WORK_TREE', 'GIT_PREFIX', 'GIT_SHALLOW_FILE', 'GIT_CONFIG',
+                 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_PARAMETERS',
+                 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_EXEC_PATH', 'GIT_TRACE')
+        environment = dict.fromkeys(names, 'redirect')
+        environment.update(BASH_ENV='untrusted-startup', ENV='untrusted-startup',
+                           BUREAU_CONFIG=str(self.root / 'outside' / '.bureau.json'))
+        def observation(module):
+            self.process.reset_mock()
+            original = dict(os.environ)
+            self.assertEqual(self.command(module), (0, str(self.repo / '.git')))
+            self.process.assert_called_once()
+            args, options = self.process.call_args
+            self.assertEqual(args[0], ['git', '-c', 'core.hooksPath=/dev/null', '-C', str(self.repo),
+                                      'rev-parse', '--is-bare-repository', '--show-toplevel', '--git-common-dir'])
+            self.assertFalse(any(name.startswith('GIT_') or name in ('BASH_ENV', 'ENV') for name in options['env']))
+            self.assertEqual(options['env']['BUREAU_CONFIG'], environment['BUREAU_CONFIG'])
+            self.assertEqual(dict(os.environ), original)
+        with patch.dict(os.environ, environment):
+            observation(charter)
+            weakened = self.mutant("if not k.startswith('GIT_') and k not in ('BASH_ENV', 'ENV')",
+                                   "if k not in ('BASH_ENV', 'ENV')")
+            with self.assertRaises(AssertionError):
+                observation(weakened)
+
+    def test_external_configuration_cannot_select_authority_or_add_a_retry(self):
+        with patch.dict(os.environ, BUREAU_CONFIG=str(self.root / 'outside' / '.bureau.json')):
+            def observation(module):
+                self.process.reset_mock()
+                self.assertEqual(self.command(module), (0, str(self.repo / '.git')))
+                self.process.assert_called_once()
+                self.assertEqual(self.process.call_args.args[0][4], str(self.repo))
+            observation(charter)
+            weakened = self.mutant('repo = Path(repo).absolute()', "repo = Path(os.environ['BUREAU_CONFIG']).parent")
+            with self.assertRaises(AssertionError):
+                observation(weakened)
+
+    def test_failed_bare_and_missing_work_tree_results_are_policy_exceptions(self):
+        cases = [(128, b''), (1, self.output), (0, b''), (0, b'true\n'),
+                 (0, os.fsencode('true\n' + str(self.repo) + '\n.git\n')),
+                 (0, b'false\n\n.git\n'), (0, b'false\nrelative\n.git\n'),
+                 (0, os.fsencode('false\n' + str(self.root / 'missing') + '\n.git\n')),
+                 (0, os.fsencode('false\n' + str(self.repo) + '\n\n'))]
+        for returncode, stdout in cases:
+            with self.subTest(returncode=returncode, stdout=stdout):
+                self.process.reset_mock()
+                # A second call would succeed; the first result must be final.
+                self.process.side_effect = [subprocess.CompletedProcess([], returncode, stdout, b''),
+                                            subprocess.CompletedProcess([], 0, self.output, b'')]
+                code, message = self.command()
+                self.assertEqual(code, 25)
+                self.assertTrue(message.startswith('charter-policy:'), message)
+                self.process.assert_called_once()
+        for error in (OSError('unavailable'), subprocess.TimeoutExpired('git', 30)):
+            self.process.reset_mock()
+            self.process.side_effect = error
+            self.assertEqual(self.command()[0], 25)
+            self.process.assert_called_once()
+
+    def test_bare_and_work_tree_validation_negative_control(self):
+        weakened = self.mutant("if bare != 'false' or not Path(top).is_absolute() or not Path(top).is_dir() or not common:",
+                               'if False:')
+        for bare, top in (('true', str(self.repo)), ('false', '')):
+            self.process.return_value = subprocess.CompletedProcess([], 0, os.fsencode(bare + '\n' + top + '\n.git\n'), b'')
+            def observation(module):
+                code, message = self.command(module)
+                self.assertEqual(code, 25)
+                self.assertTrue(message.startswith('charter-policy:'), message)
+            observation(charter)
+            with self.assertRaises(AssertionError):
+                observation(weakened)
+
+
 class EnrollmentSafetyTests(unittest.TestCase):
     """Real filesystem state; Git and service process boundaries never execute."""
     def setUp(self):

@@ -228,9 +228,12 @@ MERGE_PUBLISHER_POLICY=$(python3 -I -B "$(dirname "$0")/bureau-merge-review.py" 
 
 # Resolve enrollment authority with one local Git read, then inspect only its
 # record. Unenrolled installations add no service calls, policy reads or files.
+# Resolve from PWD with Git overrides removed, never from BUREAU_CONFIG; a
+# failed lookup, bare repository or missing work tree has no fallback.
 _BUREAU_MERGE_CHARTER_COMMON=""
 export -n _BUREAU_MERGE_CHARTER_COMMON
-_BUREAU_MERGE_CHARTER_COMMON=$(bureau_common_dir) || _BUREAU_MERGE_CHARTER_COMMON=""
+_BUREAU_MERGE_CHARTER_COMMON=$(python3 -I -B "$(dirname "$0")/bureau-charter.py" --repo "$PWD" merge-common-dir) \
+  || _BUREAU_MERGE_CHARTER_COMMON=""
 charter_enrolled() {
   # 0 enrolled, 1 confirmed absent; every other result is indeterminate.
   local state
