@@ -427,6 +427,41 @@ if [ "$(bureau_get '.review.semgrep.enabled == true')" = true ]; then
   SEMGREP_REVIEW_NOTE=$'\n\n### Semgrep machine evidence (late)\n'"$(cat "$REVIEW_TMP/semgrep-projection.json")"
 fi
 
+# Always remeasure committed additions, including before approval reuse. Only a
+# validated, masked result can release this floor; helper/JSON failures stay held.
+SECRETS_BLOCKED=1
+SECRETS_REVIEW_NOTE=""
+_secrets_rc=0
+_secrets_flag=""
+bureau_without_secrets python3 -I -B "$SCRIPT_REPO/scripts/bureau-secrets.py" --repo "$PWD" \
+  --base "$REVIEW_BASE" --head "$REVIEW_HEAD" > "$REVIEW_TMP/secrets.json" 2>/dev/null || _secrets_rc=$?
+[ "$_secrets_rc" != 130 ] || exit 130
+if [ "$_secrets_rc" = 0 ] && jq -se --arg base "$REVIEW_BASE" --arg head "$REVIEW_HEAD" '
+  def count: type == "number" and . >= 0 and . == floor;
+  length == 1 and (.[0] | type == "object"
+  and .tool == "secrets" and .base == $base and .head == $head
+  and (.findings_count | count) and (.findings_omitted | count) and (.findings_suppressed | count)
+  and (.findings | type == "array" and length <= 20 and all(.[];
+    (keys == ["file","line","locator","rule_id","value"]) and (.file | type == "string")
+    and (.locator | type == "object" and keys == ["blob","path_sha256"]
+      and (.blob | test("^([0-9a-f]{40}|[0-9a-f]{64})$")) and (.path_sha256 | test("^[0-9a-f]{16}$")))
+    and (.line | count and . > 0) and (.rule_id | test("^[a-z0-9-]+$")) and .value == "[REDACTED]"))
+  and .findings_count == ((.findings | length) + .findings_omitted)
+  and ((.status == "measured" and .reason == null and .blocking == (.findings_count > 0))
+    or (.status == "not_measured" and .blocking == true and .findings_count == 0
+      and .reason == "secret scan inputs or result unavailable")))
+  ' "$REVIEW_TMP/secrets.json" >/dev/null 2>&1; then
+  _secrets_flag=$(jq -r 'if .blocking then 1 else 0 end' "$REVIEW_TMP/secrets.json") || _secrets_flag=""
+fi
+# Any non-binary extraction, including multiple lines, is unmeasured and held.
+case "$_secrets_flag" in
+  0|1) SECRETS_BLOCKED=$_secrets_flag ;;
+  *) printf '%s\n' '{"tool":"secrets","status":"not_measured","reason":"secret scan helper or output unavailable","findings":[],"blocking":true}' > "$REVIEW_TMP/secrets.json" ;;
+esac
+if [ "$SECRETS_BLOCKED" = 1 ]; then
+  SECRETS_REVIEW_NOTE=$'\n\n### Committed secret scan\n'"$(jq -c '{tool,status,reason,findings_count,findings_omitted,findings_suppressed,findings}' "$REVIEW_TMP/secrets.json")"
+fi
+
 echo ""
 echo "Phase 1/3: multi-specialist review (3 passes in parallel)"
 
@@ -811,6 +846,7 @@ MERGED_REVIEW=$(review_text_from_merger "$MERGED_RAW")
 MERGED_REVIEW+="$IMPECCABLE_REVIEW_NOTE"
 MERGED_REVIEW+="$SEMGREP_REVIEW_NOTE"
 fi
+MERGED_REVIEW+="$SECRETS_REVIEW_NOTE"
 
 echo ""
 echo "Phase 2/3: build check"
@@ -949,8 +985,8 @@ fi
 
 # The verdict rules run as one ordered decision in bureau-config.sh
 # (`decide_review_verdict`): verdict check, security count, the security
-# specialist's CRITICAL count, the security floor, the build fold, and the cycle
-# cap last, so the cap also sees a REQUEST_CHANGES the build fold produced. The
+# specialist's CRITICAL count, the security floor, the build fold, scanner floors,
+# and the caps last, so they also see scanner/build REQUEST_CHANGES. The
 # security count is read without a default: a missing field is unreadable, not 0.
 MAX_REVIEW_CYCLES="$BUREAU_MAX_REVIEW_CYCLES"
 # REVIEW_CYCLE_COUNT was computed at Phase 1 so specialists could reference

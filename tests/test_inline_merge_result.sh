@@ -306,7 +306,7 @@ echo 'PASS inline binding: real review of A followed by pushed B returns 20/refr
 inline_retarget_case() {
   local control="$1"
   new_sandbox
-  [ "$control" = current ] || pr2_revert_merge_base_fix target
+  [ "$control" = current ] || pr2_revert_merge_base_fix target || return 3
   pr2_retarget_after_read gate-snapshot 2
   export BUREAU_MERGE_GATE_REPORT="$SANDBOX/caller-gate.report"
   review
@@ -320,7 +320,12 @@ inline_retarget_case() {
   [ "$(jq '[.[] | select(.body | test("Bureau merge gate"))] | length' "$PR2_GH/comments.json")" = 1 ]
 }
 inline_retarget_case current || fail "inline retarget after final gate: rc $LAST_RC"
-if inline_retarget_case reverted; then fail 'inline retarget after final gate: negative control stayed green'; fi
+if inline_retarget_case reverted; then
+  fail 'inline retarget after final gate: negative control stayed green'
+else
+  control_rc=$?
+  [ "$control_rc" = 1 ] || fail "inline retarget after final gate: control setup failed ($control_rc)"
+fi
 [ "$LAST_RC" = 0 ] && pr2_merged && [ "$(jq -r .baseRefName "$PR2_GH/pr.json")" = release ] \
   || fail 'inline retarget after final gate: negative control failed before the unsafe merge'
 echo 'PASS inline retarget after final gate: 20/refreshed, one gate comment, no needs-human; private reverted copy merges into release'

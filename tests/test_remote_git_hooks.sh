@@ -350,6 +350,34 @@ bare=$(grep 'ls-remote' "$TMP/argv.log" | grep -vF -- "$OFF ls-remote " || true)
 hooks_off "7 bureau-supervision.py"
 pr1_pass "7 the ls-remote of bureau-supervision.py (stop check, gate waits) runs with the hooks off"
 
+# Charter fetches use the same hardened git() with hooks forced off, even if
+# checkout configuration opts in. Check event and configured-name switches,
+# including names that need --config-env, and every recursion override.
+config '{"remote_git_runs_hooks":true}'
+git -C "$R" config hook.charter-scan.command '.githooks/reference-transaction'
+git -C "$R" config hook.charter-scan.event reference-transaction
+git -C "$R" config 'hook.charter=scan.command' '.githooks/reference-transaction'
+git -C "$R" config 'hook.charter=scan.event' reference-transaction
+git -C "$R" config fetch.recurseSubmodules true
+git -C "$R" config submodule.recurse true
+: > "$TMP/argv.log"; : > "$MARKS"
+run_case '7 charter fetch' env PATH="$TMP/argv:$PATH" BUREAU_CONFIG="$R/.bureau.json" "${PROBES[@]}" \
+  python3 -I -B - "$SCRIPTS/bureau-charter.py" "$R" "$HEAD_SHA" <<'PY'
+import importlib.util, pathlib, sys
+spec = importlib.util.spec_from_file_location('charter', sys.argv[1])
+charter = importlib.util.module_from_spec(spec); spec.loader.exec_module(charter)
+charter.GitHub(pathlib.Path(sys.argv[2]), 'owner/repository').fetch(sys.argv[3])
+PY
+[ "$?" = 0 ] || fail "7: charter fetch failed"
+charter_fetch=$(grep ' fetch ' "$TMP/argv.log" || true)
+[ "$(printf '%s\n' "$charter_fetch" | grep -c ' fetch ')" = 1 ] || fail "7: charter fetch did not reach git exactly once"
+case "$charter_fetch" in *"$OFF "*) ;; *) fail "7: charter fetch lacks the directory/event hook switches" ;; esac
+case "$charter_fetch" in *'-c hook.charter-scan.enabled=false '*) ;; *) fail "7: charter fetch lacks the configured-name switch" ;; esac
+case "$charter_fetch" in *'--config-env=hook.charter=scan.enabled=BUREAU_GIT_HOOK_OFF '*) ;; *) fail "7: charter fetch lacks the configured-name switch for =" ;; esac
+case "$charter_fetch" in *'-c push.recurseSubmodules=no -c fetch.recurseSubmodules=no -c submodule.recurse=false fetch '*) ;; *) fail "7: charter fetch lacks the recursion restrictions" ;; esac
+hooks_off "7 bureau-charter.py"
+pr1_pass "7 charter fetch reuses the hardened remote git helper with hooks and submodule recursion off"
+
 # ── 8  every remote git in the templates gets the flag (static) ──────────────
 # Shell: a script that runs push, fetch, pull, ls-remote, clone, remote or submodule has the git()
 # function (it sources bureau-env.sh, directly or through bureau-config.sh), which adds the flag;
@@ -372,6 +400,7 @@ for path in sorted(scripts.glob('*.py')):
 PY
 )
 grep -q ' bureau-supervision\.py:' <<< "$lint" || fail "8: the lint found no Python site (its pattern is broken)"
+grep -q ' bureau-charter\.py:' <<< "$lint" || fail "8: the lint missed the charter fetch"
 grep -q ' upstream-port\.sh:' <<< "$lint" || fail "8: the lint found no shell site in upstream-port.sh (its pattern is broken)"
 bad=$(grep '^BAD' <<< "$lint" || true)
 [ -z "$bad" ] || fail "8: a remote git without the hooks flag: $(printf '%s' "$bad" | tr '\n' ';')"

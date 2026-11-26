@@ -1,0 +1,395 @@
+#!/usr/bin/env python3
+"""Pure-Python queue, snapshot and path protocol checks; no real processes."""
+import copy
+import importlib.util
+import io
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+import types
+import unittest
+from unittest.mock import Mock, patch
+
+SOURCE = Path(__file__).resolve().parents[1] / 'templates/scripts/bureau-charter.py'
+spec = importlib.util.spec_from_file_location('charter', SOURCE)
+charter = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(charter)
+ISSUE = 'TEST-' + str(1)
+CYCLE = '12345678-1234-1234-1234-123456789abc'
+
+
+def policy(**values):
+    return charter.policy_from_config(dict(agents=dict(merge_charter=dict(enabled=True, **values))))
+
+
+def snapshot(labels=(), cycle=None):
+    return dict(data=dict(issues=dict(nodes=[dict(identifier=ISSUE, cycle=cycle,
+                labels=dict(nodes=[dict(name=name) for name in labels], pageInfo=dict(hasNextPage=False)))],
+                pageInfo=dict(hasNextPage=False))))
+
+
+def mutated(old, new):
+    source = SOURCE.read_text()
+    if source.count(old) != 1:
+        raise AssertionError('missing or ambiguous mutation: ' + old)
+    module = types.ModuleType('charter_mutant')
+    module.__file__ = str(SOURCE)
+    exec(compile(source.replace(old, new), '<queue mutation>', 'exec'), module.__dict__)
+    return module
+
+
+class QueueTests(unittest.TestCase):
+    def evaluate(self, value, labels=(), cycle=None, failed=False, paths=(), module=charter):
+        calls = []
+        def read(with_cycle):
+            calls.append(with_cycle)
+            if failed:
+                raise ValueError('service unavailable')
+            return dict(labels=list(labels), cycle_id=cycle)
+        code, message = module.selector_gates(value, paths, read)
+        return code, message, calls
+
+    def test_label_and_cycle_are_exact_separate_queue_modes(self):
+        label = policy(approved_queue=dict(label='approved-for-merge'))
+        self.assertEqual(self.evaluate(label, labels=['approved-for-merge'])[0], 0)
+        self.assertEqual(self.evaluate(label, labels=['Approved-for-merge'])[0], 2)
+        self.assertEqual(self.evaluate(label)[0], 2)
+        cycle = policy(approved_queue=dict(cycle_id=CYCLE))
+        self.assertEqual(self.evaluate(cycle, cycle=CYCLE.upper())[0], 0)
+        self.assertEqual(self.evaluate(cycle, cycle='0' + CYCLE[1:])[0], 2)
+        self.assertEqual(self.evaluate(cycle, labels=['approved-for-merge'])[0], 2)
+        self.assertEqual(self.evaluate(cycle)[2], [True])
+
+    def test_one_shared_snapshot_and_no_unneeded_reads(self):
+        value = policy(approved_queue=dict(label='approved'), exceptions=[dict({'class': 'security'}, labels=['sensitive'])])
+        code, message, calls = self.evaluate(value, labels=['sensitive'])
+        self.assertEqual(code, 25)
+        self.assertIn('security', message)
+        self.assertEqual(calls, [False])
+        self.assertEqual(self.evaluate(policy(exceptions=[dict({'class': 'files'}, paths=['auth/**'])]))[2], [])
+        def observation(module):
+            self.assertEqual(self.evaluate(value, labels=['sensitive'], module=module)[2], [False])
+        observation(charter)
+        weakened = mutated("labels = ticket['labels'] if ticket is not None else []",
+                           "labels = read_issue(False)['labels'] if ticket is not None else []")
+        with self.assertRaises(AssertionError):
+            observation(weakened)
+
+    def test_failed_read_waits_or_becomes_unclassified_according_to_dependencies(self):
+        value = policy(approved_queue=dict(label='approved'))
+        self.assertEqual(self.evaluate(value, failed=True)[0], 2)
+        value['exceptions'] = [dict({'class': 'security'}, labels=['sensitive'])]
+        code, message, calls = self.evaluate(value, failed=True)
+        self.assertEqual(code, 25)
+        self.assertIn('charter-unclassified:', message)
+        self.assertEqual(calls, [False])
+        value['approved_queue'] = None
+        self.assertEqual(self.evaluate(value, failed=True)[0], 25)
+
+    def test_all_classes_match_by_either_selector_and_dominate_missing_approval(self):
+        value = policy(approved_queue=dict(label='approved'), exceptions=[
+            dict({'class': 'security'}, paths=['auth/**'], labels=['sensitive']),
+            dict({'class': 'data'}, labels=['schema-change']), dict({'class': 'other'}, paths=['other/**'])])
+        code, message, _ = self.evaluate(value, labels=['schema-change'], paths=['auth/old.py'])
+        self.assertEqual(code, 25)
+        self.assertIn('["security", "data"]', message)
+        self.assertNotIn('other', message)
+        self.assertEqual(self.evaluate(value, labels=['sensitive'])[0], 25)
+        def observation(module):
+            result = self.evaluate(value, labels=['schema-change'], paths=['auth/old.py'], module=module)
+            self.assertEqual(result[0], 25)
+            self.assertIn('["security", "data"]', result[1])
+        observation(charter)
+        with self.assertRaises(AssertionError):
+            observation(mutated('json.dumps(classes)', 'json.dumps(classes[:1])'))
+
+    def test_enforcement_removal_controls(self):
+        controls = [
+            ('if not approved:', 'if False:', policy(approved_queue=dict(label='approved')), {}, 2, 'charter-queue:'),
+            ('if failed and label_exceptions:', 'if False:', policy(approved_queue=dict(label='approved'),
+             exceptions=[dict({'class': 'security'}, labels=['sensitive'])]), dict(failed=True), 25, 'charter-unclassified:'),
+            ('if path_match or label_match:', 'if label_match:', policy(exceptions=[dict({'class': 'files'}, paths=['auth/**'])]),
+             dict(paths=['auth/key']), 25, 'files'),
+            ('if path_match or label_match:', 'if path_match:', policy(exceptions=[dict({'class': 'security'}, labels=['sensitive'])]),
+             dict(labels=['sensitive']), 25, 'security'),
+            ('if lines:', 'if False:', policy(approved_queue=dict(label='approved'),
+             exceptions=[dict({'class': 'security'}, paths=['auth/**'])]), dict(paths=['auth/key']), 25, 'security')]
+        for old, new, value, args, code, text in controls:
+            def observation(module):
+                result = self.evaluate(value, module=module, **args)
+                self.assertEqual(result[0], code)
+                self.assertIn(text, result[1])
+            with self.subTest(guard=old, replacement=new):
+                observation(charter)
+                with self.assertRaises(AssertionError):
+                    observation(mutated(old, new))
+
+
+class ProtocolTests(unittest.TestCase):
+    def test_globs_are_root_relative_case_sensitive_and_component_aware(self):
+        cases = [('auth/*', 'auth/key', True), ('auth/*', 'auth/deep/key', False),
+                 ('auth/**', 'auth/deep/key', True), ('auth/**', 'other/auth/key', False),
+                 ('**/key?.py', 'key1.py', True), ('**/key?.py', 'a/b/key1.py', True),
+                 ('auth/**/key', 'auth/key', True), ('auth/**/key', 'auth/a/b/key', True),
+                 ('auth/key?.py', 'auth/key.py', False), ('auth/key?.py', 'auth/key12.py', False),
+                 ('auth/**', 'Auth/key', False), ('auth/**', 'auth/a\nb', True),
+                 ('data/a.b', 'data/axb', False), ('data/a b', 'data/a b', True)]
+        for pattern, path, expected in cases:
+            with self.subTest(pattern=pattern, path=path):
+                self.assertEqual(charter.path_matches(pattern, path), expected)
+        controls = [("expression += '[^/]*'", "expression += '.*'", 'auth/*', 'auth/deep/key'),
+                    ("expression += '[^/]'", "expression += '[^/]*'", 'auth/key?', 'auth/key12'),
+                    ('re.fullmatch(expression, path, re.DOTALL)', 're.fullmatch(expression, path, re.DOTALL | re.IGNORECASE)',
+                     'auth/**', 'Auth/key')]
+        for old, new, pattern, path in controls:
+            def observation(module):
+                self.assertFalse(module.path_matches(pattern, path))
+            observation(charter)
+            with self.assertRaises(AssertionError):
+                observation(mutated(old, new))
+
+    def test_deleted_renamed_and_copied_paths_include_all_endpoints(self):
+        raw = b'D\0auth/deleted\0R100\0auth/old\0public/new\0C100\0auth/source\0public/copy\0M95\0a\tb\n\0'
+        self.assertEqual(charter.parse_changes(raw), ['auth/deleted', 'auth/old', 'public/new', 'auth/source', 'public/copy', 'a\tb\n'])
+        self.assertEqual(charter.parse_changes(b''), [])
+
+    def test_malformed_and_truncated_protocol_is_rejected(self):
+        for raw in (b'M\0auth/key', b'R100\0auth/old\0', b'C100\0auth/source\0', b'X\0a\0',
+                    b'R101\0a\0b\0', b'A\0\0', b'A\0/a\0', b'A\0../a\0', b'A\0a//b\0', b'A\0\xff\0'):
+            with self.subTest(raw=raw), self.assertRaises((ValueError, UnicodeError)):
+                charter.parse_changes(raw)
+        def observation(module):
+            with self.assertRaises(ValueError):
+                module.parse_changes(b'M\0auth/key\0truncated')
+        observation(charter)
+        with self.assertRaises(AssertionError):
+            observation(mutated("if not isinstance(raw, bytes) or (raw and not raw.endswith(b'\\0')):", 'if False:'))
+
+    def test_snapshots_require_complete_labels_identity_and_requested_cycle(self):
+        valid = snapshot(['approved'], dict(id=CYCLE))
+        self.assertEqual(charter.parse_issue_snapshot(json.dumps(valid), ISSUE, True), dict(labels=['approved'], cycle_id=CYCLE))
+        variants = []
+        for edit in ('errors', 'identity', 'labels-missing', 'labels-null', 'label-name', 'labels-paginated',
+                     'issues-paginated', 'no-issue', 'duplicate-issue', 'cycle-missing', 'cycle-invalid'):
+            value = copy.deepcopy(valid); node = value['data']['issues']['nodes'][0]
+            if edit == 'errors': value['errors'] = [dict(message='partial')]
+            elif edit == 'identity': node['identifier'] = 'different'
+            elif edit == 'labels-missing': node.pop('labels')
+            elif edit == 'labels-null': node['labels']['nodes'] = None
+            elif edit == 'label-name': node['labels']['nodes'] = [dict(name=None)]
+            elif edit == 'labels-paginated': node['labels']['pageInfo']['hasNextPage'] = True
+            elif edit == 'issues-paginated': value['data']['issues']['pageInfo']['hasNextPage'] = True
+            elif edit == 'no-issue': value['data']['issues']['nodes'] = []
+            elif edit == 'duplicate-issue': value['data']['issues']['nodes'] *= 2
+            elif edit == 'cycle-missing': node.pop('cycle')
+            elif edit == 'cycle-invalid': node['cycle'] = dict(id='invalid')
+            variants.append((edit, value))
+        for edit, value in variants:
+            with self.subTest(edit=edit), self.assertRaises((ValueError, TypeError, KeyError)):
+                charter.parse_issue_snapshot(json.dumps(value), ISSUE, True)
+        for old, new, value in [("if not isinstance(value, dict) or value.get('errors') not in (None, []):", 'if False:', variants[0][1]),
+                                ("labels['pageInfo']['hasNextPage'] is not False", 'False', variants[5][1])]:
+            def observation(module):
+                with self.assertRaises(ValueError):
+                    module.parse_issue_snapshot(json.dumps(value), ISSUE, True)
+            observation(charter)
+            with self.assertRaises(AssertionError):
+                observation(mutated(old, new))
+
+    def test_transport_calls_existing_helper_once_and_keeps_failures_explicit(self):
+        answer = json.dumps(snapshot(['approved'], dict(id=CYCLE))).encode()
+        with patch.object(charter.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, answer, b'')) as run:
+            with patch.dict(os.environ, BASH_ENV='untrusted', ENV='untrusted'):
+                result = charter.issue_snapshot(Path('.'), ISSUE, True)
+            self.assertEqual(result['cycle_id'], CYCLE)
+            self.assertEqual(run.call_count, 1)
+            args, options = run.call_args
+            self.assertIn('linear_raw "$2" "$3"', args[0][4])
+            self.assertIn('bureau_load_env --export "$BUREAU_ENV_FILE"', args[0][4])
+            self.assertIn('bureau_secret_copy API_KEY LINEAR_API_KEY', args[0][4])
+            self.assertEqual(options['env']['_BUREAU_LINEAR_SINGLE_ATTEMPT'], '1')
+            self.assertNotIn('BASH_ENV', options['env'])
+            self.assertNotIn('ENV', options['env'])
+        for answer in (b'{truncated', json.dumps(snapshot()).encode()):
+            with patch.object(charter.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1, answer, b'')):
+                with self.assertRaises(ValueError):
+                    charter.issue_snapshot(Path('.'), ISSUE, False)
+
+
+class TargetPinTests(unittest.TestCase):
+    def test_pin_keeps_the_classified_target_when_linear_read_moves_it(self):
+        base, moved, head = 'b' * 40, 'c' * 40, 'a' * 40
+        def observe(module):
+            source = Mock()
+            source.tip.return_value = base
+            source.revalidate.return_value = True
+            def read(*args):
+                source.tip.return_value = moved
+                return dict(labels=['approved'], cycle_id=None)
+            target = {}
+            with patch.object(module, 'load_policy', return_value=dict(kind='ok', policy=policy(approved_queue=dict(label='approved')))), \
+                    patch.object(module, 'changed_paths', return_value=['ordinary.txt']) as changes, \
+                    patch.object(module, 'issue_snapshot', side_effect=read):
+                self.assertEqual(module.gate(Path('.'), source, {}, 'release', head, ISSUE, target), (0, ''))
+            changes.assert_called_once_with(Path('.'), base, head)
+            self.assertEqual(target, dict(branch='release', commit=base))
+            self.assertNotEqual(target['commit'], source.tip.return_value)
+        observe(charter)
+        with self.assertRaises(AssertionError):
+            observe(mutated('target_pin.update(branch=base_branch, commit=base)', 'pass'))
+
+    def test_cli_emits_the_pin_only_when_requested_and_successful(self):
+        target = dict(branch='release', commit='b' * 40)
+        def gate(*args):
+            args[-1].update(target)
+            return 0, ''
+        args = ['--repo', '.', '--github', 'owner/repository', 'gate', '--pin', '{}', '--base', 'release', '--head', 'a' * 40]
+        for emit in (False, True):
+            output = io.StringIO()
+            with patch.object(charter, 'gate', side_effect=gate), patch('sys.stdout', output):
+                self.assertEqual(charter.main(args + (['--emit-target'] if emit else [])), 0)
+            self.assertEqual(json.loads(output.getvalue()) if emit else output.getvalue(), target if emit else '')
+        output = io.StringIO()
+        with patch.object(charter, 'gate', return_value=(2, 'charter-queue: waiting')), patch('sys.stdout', output):
+            self.assertEqual(charter.main(args + ['--emit-target']), 2)
+        self.assertEqual(output.getvalue(), 'charter-queue: waiting\n')
+
+
+class PinnedFetchTests(unittest.TestCase):
+    base, head = 'b' * 40, 'a' * 40
+
+    def evaluate(self, module, failed=None):
+        fetched, verified = [], []
+        source = module.GitHub(Path('.'), 'owner/repository')
+        def run(command, **options):
+            args = command[command.index('-C') + 2:]
+            if args[:-1] == ['fetch', '--no-tags', '--no-write-fetch-head', 'origin']:
+                sha = args[-1]
+                fetched.append(sha)
+                return subprocess.CompletedProcess(command, int(sha == failed), b'', b'forced fetch failure' if sha == failed else b'')
+            if args[:2] == ['rev-parse', '--verify']:
+                sha = args[2].split('^', 1)[0]
+                self.assertIn(sha, (self.base, self.head))
+                self.assertEqual(args[2], sha + '^{commit}')
+                verified.append(sha)
+                # Both commit objects remain available even when fetching fails.
+                return subprocess.CompletedProcess(command, 0, (sha + '\n').encode(), b'')
+            raise AssertionError('unexpected Git operation: ' + repr(args))
+        with patch.object(module, 'load_policy', return_value=dict(kind='ok', policy=policy())), \
+                patch.object(source, 'tip', return_value=self.base), patch.object(source, 'revalidate', return_value=True), \
+                patch.object(module, 'changed_paths', return_value=['ordinary.txt']), \
+                patch.object(module.subprocess, 'run', side_effect=run):
+            result = module.gate(Path('.'), source, {}, 'release', self.head, ISSUE)
+        return result, fetched, verified
+
+    def test_successful_fetches_verify_both_pins(self):
+        result, fetched, verified = self.evaluate(charter)
+        self.assertEqual(result, (0, ''))
+        self.assertEqual(fetched, [self.base, self.head])
+        self.assertEqual(verified, fetched)
+
+    def test_failed_fetch_cannot_fall_back_to_a_local_commit(self):
+        for endpoint, sha in (('base', self.base), ('head', self.head)):
+            def observe(module):
+                (code, message), fetched, verified = self.evaluate(module, failed=sha)
+                self.assertEqual(code, 25)
+                self.assertTrue(message.startswith('charter-unclassified:'), message)
+                self.assertIn('charter Git operation failed: fetch', message)
+                self.assertEqual(fetched, [self.base] if endpoint == 'base' else [self.base, self.head])
+                self.assertEqual(verified, [] if endpoint == 'base' else [self.base])
+            with self.subTest(endpoint=endpoint):
+                observe(charter)
+                old = 'source.fetch(base); source.fetch(head)'
+                new = 'source.fetch(head)' if endpoint == 'base' else 'source.fetch(base)'
+                with self.assertRaises(AssertionError):
+                    observe(mutated(old, new))
+                with self.assertRaises(AssertionError):
+                    observe(mutated('if result.returncode not in codes:', 'if False:'))
+
+
+class InlineControlTests(unittest.TestCase):
+    def test_target_control_applies_to_current_runtime_and_preserves_the_merge_call(self):
+        helper = (Path(__file__).with_name('lib') / 'pr2-gate.sh').read_text()
+        start = 'pr2_revert_merge_base_fix() {\n  python3 - "$SCRIPTS_DIR" "$1" <<\'PY\'\n'
+        self.assertEqual(helper.count(start), 1)
+        control = helper.split(start, 1)[1].split('\nPY\n}', 1)[0]
+        runtime = SOURCE.with_name('merge-pipeline.sh').read_text()
+        with tempfile.TemporaryDirectory(prefix='bureau-inline-control-', dir=tempfile.gettempdir()) as scratch:
+            target = Path(scratch) / 'merge-pipeline.sh'
+            target.write_text(runtime)
+            with patch('sys.argv', ['control', scratch, 'target']):
+                exec(compile(control, '<inline target control>', 'exec'), {})
+            weakened = target.read_text()
+        self.assertNotEqual(weakened, runtime)
+        for guard in ('  if [ "$_merge_base_ref" != "$APPROVED_BASE" ]; then', '  [ "$MERGED_TARGET" = "$APPROVED_BASE" ]'):
+            self.assertIn(guard, runtime)
+            self.assertNotIn(guard, weakened)
+        self.assertIn('  bureau_ticket_checkpoint "$ISSUE"\n  if _merge_output=$(gh pr merge ', weakened)
+        merge_call = next(line for line in runtime.splitlines() if 'if _merge_output=$(gh pr merge ' in line)
+        self.assertEqual(weakened.count(merge_call), 1)
+        self.assertIn('--match-head-commit "$MERGE_HEAD"', merge_call)
+        self.assertIn('read_merge_result() {', weakened)
+
+
+class HistoryTests(unittest.TestCase):
+    base, head, ancestor, root = 'b' * 40, 'a' * 40, 'c' * 40, 'd' * 40
+
+    def history(self):
+        return ('%s %s\n%s %s\n%s %s\n%s\n' % (self.base, self.ancestor, self.head, self.ancestor,
+                self.ancestor, self.root, self.root)).encode()
+
+    def git_read(self, shallow=b'false\n', walk=None, walk_error=False, warning=b'', merge_warning=b''):
+        def read(repo, *args, **kwargs):
+            if args == ('rev-parse', '--is-shallow-repository'):
+                return subprocess.CompletedProcess([], 0, shallow, b'')
+            if args == ('rev-list', '--parents', self.base, self.head, '--'):
+                if walk_error:
+                    raise ValueError('missing parent object')
+                return subprocess.CompletedProcess([], 0, self.history() if walk is None else walk, warning)
+            if args == ('merge-base', '--all', self.base, self.head):
+                return subprocess.CompletedProcess([], 0, (self.root + '\n').encode(), merge_warning)
+            if args[0] == 'diff':
+                return subprocess.CompletedProcess([], 0, b'M\0ordinary.txt\0', b'')
+            raise AssertionError('unexpected ancestry operation: ' + repr(args))
+        return read
+
+    def test_complete_ancestry_allows_classification(self):
+        with patch.object(charter, 'git', side_effect=self.git_read()) as read:
+            self.assertEqual(charter.changed_paths(Path('.'), self.base, self.head), ['ordinary.txt'])
+        self.assertEqual([call.args[1] for call in read.call_args_list], ['rev-parse', 'rev-list', 'merge-base', 'diff'])
+
+    def test_shallow_or_unproven_ancestry_is_unclassified_before_selectors(self):
+        variants = [dict(shallow=b'true\n'), dict(shallow=b''), dict(shallow=b'unknown\n'), dict(walk_error=True),
+                    dict(walk=b''), dict(walk=(self.base + '\n').encode()),
+                    dict(walk=('%s %s\n%s\n' % (self.base, self.root, self.head)).encode()),
+                    dict(walk=b'invalid-commit\n'), dict(walk=self.history() * 2), dict(warning=b'incomplete traversal')]
+        for options in variants:
+            def observe(module):
+                source = Mock()
+                source.tip.return_value = self.base
+                with patch.object(module, 'load_policy', return_value=dict(kind='ok', policy=policy())), \
+                        patch.object(module, 'git', side_effect=self.git_read(**options)), \
+                        patch.object(module, 'issue_snapshot') as ticket:
+                    code, message = module.gate(Path('.'), source, {}, 'release', self.head, ISSUE)
+                self.assertEqual(code, 25)
+                self.assertTrue(message.startswith('charter-unclassified:'), message)
+                ticket.assert_not_called()
+            with self.subTest(options=options):
+                observe(charter)
+                with self.assertRaises(AssertionError):
+                    observe(mutated('    require_complete_history(repo, base, head)\n', ''))
+
+    def test_merge_base_warnings_cannot_authorize_classification(self):
+        def observe(module):
+            with patch.object(module, 'git', side_effect=self.git_read(merge_warning=b'uncertain merge base')):
+                with self.assertRaisesRegex(ValueError, 'uncertain ancestry'):
+                    module.changed_paths(Path('.'), self.base, self.head)
+        observe(charter)
+        with self.assertRaises(AssertionError):
+            observe(mutated('    if comparison.stderr:\n', '    if False:\n'))
+
+
+if __name__ == '__main__':
+    unittest.main()

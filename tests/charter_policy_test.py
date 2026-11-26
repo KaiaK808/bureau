@@ -1,0 +1,411 @@
+#!/usr/bin/env python3
+"""Pure-Python charter checks; filesystem fixtures, no child processes or services."""
+import copy
+import importlib.util
+import io
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+import types
+import unittest
+from contextlib import redirect_stdout
+from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parents[1]
+SOURCE = ROOT / 'templates/scripts/bureau-charter.py'
+spec = importlib.util.spec_from_file_location('charter', SOURCE)
+charter = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(charter)
+
+
+def config(**policy):
+    return dict(agents=dict(merge_charter=policy))
+
+
+class PolicyTests(unittest.TestCase):
+    def test_defaults_and_valid_declarations(self):
+        self.assertIsNone(charter.policy_from_config({}))
+        self.assertEqual(charter.policy_from_config(config()), charter.DEFAULTS)
+        for queue in (None, dict(label='approved-for-merge'), dict(cycle_id='12345678-1234-1234-1234-123456789abc')):
+            value = config(enabled=True, approved_queue=queue)
+            value['agents']['merge_charter']['exceptions'] = [dict(
+                {'class': 'security'}, paths=['auth/**', 'src/*/A?.py']), {'class': 'data', 'labels': ['schema-change']}]
+            value['agents']['merge_charter'].update(
+                suite=dict(id='full', command='bash scripts/check.sh', definition_files=['scripts/check.sh']),
+                red_main=dict(workflows=['.github/workflows/ci.yml']), report=True)
+            parsed = charter.policy_from_config(value)
+            self.assertEqual(parsed['red_main']['poll_seconds'], 60)
+            self.assertEqual(parsed['red_main']['timeout_seconds'], 3600)
+            self.assertEqual(parsed['approved_queue'], queue)
+
+    def test_invalid_shapes_including_disabled(self):
+        cases = [None, False, [], 'enabled', {'unknown': False}]
+        cases += [dict(enabled=v) for v in (None, 0, 1, 'false', [], {})]
+        cases += [dict(report=v) for v in (None, 0, 'true', [])]
+        cases += [dict(approved_queue=v) for v in (True, [], '', {}, {'label': 'yes', 'cycle_id': 'x'},
+                  {'label': ''}, {'label': ' '}, {'label': 1}, {'label': []}, {'label': 'yes', 'other': 1},
+                  {'cycle_id': ''}, {'cycle_id': 'not-a-uuid'})]
+        cases += [dict(exceptions=v) for v in (None, True, {}, '', [None], [True], [[]],
+                  [{}], [{'class': ''}], [{'class': ' '}], [{'class': 1}], [{'class': 'x'}],
+                  [{'class': 'x', 'paths': [], 'labels': []}], [{'class': 'x', 'paths': None}],
+                  [{'class': 'x', 'paths': 'src/**'}], [{'class': 'x', 'labels': 'sensitive'}],
+                  [{'class': 'x', 'labels': [True]}], [{'class': 'x', 'labels': ['']}],
+                  [{'class': 'x', 'paths': ['src/**'], 'extra': False}],
+                  [{'class': 'x', 'labels': ['a']}, {'class': 'x', 'labels': ['b']}])]
+        cases += [dict(suite=v) for v in (False, [], '', {}, {'id': 'full'},
+                  {'id': '', 'command': 'true', 'definition_files': ['test.sh']},
+                  {'id': 'full', 'command': '', 'definition_files': ['test.sh']},
+                  {'id': 'full', 'command': ['true'], 'definition_files': ['test.sh']},
+                  {'id': 'full', 'command': 'true', 'definition_files': []},
+                  {'id': 'full', 'command': 'true', 'definition_files': ['*.sh']},
+                  {'id': 'full', 'command': 'true', 'definition_files': ['test.sh'], 'extra': 1})]
+        cases += [dict(red_main=v) for v in (False, [], '', {}, {'workflows': []}, {'workflows': 'ci.yml'},
+                  {'workflows': ['ci.yml']}, {'workflows': ['.github/workflows/*.yml']},
+                  {'workflows': ['.github/workflows/sub/ci.yml']}, {'workflows': ['.github/workflows/ci.txt']},
+                  {'workflows': ['.github/workflows/ci.yml'], 'poll_seconds': 0},
+                  {'workflows': ['.github/workflows/ci.yml'], 'poll_seconds': True},
+                  {'workflows': ['.github/workflows/ci.yml'], 'timeout_seconds': '60'},
+                  {'workflows': ['.github/workflows/ci.yml'], 'timeout_seconds': 1},
+                  {'workflows': ['.github/workflows/ci.yml'], 'extra': False})]
+        cases += [dict(report=True), dict(report=True, suite=dict(id='full', command='true', definition_files=['test.sh']))]
+        for raw in cases:
+            with self.subTest(raw=raw), self.assertRaises(ValueError):
+                charter.policy_from_config(dict(agents=dict(merge_charter=raw)))
+        for value in (None, [], {'agents': []}):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                charter.policy_from_config(value)
+
+    def test_paths_are_root_relative_and_only_declared_glob_syntax(self):
+        invalid = ['', ' ', '/auth/**', '//host/a', 'C:/auth/*', 'C:auth', '\\auth',
+                   '~/auth', '../auth', 'auth/../data', 'auth/./data', 'auth//data', 'auth/',
+                   '!auth/**', ':(exclude)auth/**', 'auth/!private', 'auth/[ab]', 'auth/{a,b}', 'auth\\**', 'auth/\nsecret']
+        for path in invalid:
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                charter.policy_from_config(config(exceptions=[{'class': 'security', 'paths': [path]}]))
+        for path in ('auth/**', '**/tokens?.json', 'src/*/A.py', 'Config.json', 'docs/file name.md'):
+            parsed = charter.policy_from_config(config(exceptions=[{'class': 'files', 'paths': [path]}]))
+            self.assertEqual(parsed['exceptions'][0]['paths'][0], path)
+
+    def test_duplicate_json_keys_and_selectors(self):
+        for raw in ('{"agents":{},"agents":{}}', '{"x":NaN}', '{"x":Infinity}'):
+            with self.subTest(raw=raw), self.assertRaises(ValueError):
+                charter.read_json(raw)
+        for entry in ({'class': 'x', 'paths': ['a', 'a']}, {'class': 'x', 'labels': ['a', 'a']}):
+            with self.assertRaises(ValueError):
+                charter.policy_from_config(config(exceptions=[entry]))
+
+    def test_digest_is_of_normalized_policy(self):
+        first = charter.policy_from_config(config())
+        second = charter.policy_from_config(config(**copy.deepcopy(charter.DEFAULTS)))
+        self.assertEqual(charter.digest(first), charter.digest(second))
+        second['enabled'] = True
+        self.assertNotEqual(charter.digest(first), charter.digest(second))
+
+    def test_negative_controls_remove_real_schema_guards(self):
+        source = SOURCE.read_text()
+        controls = [
+            ("if type(policy[key]) is not bool:", 'if False:', config(enabled='false')),
+            ('if len(queue) != 1:', 'if False:', config(approved_queue={'label': 'yes', 'cycle_id': '12345678-1234-1234-1234-123456789abc'})),
+            ('if name in classes:', 'if False:', config(exceptions=[{'class': 'x', 'labels': ['a']}, {'class': 'x', 'labels': ['b']}])),
+            ('if not paths and not labels:', 'if False:', config(exceptions=[{'class': 'x'}])),
+            ("relative_path(v, w, glob=True)", 'text(v, w)', config(exceptions=[{'class': 'x', 'paths': ['../auth']}]))]
+        for old, new, value in controls:
+            def observation(module):
+                with self.assertRaises(ValueError):
+                    module.policy_from_config(value)
+            with self.subTest(guard=old):
+                observation(charter)  # Unchanged baseline must pass first.
+                self.assertEqual(source.count(old), 1)
+                mutant = types.ModuleType('charter_mutant')
+                mutant.__file__ = str(SOURCE)
+                exec(compile(source.replace(old, new), '<charter mutation>', 'exec'), mutant.__dict__)
+                with self.assertRaises(AssertionError):
+                    observation(mutant)
+
+
+class MergeLookupTests(unittest.TestCase):
+    """The merge probe's single process boundary uses only the supplied cwd."""
+    def setUp(self):
+        scratch = tempfile.TemporaryDirectory(prefix='bureau-charter-lookup-', dir=tempfile.gettempdir())
+        self.addCleanup(scratch.cleanup)
+        self.root = Path(scratch.name)
+        self.repo = self.root / 'checkout with spaces'
+        self.repo.mkdir()
+        self.output = os.fsencode('false\n' + str(self.repo) + '\n.git\n')
+        process = patch.object(charter.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, self.output, b''))
+        self.process = process.start()
+        self.addCleanup(process.stop)
+
+    def command(self, module=charter):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            code = module.main(['--repo', str(self.repo), 'merge-common-dir'])
+        return code, output.getvalue().strip()
+
+    def mutant(self, old, new):
+        source = SOURCE.read_text()
+        self.assertEqual(source.count(old), 1)
+        module = types.ModuleType('charter_merge_lookup_mutant')
+        module.__file__ = str(SOURCE)
+        exec(compile(source.replace(old, new), '<charter merge lookup mutation>', 'exec'), module.__dict__)
+        return module
+
+    def test_working_directory_lookup_scrubs_git_overrides_for_one_call_only(self):
+        names = ('GIT_DIR', 'GIT_COMMON_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY',
+                 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CEILING_DIRECTORIES', 'GIT_DISCOVERY_ACROSS_FILESYSTEM',
+                 'GIT_NAMESPACE', 'GIT_IMPLICIT_WORK_TREE', 'GIT_PREFIX', 'GIT_SHALLOW_FILE', 'GIT_CONFIG',
+                 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_PARAMETERS',
+                 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_EXEC_PATH', 'GIT_TRACE')
+        environment = dict.fromkeys(names, 'redirect')
+        environment.update(BASH_ENV='untrusted-startup', ENV='untrusted-startup',
+                           BUREAU_CONFIG=str(self.root / 'outside' / '.bureau.json'))
+        def observation(module):
+            self.process.reset_mock()
+            original = dict(os.environ)
+            self.assertEqual(self.command(module), (0, str(self.repo / '.git')))
+            self.process.assert_called_once()
+            args, options = self.process.call_args
+            self.assertEqual(args[0], ['git', '-c', 'core.hooksPath=/dev/null', '-C', str(self.repo),
+                                      'rev-parse', '--is-bare-repository', '--show-toplevel', '--git-common-dir'])
+            self.assertFalse(any(name.startswith('GIT_') or name in ('BASH_ENV', 'ENV') for name in options['env']))
+            self.assertEqual(options['env']['BUREAU_CONFIG'], environment['BUREAU_CONFIG'])
+            self.assertEqual(dict(os.environ), original)
+        with patch.dict(os.environ, environment):
+            observation(charter)
+            weakened = self.mutant("if not k.startswith('GIT_') and k not in ('BASH_ENV', 'ENV')",
+                                   "if k not in ('BASH_ENV', 'ENV')")
+            with self.assertRaises(AssertionError):
+                observation(weakened)
+
+    def test_external_configuration_cannot_select_authority_or_add_a_retry(self):
+        with patch.dict(os.environ, BUREAU_CONFIG=str(self.root / 'outside' / '.bureau.json')):
+            def observation(module):
+                self.process.reset_mock()
+                self.assertEqual(self.command(module), (0, str(self.repo / '.git')))
+                self.process.assert_called_once()
+                self.assertEqual(self.process.call_args.args[0][4], str(self.repo))
+            observation(charter)
+            weakened = self.mutant('repo = Path(repo).absolute()', "repo = Path(os.environ['BUREAU_CONFIG']).parent")
+            with self.assertRaises(AssertionError):
+                observation(weakened)
+
+    def test_failed_bare_and_missing_work_tree_results_are_policy_exceptions(self):
+        cases = [(128, b''), (1, self.output), (0, b''), (0, b'true\n'),
+                 (0, os.fsencode('true\n' + str(self.repo) + '\n.git\n')),
+                 (0, b'false\n\n.git\n'), (0, b'false\nrelative\n.git\n'),
+                 (0, os.fsencode('false\n' + str(self.root / 'missing') + '\n.git\n')),
+                 (0, os.fsencode('false\n' + str(self.repo) + '\n\n'))]
+        for returncode, stdout in cases:
+            with self.subTest(returncode=returncode, stdout=stdout):
+                self.process.reset_mock()
+                # A second call would succeed; the first result must be final.
+                self.process.side_effect = [subprocess.CompletedProcess([], returncode, stdout, b''),
+                                            subprocess.CompletedProcess([], 0, self.output, b'')]
+                code, message = self.command()
+                self.assertEqual(code, 25)
+                self.assertTrue(message.startswith('charter-policy:'), message)
+                self.process.assert_called_once()
+        for error in (OSError('unavailable'), subprocess.TimeoutExpired('git', 30)):
+            self.process.reset_mock()
+            self.process.side_effect = error
+            self.assertEqual(self.command()[0], 25)
+            self.process.assert_called_once()
+
+    def test_bare_and_work_tree_validation_negative_control(self):
+        weakened = self.mutant("if bare != 'false' or not Path(top).is_absolute() or not Path(top).is_dir() or not common:",
+                               'if False:')
+        for bare, top in (('true', str(self.repo)), ('false', '')):
+            self.process.return_value = subprocess.CompletedProcess([], 0, os.fsencode(bare + '\n' + top + '\n.git\n'), b'')
+            def observation(module):
+                code, message = self.command(module)
+                self.assertEqual(code, 25)
+                self.assertTrue(message.startswith('charter-policy:'), message)
+            observation(charter)
+            with self.assertRaises(AssertionError):
+                observation(weakened)
+
+
+class EnrollmentSafetyTests(unittest.TestCase):
+    """Real filesystem state; Git and service process boundaries never execute."""
+    def setUp(self):
+        scratch = tempfile.TemporaryDirectory(prefix='bureau-charter-policy-', dir=tempfile.gettempdir())
+        self.addCleanup(scratch.cleanup)
+        self.root = Path(scratch.name)
+        self.common = self.root / 'repository' / '.git'
+        self.common.mkdir(parents=True)
+        self.real_common_dir = charter.common_dir
+        common = patch.object(charter, 'common_dir', return_value=self.common)
+        common.start()
+        self.addCleanup(common.stop)
+        processes = patch.object(charter.subprocess, 'run', side_effect=AssertionError('unexpected process'))
+        self.process = processes.start()
+        self.addCleanup(processes.stop)
+
+    def record(self, common=None):
+        path = (common or self.common) / 'bureau/charter/enrollment.json'
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps(dict(version=1, repository='owner/repository', default_branch='main',
+                                       default_commit='a' * 40, policy_digest='b' * 64)))
+        return path
+
+    def command(self, operation, *, repo=None, common=None):
+        output = io.StringIO()
+        arguments = ['--repo', str(repo or self.common.parent), operation]
+        if common is not None:
+            arguments += ['--common-dir', str(common)]
+        with redirect_stdout(output):
+            code = charter.main(arguments)
+        return code, output.getvalue().strip()
+
+    def test_supplied_common_directory_adds_no_git_or_service_call(self):
+        # The shell supplies Git's result; status must not resolve it again.
+        with patch.object(charter, 'common_dir', self.real_common_dir):
+            for policy in (None, {'enabled': False}, {'enabled': True}):
+                if policy is not None:
+                    (self.common.parent / '.bureau.json').write_text(json.dumps(config(**policy)))
+                with self.subTest(policy=policy):
+                    # Initial enrollment check and both gate passes reuse it.
+                    for _ in range(3):
+                        self.assertEqual(self.command('status', common=self.common), (0, 'not-enrolled'))
+        self.process.assert_not_called()
+        self.assertFalse((self.common / 'bureau').exists())
+        old = 'common = args.repo / args.common_dir'
+        source = SOURCE.read_text()
+        self.assertEqual(source.count(old), 1)
+        mutant = types.ModuleType('charter_lookup_mutant')
+        mutant.__file__ = str(SOURCE)
+        exec(compile(source.replace(old, 'common = None'), '<charter lookup mutation>', 'exec'), mutant.__dict__)
+        with redirect_stdout(io.StringIO()), self.assertRaisesRegex(AssertionError, 'unexpected process'):
+            mutant.main(['--repo', str(self.common.parent), 'status', '--common-dir', str(self.common)])
+
+    def test_supplied_common_directory_keeps_parent_and_record_validation(self):
+        path = self.record()
+        self.assertEqual(self.command('status', common=self.common), (0, 'enrolled'))
+        for parent in (self.common, path.parent.parent, path.parent):
+            with self.subTest(parent=parent.name):
+                parent.chmod(0o600)
+                try:
+                    self.assertEqual(self.command('status', common=self.common)[0], 25)
+                finally:
+                    parent.chmod(0o700)
+        path.write_text('{broken')
+        self.assertEqual(self.command('status', common=self.common)[0], 25)
+        with patch.object(Path, 'read_bytes', side_effect=PermissionError('unreadable record')):
+            self.assertEqual(self.command('status', common=self.common)[0], 25)
+        path.unlink()
+        path.parent.chmod(0o600)
+        try:
+            self.assertEqual(self.command('status', common=self.common)[0], 25)
+        finally:
+            path.parent.chmod(0o700)
+        for parent in (path.parent, path.parent.parent, self.common):
+            with self.subTest(symlink=parent.name):
+                target = self.root / 'state target'
+                parent.rename(target)
+                parent.symlink_to(target, target_is_directory=True)
+                try:
+                    self.assertEqual(self.command('status', common=self.common)[0], 25)
+                finally:
+                    parent.unlink()
+                    target.rename(parent)
+        self.process.assert_not_called()
+
+    def test_supplied_common_directory_may_be_relative_to_repo(self):
+        self.record()
+        self.assertEqual(self.command('status', common='.git'), (0, 'enrolled'))
+        self.process.assert_not_called()
+
+    def test_empty_or_missing_supplied_common_directory_is_unusable(self):
+        for common in ('', self.root / 'missing'):
+            with self.subTest(common=common):
+                self.assertEqual(self.command('status', common=common)[0], 25)
+        self.process.assert_not_called()
+
+    def test_status_distinguishes_absence_from_enrollment(self):
+        self.assertEqual(self.command('status'), (0, 'not-enrolled'))
+        path = self.record()
+        self.assertEqual(self.command('status'), (0, 'enrolled'))
+        path.write_text('{broken')
+        code, message = self.command('status')
+        self.assertEqual(code, 25)
+        self.assertIn('invalid', message)
+        self.process.assert_not_called()
+
+    def test_non_searchable_parent_is_unusable_even_without_a_record(self):
+        path = self.record()
+        for directory in (path.parent, path.parent.parent):
+            with self.subTest(parent=directory.name):
+                directory.chmod(0o600)
+                try:
+                    code, _ = self.command('status')
+                    self.assertEqual(code, 25)
+                    with self.assertRaises((ValueError, OSError)):
+                        charter.enrollment(self.common.parent)
+                finally:
+                    directory.chmod(0o700)
+        path.unlink()
+        path.parent.chmod(0o600)
+        try:
+            self.assertEqual(self.command('status')[0], 25)
+        finally:
+            path.parent.chmod(0o700)
+
+    def test_failed_or_empty_common_directory_lookup_is_unusable(self):
+        # Exercise the real common_dir implementation while only Git's result is fake.
+        for result in (subprocess.CompletedProcess([], 128, b'', b'failed'),
+                       subprocess.CompletedProcess([], 0, b'', b'')):
+            self.process.side_effect = None
+            self.process.return_value = result
+            with self.subTest(returncode=result.returncode), patch.object(charter, 'common_dir', self.real_common_dir):
+                self.assertEqual(self.command('status')[0], 25)
+        self.assertFalse((self.common / 'bureau').exists())
+
+    def test_unenroll_refuses_symlinked_parent_without_touching_other_repository(self):
+        other = self.root / 'other repository' / '.git'
+        other.mkdir(parents=True)
+        target = self.record(other)
+        original = target.read_bytes()
+        bureau = self.common / 'bureau'
+        bureau.mkdir()
+        for link, destination in ((bureau / 'charter', target.parent), (bureau, target.parent.parent)):
+            with self.subTest(parent=link.name):
+                if link == bureau:
+                    bureau.rmdir()
+                link.symlink_to(destination, target_is_directory=True)
+                try:
+                    code, message = self.command('unenroll')
+                    self.assertEqual(code, 25)
+                    self.assertIn('symlink', message)
+                    self.assertEqual(target.read_bytes(), original)
+                    self.assertTrue(link.is_symlink())
+                finally:
+                    link.unlink()
+
+    def test_unenroll_can_remove_a_corrupt_regular_record(self):
+        path = self.record()
+        path.write_text('{broken')
+        self.assertEqual(self.command('unenroll')[0], 0)
+        self.assertFalse(path.exists())
+
+    def test_fetch_uses_the_existing_hardened_remote_runner(self):
+        sha = 'a' * 40
+        self.process.side_effect = [subprocess.CompletedProcess([], 0, b'', b''),
+                                    subprocess.CompletedProcess([], 0, (sha + '\n').encode(), b'')]
+        with patch.dict(os.environ, BASH_ENV='untrusted-startup', ENV='untrusted-startup'):
+            charter.GitHub(self.common.parent, 'owner/repository').fetch(sha)
+        arguments, options = self.process.call_args_list[0]
+        command = arguments[0]
+        self.assertEqual(command[:3], ['bash', '--noprofile', '--norc'])
+        self.assertIn('source "$1"', command[4])
+        self.assertIn('_bureau_remote_git_hooks_mode()', command[4])
+        self.assertIn('git "$@"', command[4])
+        self.assertEqual(Path(command[6]), SOURCE.with_name('bureau-env.sh'))
+        self.assertEqual(command[7:], ['-C', str(self.common.parent), 'fetch', '--no-tags', '--no-write-fetch-head', 'origin', sha])
+        self.assertNotIn('BASH_ENV', options['env'])
+        self.assertNotIn('ENV', options['env'])
+
+
+if __name__ == '__main__':
+    unittest.main()

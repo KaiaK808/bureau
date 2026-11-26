@@ -33,6 +33,8 @@ make_sandbox() {
   local name="$1"
   local sb="$SANDBOX_ROOT/$name"
   mkdir -p "$sb/scripts" "$sb/bin" "$sb/stub_data"
+  # Charter absence must be confirmed in a real Git common directory.
+  git -C "$sb" init -q --initial-branch=main || return 1
 
   echo "LINEAR_API_KEY=stub" > "$sb/.env"
 
@@ -70,6 +72,7 @@ EOF
   # merge-pipeline.sh sources merge-body.sh next to itself for the merge message.
   cp "$REPO_ROOT/templates/scripts/merge-body.sh" "$sb/scripts/"
   cp "$REPO_ROOT/templates/scripts/bureau-merge-review.py" "$sb/scripts/"
+  cp "$REPO_ROOT/templates/scripts/bureau-charter.py" "$sb/scripts/"
   cp "$REAL_BUREAU_CONFIG"  "$sb/scripts/bureau-config.sh"
   cp "$REAL_MERGE_PIPELINE" "$sb/scripts/merge-pipeline.sh"
 
@@ -332,12 +335,16 @@ EOF
 
 run_pipeline() {
   local sb="$1"; shift
-  MERGE_REVIEW_FAKE="$REPO_ROOT/tests/lib/merge-review-fake.py" \
-  STUB_DIR="$sb/stub_data" \
-    INVOCATIONS_LOG="$sb/gh_invocations.log" \
-    PATH="$sb/bin:$PATH" \
-    bash "$sb/scripts/merge-pipeline.sh" "$@" \
-    > "$sb/pipeline.out" 2> "$sb/pipeline.err"
+  # Shared enrollment belongs to this fixture, never the test runner's checkout.
+  (
+    cd "${BUREAU_MERGE_TEST_CWD:-$sb}" || exit 1
+    MERGE_REVIEW_FAKE="$REPO_ROOT/tests/lib/merge-review-fake.py" \
+    STUB_DIR="$sb/stub_data" \
+      INVOCATIONS_LOG="$sb/gh_invocations.log" \
+      PATH="$sb/bin:$PATH" \
+      bash "$sb/scripts/merge-pipeline.sh" "$@" \
+      > "$sb/pipeline.out" 2> "$sb/pipeline.err"
+  )
 }
 
 # ── Scenarios ─────────────────────────────────────────────────────
