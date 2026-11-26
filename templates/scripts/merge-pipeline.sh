@@ -17,8 +17,8 @@
 #   6. No `needs-human`, `blocked`, or `wip` label on the PR
 #   7. Zero unresolved review threads (GraphQL: pullRequest.reviewThreads)
 #   8. Explicitly enrolled charter: readable pinned default-branch policy;
-#      no .bureau.json change from the PR merge base (charter-policy, exit 25)
-#      Queue, selector, suite, report and red-main gates are not implemented yet.
+#      approved Linear queue (exit 2); path/label exceptions and .bureau.json
+#      changes require a human (exit 25). Suite, report and red-main gates follow.
 #
 # Gates 3 and 4 enforce the Not-Rocket-Science Rule independently of GitHub's
 # mergeStateStatus — they catch (a) PRs that merge with red CI when no
@@ -263,7 +263,8 @@ approval_target_mismatch() {
 }
 
 # evaluate_merge_gates: run every gate against fresh GitHub data. On success,
-# print the approved Target branch. On failure, print the "gate: message" rows.
+# print the approved Target branch and, when enrolled, the classified target SHA
+# on a second line. On failure, print the "gate: message" rows.
 # Called twice: once at the top of the pipeline (to render the gate report
 # and decide whether to attempt the merge), and again just before the merge
 # call and its final live base check.
@@ -274,7 +275,7 @@ evaluate_merge_gates() {
   # merge is pinned to it (--match-head-commit). An empty one cannot be pinned: not yet.
   local pr="$1" head="${2:-}"
   local _pr_data _pr_state _merge_state _labels_csv _base_ref _base_oid _pr_read=ok
-  local _approved_base=""
+  local _approved_base="" _charter_base=""
   # A read that fails is not a verdict about the PR: it becomes a *_read line,
   # which merge_gate_outcome counts as "not yet", never as "PR not open" or
   # "no APPROVE".
@@ -315,12 +316,14 @@ evaluate_merge_gates() {
   elif charter_enrolled; then
     local _charter_lines _charter_rc=0
     _charter_lines=$(python3 -I -B "$(dirname "$0")/bureau-charter.py" --repo "$PWD" \
-      --github "$owner_repo" gate --pin "$MERGE_CHARTER_PIN" --base "$_base_ref" --head "$head") || _charter_rc=$?
+      --github "$owner_repo" gate --pin "$MERGE_CHARTER_PIN" --base "$_base_ref" --head "$head" --issue "$ISSUE" --emit-target) || _charter_rc=$?
     if [ "$_charter_rc" != 0 ]; then
       case "$_charter_lines" in
         charter-*:*) _blockers+=("$_charter_lines") ;;
         *) _blockers+=("charter-unreadable: enrolled policy helper failed") ;;
       esac
+    elif ! _charter_base=$(printf '%s' "$_charter_lines" | jq -er --arg branch "$_base_ref" 'select(.branch == $branch) | .commit | strings | select(test("^([0-9a-f]{40}|[0-9a-f]{64})$"))'); then
+      _blockers+=("charter-unclassified: classified target pin could not be retained")
     fi
   else
     local _charter_probe_rc=$?
@@ -413,6 +416,8 @@ evaluate_merge_gates() {
     return 1
   fi
   printf '%s\n' "$_approved_base"
+  [ -z "$_charter_base" ] || printf '%s\n' "$_charter_base"
+  return 0
 }
 
 # merge_gate_required <agents key>: prints false when .agents.<key> is the JSON
@@ -462,8 +467,8 @@ merge_gate_outcome() {
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     case "$line" in
-      "charter-retry: "*) ;;
-      "charter-policy: "*|"charter-unreadable: "*|"charter-unclassified: "*) outcome=blocked ;;
+      "charter-retry: "*|"charter-queue: "*) ;;
+      "charter-policy: "*|"charter-unreadable: "*|"charter-unclassified: "*|"charter-exception: "*) outcome=blocked ;;
       "ci_green: ci: "*" still pending on "*) ;;
       "ci_green: ci: only "*" completed check(s) on "*) ;;
       "ci_green: ci: cannot resolve "*|"ci_green: ci: gh check-runs query failed"*) ;;
@@ -546,7 +551,7 @@ refresh_stale_approval() {
   local gates="$1" lines body last_body last_key current_key
   # A policy exception must not be softened into routine re-review (exit 20).
   case "$gates" in
-    charter-policy:*|charter-unreadable:*|charter-unclassified:*|*$'\n'charter-policy:*|*$'\n'charter-unreadable:*|*$'\n'charter-unclassified:*) return 0 ;;
+    charter-policy:*|charter-unreadable:*|charter-unclassified:*|charter-exception:*|*$'\n'charter-policy:*|*$'\n'charter-unreadable:*|*$'\n'charter-unclassified:*|*$'\n'charter-exception:*) return 0 ;;
   esac
   lines=$(printf '%s\n' "$gates" | sed -n 's/^approval_binding: /- /p') || exit $?
   [ -n "$lines" ] || return 0
@@ -605,7 +610,7 @@ merge_record_gate() {
   if [ -n "$2" ]; then
     if [ "$(printf '%s\n' "$2" | merge_gate_outcome)" = not-yet ]; then rc=2; else rc=25; fi
     case "$2" in "approval_binding: "*|*$'\n'"approval_binding: "*) rc=20 ;; esac
-    case "$2" in charter-policy:*|charter-unreadable:*|charter-unclassified:*|*$'\n'charter-policy:*|*$'\n'charter-unreadable:*|*$'\n'charter-unclassified:*) rc=25 ;; esac
+    case "$2" in charter-policy:*|charter-unreadable:*|charter-unclassified:*|charter-exception:*|*$'\n'charter-policy:*|*$'\n'charter-unreadable:*|*$'\n'charter-unclassified:*|*$'\n'charter-exception:*) rc=25 ;; esac
   fi
   [[ "$1" =~ ^[0-9a-f]{40,64}$ ]] || kind=artifact
   bureau_evidence evidence-gate --kind "$kind" --path "$file" --head "$1" --end-head "$1" \
@@ -902,8 +907,10 @@ done
 # call makes GitHub refuse the merge instead of merging a head no gate has seen.
 MERGE_HEAD=$(pr_head_sha "$PR_NUMBER")
 GATE_HEAD="$MERGE_HEAD"
+CHARTER_BASE=""
 if JIT_GATE_OUT=$(evaluate_merge_gates "$PR_NUMBER" "$MERGE_HEAD"); then
-  APPROVED_BASE="$JIT_GATE_OUT"
+  APPROVED_BASE=${JIT_GATE_OUT%%$'\n'*}
+  if [[ "$JIT_GATE_OUT" == *$'\n'* ]]; then CHARTER_BASE=${JIT_GATE_OUT#*$'\n'}; fi
   JIT_GATE_OUT=""
 fi
 merge_record_gate "$MERGE_HEAD" "$JIT_GATE_OUT" || true
@@ -943,6 +950,13 @@ fi
 # default message. The body is captured with a sentinel (`&& printf x`, then
 # `${…%x}`) so its trailing newlines survive command substitution while the
 # producer's exit code still propagates.
+merge_target_retry() {
+  if [ -n "$CHARTER_BASE" ]; then
+    merge_gate_exit not-yet "charter-retry: $1; retry with fresh target classification"
+  fi
+  scanner_merge_retry "$_scan_tool: $1"
+}
+
 _merge_pr() {
   local _merge_base_json _merge_base_ref _merge_base_oid _merge_output
   local message_args=()
@@ -953,14 +967,19 @@ _merge_pr() {
       ;;
   esac
   # GitHub pins the head, but offers no expected-base option.
-  if [ "$SCAN_RECHECK" = true ]; then
+  # Enrolled charters retain B from classification independently of scanner and
+  # up-to-date toggles. Read and validate the live tip after the final gates;
+  # only the ticket kill-switch checkpoint follows before the pinned merge.
+  if [ "$SCAN_RECHECK" = true ] || [ -n "$CHARTER_BASE" ]; then
     # baseRef.target is the live branch tip; the PR's stored baseRefOid can lag.
     _merge_base_json=$(gh api graphql \
       -f query='query($url:URI!){resource(url:$url){... on PullRequest{baseRefName baseRef{target{oid}}}}}' \
       -f url="$PR_URL") \
-      || scanner_merge_retry "$_scan_tool: current PR base unavailable after gate recheck"
+      || merge_target_retry "current PR base unavailable after gate recheck"
     _merge_base_ref=$(printf '%s' "$_merge_base_json" | jq -er 'select((.errors // []) == []) | .data.resource.baseRefName | select(type == "string" and length > 0)') \
-      || scanner_merge_retry "$_scan_tool: current PR base ref unavailable after gate recheck"
+      || merge_target_retry "current PR base ref unavailable after gate recheck"
+    _merge_base_oid=$(printf '%s' "$_merge_base_json" | jq -er '.data.resource.baseRef.target.oid | strings | select(test("^([0-9a-f]{40}|[0-9a-f]{64})$"))') \
+      || merge_target_retry "current PR base commit unavailable after gate recheck"
   else
     if ! _merge_base_ref=$(gh pr view "$PR_NUMBER" --json baseRefName --jq '.baseRefName | strings | select(length > 0)' 2>/dev/null) \
        || [ -z "$_merge_base_ref" ]; then
@@ -973,10 +992,12 @@ _merge_pr() {
   if [ "$SCAN_RECHECK" = true ]; then
     [ "$_merge_base_ref" = "$SCANNED_BASE_REF" ] \
       || scanner_merge_retry "$_scan_tool: PR base ref changed during scan or gate recheck"
-    _merge_base_oid=$(printf '%s' "$_merge_base_json" | jq -er '.data.resource.baseRef.target.oid | select(type == "string" and test("^[0-9a-f]{40,64}$"))') \
-      || scanner_merge_retry "$_scan_tool: current PR base commit unavailable after gate recheck"
     [ "$_merge_base_oid" = "$SCANNED_BASE" ] \
       || scanner_merge_retry "$_scan_tool: PR base commit changed during scan or gate recheck"
+  fi
+  if [ -n "$CHARTER_BASE" ]; then
+    [ "$_merge_base_oid" = "$CHARTER_BASE" ] \
+      || merge_target_retry "target branch tip changed since classification"
   fi
   bureau_ticket_checkpoint "$ISSUE"
   if _merge_output=$(gh pr merge "$PR_NUMBER" "--$BUREAU_MERGE_STRATEGY" --match-head-commit "$MERGE_HEAD" ${message_args[@]+"${message_args[@]}"} 2>&1); then

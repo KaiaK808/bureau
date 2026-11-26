@@ -99,6 +99,8 @@ test_marker_empty_body.sh	1	1
 test_merge_body.sh	1	1
 # Charter foundation driver: unmeasured, provisional hosted estimates.
 test_merge_charter.sh	60	120
+# Queue/exception driver: unmeasured, provisional hosted estimates.
+test_merge_charter_queue.sh	90	180
 test_merge_dry_run_label.sh	1	2
 test_merge_gate_switches.sh	75	193
 test_merge_mode.sh	28	58
