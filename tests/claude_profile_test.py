@@ -41,7 +41,8 @@ class ProfileTests(unittest.TestCase):
         self.profile.mkdir(parents=True)
         self.lean = self.root / 'lean profile'; self.lean.mkdir()
         # This fixture is deliberately not a Git repository. Unrelated doctor
-        # probes are mocked; any attempted subprocess is an error.
+        # probes are mocked, including the merge charter enrollment probe of the
+        # Git common directory; any attempted subprocess is an error.
         self.repo = self.root / 'workspace'; (self.repo / 'scripts').mkdir(parents=True)
         for name in ('bureau-runtime.py', 'bureau-provider.py', 'bureau-stage.md'):
             (self.repo / 'scripts' / name).touch()
@@ -58,6 +59,7 @@ class ProfileTests(unittest.TestCase):
         runtime = d.module('runtime')
         with patch.object(runtime, 'root_for', return_value=self.repo), \
                 patch.object(runtime, 'config_for', return_value=path), \
+                patch.object(runtime, 'common_for', return_value=self.root / 'git-common'), \
                 patch.object(d, 'main_checkout', return_value=(self.repo, None)), \
                 patch.object(d, 'test_wrapper_diagnostics', return_value={'enabled': False}), \
                 patch.object(d, 'codex_gate_duration_warning', return_value=None), \
