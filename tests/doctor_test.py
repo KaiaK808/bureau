@@ -31,7 +31,9 @@ class DoctorTests(unittest.TestCase):
                      'agents':{'merge_publishers':['app:bureau-reviewer'],'spec':'true','spec_review':'false','model':'legacy-model','implement':True,'qa':False,'custom_extension':{'keep':3}},
                      'repo':{'test_command':'python3 test.py'},'extension':['preserve']}
         self.path=self.repo/'.bureau.json';self.path.write_text(json.dumps(self.config))
-        self.env=patch.dict(os.environ,{'BUREAU_CONFIG':str(self.path)});self.env.start();self.addCleanup(self.env.stop)
+        profile=tempfile.TemporaryDirectory(prefix='bureau doctor profile ');self.addCleanup(profile.cleanup)
+        self.env=patch.dict(os.environ,{'BUREAU_CONFIG':str(self.path), 'CLAUDE_CONFIG_DIR':profile.name,
+                                       'BUREAU_CLAUDE_CONFIG_DIR':''});self.env.start();self.addCleanup(self.env.stop)
 
     def publisher_config(self, **agents):
         self.config['agents'] = agents

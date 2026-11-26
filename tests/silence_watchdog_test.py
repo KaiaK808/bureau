@@ -99,7 +99,10 @@ class Watchdog(unittest.TestCase):
         self.root = Path(self.temp.name); self.bin=self.root/'bin'; self.bin.mkdir()
         self.env={**os.environ, **git_maintenance.OFF_ENV, 'PATH':str(self.bin)+':'+os.environ['PATH'],
                   'SILENCE_ROOT':str(self.root),'BUREAU_PROVIDER_LOG_DIR':str(self.root/'logs'),
-                  'CLAUDE_CONFIG_DIR':str(self.root/'claude'), 'CODEX_HOME':str(self.root/'codex')}
+                  'CLAUDE_CONFIG_DIR':str(self.root/'claude'), 'CODEX_HOME':str(self.root/'codex'),
+                  'HOME':str(self.root/'home')}
+        (self.root/'home').mkdir()
+        self.env.pop('BUREAU_CLAUDE_CONFIG_DIR', None)
         for key in list(self.env):
             if key.startswith(('BUREAU_RUNNER_', 'BUREAU_STAGE_TIMEOUT','BUREAU_MODEL_','BUREAU_PROVIDER_PHASE')): self.env.pop(key)
         for name in ('codex','claude'):

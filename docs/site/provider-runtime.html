@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="27841bd9586414db38581effd21eb08b35e881be9e76b3839d9e58973cccd294">
+<meta name="bureau-source-sha256" content="d7594cfe7d38797deaa60831cdecc0b689f4c580c08c1c6bfe886f483cac9bf6">
 <title>provider-runtime · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -426,37 +426,61 @@ and <a href="stage-protocol.html#ticket-budget-and-progress-stops">the
 stop protocol</a>.</p>
 <h2 id="claude-configuration-directory">Claude configuration
 directory</h2>
-<p>A headless Claude stage otherwise runs with the operator's personal
-Claude Code setup: the default configuration directory brings the global
-<code>CLAUDE.md</code>, hooks, plugins and user-scope MCP servers, and
-each of those servers starts extra processes for every stage call. An
-installation can give its Claude stages a lean profile of their own
-instead, with <code>agents.providers.claude.config_dir</code> in
+<p>A background Claude stage otherwise inherits the operator's user
+profile: global <code>CLAUDE.md</code>, hooks, plugins and user-scope
+MCP servers. Implement retains that configuration; QA and review
+suppress MCP servers and hooks through their command-line flags but
+retain the user layer. Give background Claude stages a lean profile with
+<code>agents.providers.claude.config_dir</code> in
 <code>.bureau.json</code> or <code>BUREAU_CLAUDE_CONFIG_DIR</code> in
-the process environment (the environment wins). Claude Code reads
-settings, instructions, MCP configuration, session history and the login
-from the directory <code>CLAUDE_CONFIG_DIR</code> names (see "Log in
-with multiple accounts" in Claude Code's authentication documentation;
-on macOS the Keychain entry is keyed to that directory too), so the
-profile needs its own login: run
-<code>CLAUDE_CONFIG_DIR=&lt;dir&gt; claude</code> once and log in. The
-value is an absolute path to an existing directory or starts with
-<code>~/</code> (the home directory); anything else is a configuration
-error that ends the call with 22 before any provider call. When set, the
-adapter puts <code>CLAUDE_CONFIG_DIR=&lt;dir&gt;</code> into the
-environment of the <code>claude</code> child (also behind the Headroom
-wrap and under <code>repo.untrusted_env: "clean"</code>) and of its
-<code>claude auth status --json</code> check, and nowhere else; the
-transcript recorded in <code>result.json</code> is looked up there too.
-When unset, the child's environment is exactly what it was before. Codex
-stages ignore both settings. <code>--describe</code> reports the
-resolved directory as <code>config_dir</code> for Claude stages
-(<code>null</code> when unset). Doctor lists the directory of every
-enabled Claude stage under <code>claude_config_dirs</code>; for a
-configured one it runs <code>claude auth status --json</code> there and
-warns when it does not report <code>loggedIn: true</code>, and a stage
-without one shows the inherited directory as
-<code>configured: false</code>, not checked.</p>
+the process environment (the environment wins). The profile needs its
+own login: run <code>CLAUDE_CONFIG_DIR=&lt;dir&gt; claude</code> once
+and log in. The value must name an existing absolute directory or start
+with <code>~/</code>; anything else ends the call with 22 before a
+provider call. The adapter sets <code>CLAUDE_CONFIG_DIR</code> only for
+the Claude child and its login check, including behind Headroom and with
+<code>repo.untrusted_env: "clean"</code>. Transcript lookup uses the
+same profile resolution. Unset retains the inherited
+<code>CLAUDE_CONFIG_DIR</code>, otherwise <code>~/.claude</code>; Codex
+ignores these settings. <code>--describe</code> reports the configured
+directory as <code>config_dir</code> (<code>null</code> when unset).</p>
+<p>Every background Claude child gets
+<code>CLAUDE_CODE_DISABLE_AUTO_MEMORY=1</code>, after environment
+filtering, even when the parent sets it to <code>0</code>. This covers
+spec, spec review, research, UX, copy, implement, QA, review
+specialists, the fallback merger, the shadow finding verifier, conflict
+resolution, upstream port resolution and upstream summaries. It also
+applies behind Headroom, during the login check and in the CLI
+capability probe. Bureau does not change the parent environment or
+interactive Claude sessions outside Bureau.</p>
+<p>Doctor lists directories per enabled Claude stage in
+<code>claude_config_dirs</code>, using the launcher's resolution and
+child environment. One warning names every stage inheriting a profile
+without a lean <code>config_dir</code>; setting that key or
+<code>BUREAU_CLAUDE_CONFIG_DIR</code> silences this warning. Enabled
+conflict resolver, upstream port and upstream summary entries are
+included; optional helper calls invoked separately still use the same
+adapter guard. Configured profiles retain the existing login check;
+inherited profiles have <code>logged_in: "not checked"</code>.</p>
+<p>The <code>claude_profiles</code> inventory reads top-level
+<code>mcpServers</code> names from <code>~/.claude.json</code>, or
+<code>&lt;CLAUDE_CONFIG_DIR&gt;/.claude.json</code> when a directory is
+selected, and <code>enabledPlugins</code> names whose value is exactly
+<code>true</code> from <code>&lt;profile&gt;/settings.json</code>. A
+nonempty legacy <code>&lt;profile&gt;/.config.json</code> takes
+precedence for MCP configuration; a custom OAuth profile uses
+<code>.claude-custom-oauth.json</code>. Disabled plugins and version
+lists do not enable a plugin. Output contains names and source-file
+paths, never server commands, arguments, environment values, URLs,
+tokens or plugin configuration. A missing file explicitly means an empty
+list; unreadable, malformed or structurally invalid files report
+<code>could not check</code> with a warning and an unknown list. This is
+a user-profile inventory: project/managed settings and servers supplied
+by plugins are outside it, and QA/review's strict empty MCP
+configuration still applies. Doctor remains read-only and does not
+persist a drift baseline in the installation record. Compare installed
+script drift, resync the complete scripts scope and restart drivers to
+adopt these checks and the memory guard.</p>
 <h2 id="codex-implementation-sandbox-gate">Codex implementation sandbox
 gate</h2>
 <p>Opt-in <code>agents.providers.codex.gate_outside_sandbox</code>

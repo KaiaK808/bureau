@@ -287,8 +287,10 @@ else:
                   'BUREAU_PROVIDER_CONFIG_BASE':subprocess.check_output(['git','-C',str(self.root),'rev-parse','HEAD'],text=True).strip()}
         for key in list(self.env):
             if key.startswith(('BUREAU_RUNNER_','BUREAU_MODEL_','BUREAU_CODEX_MODEL_','BUREAU_STAGE_TIMEOUT')): self.env.pop(key)
-        # The provider looks for the CLI's own records here, never in the real home.
-        self.env.update(CLAUDE_CONFIG_DIR=str(self.root/'claude config'),CODEX_HOME=str(self.root/'codex home'))
+        # Keep profile selection and transcript fallbacks inside the fixture.
+        home=self.root/'fixture home'; home.mkdir()
+        self.env.pop('BUREAU_CLAUDE_CONFIG_DIR',None)
+        self.env.update(HOME=str(home),CLAUDE_CONFIG_DIR=str(self.root/'claude config'),CODEX_HOME=str(self.root/'codex home'))
         self.env['GATE_HELPER']=str(ROOT/'tests/lib/codex_gate_events.py')
 
     def command(self,*extra):
@@ -2080,7 +2082,7 @@ p.Path.open=refuse_transcript_read
                         *tools,'--append-system-prompt-file',str(evidence/'system.txt'),
                         '--effort','high','--model','claude-fixture'])
 
-    def test_shadow_disables_automatic_memory_only_for_verification(self):
+    def test_shadow_and_ordinary_reviewers_disable_automatic_memory(self):
         wrapper = self.bin/'headroom'
         wrapper.write_text('#!/bin/sh\nshift 3\nexec claude "$@"\n'); wrapper.chmod(0o755)
         for wrapped, policy in ((False, 'default'), (True, 'clean')):
@@ -2093,14 +2095,14 @@ p.Path.open=refuse_transcript_read
                 self.assertEqual(argv[argv.index('--setting-sources')+1], 'user')
                 self.assertEqual(argv[argv.index('--tools')+1], '')
                 child_env = json.loads((self.root/'claude-env.json').read_text())
-                self.assertEqual(child_env.get('CLAUDE_CODE_DISABLE_AUTO_MEMORY'), '1')
-                # Ordinary reviewers keep the installation's selected memory policy.
+                self.assertEqual(child_env.get('CLAUDE_CODE_DISABLE_AUTO_MEMORY'), '1', 'auto-memory guard missing')
+                # Ordinary reviewers also disable automatic memory.
                 self.run_provider('--stage', 'code_review', '--phase', 'correctness',
                                   CLAUDE_CODE_DISABLE_AUTO_MEMORY='0', CLAUDE_FAKE_ROOT=str(self.root))
                 argv = json.loads((self.root/'argv.json').read_text())
                 self.assertEqual(argv[argv.index('--setting-sources')+1], 'user')
                 child_env = json.loads((self.root/'claude-env.json').read_text())
-                self.assertEqual(child_env.get('CLAUDE_CODE_DISABLE_AUTO_MEMORY'), '0')
+                self.assertEqual(child_env.get('CLAUDE_CODE_DISABLE_AUTO_MEMORY'), '1', 'auto-memory guard missing')
 
     def claude_argv(self,config,**env):
         self.config.write_text(json.dumps(config))
@@ -2217,9 +2219,10 @@ p.Path.open=refuse_transcript_read
                 child,login=self.claude_envs(config,**env)
                 self.assertEqual(child['CLAUDE_CONFIG_DIR'],str(expected))
                 self.assertEqual(login['CLAUDE_CONFIG_DIR'],str(expected))
-                # Only that variable differs from the environment the child got before.
+                # Profile selection and the mandatory memory guard are child-only.
                 self.assertEqual({k:v for k,v in child.items() if k!='CLAUDE_CONFIG_DIR'},
-                                 {k:v for k,v in p.untrusted_env({**self.env,**env},'default','claude').items() if k!='CLAUDE_CONFIG_DIR'})
+                                 {**{k:v for k,v in p.untrusted_env({**self.env,**env},'default','claude').items() if k!='CLAUDE_CONFIG_DIR'},
+                                  'CLAUDE_CODE_DISABLE_AUTO_MEMORY':'1'})
                 self.assertEqual(p.configuration('implement',config,{**self.env,**env})['config_dir'],str(expected))
                 # Claude writes its transcript under that directory, and result.json names it there.
                 _,metadata=self.evidence()
@@ -2238,9 +2241,9 @@ p.Path.open=refuse_transcript_read
                 if 'repo' in config: self.assertNotIn('FAKE_ROOT',child)
 
     def without_config_dir(self):
-        # The adapter without this change: claude_env leaves the environment as it is.
+        # Remove profile selection while retaining the mandatory memory guard.
         source=SCRIPT.read_text()
-        changed="        return {**(os.environ if env is None else env), 'CLAUDE_CONFIG_DIR': options['config_dir']}\n"
+        changed="        result['CLAUDE_CONFIG_DIR'] = options['config_dir']\n"
         self.assertEqual(source.count(changed),1,'the control no longer matches the adapter')
         control=self.root/'control'/'bureau-provider.py'; control.parent.mkdir(exist_ok=True)
         shutil.copy(SCRIPT.with_name('bureau-evidence.py'), control.parent / 'bureau-evidence.py')
@@ -2249,7 +2252,7 @@ p.Path.open=refuse_transcript_read
         shutil.copy(SCRIPT.with_name('bureau-ticket.py'), control.parent / 'bureau-ticket.py')
         shutil.copy(SCRIPT.with_name('bureau-insights.sh'), control.parent / 'bureau-insights.sh')
         shutil.copy(SCRIPT.with_name('bureau-process.py'), control.parent / 'bureau-process.py')
-        control.write_text(source.replace(changed,'        return env\n'))
+        control.write_text(source.replace(changed,'        pass\n'))
         return control
 
     def test_claude_config_dir_control_persists_successful_stage_outcome(self):
@@ -2275,7 +2278,8 @@ p.Path.open=refuse_transcript_read
         self.env.pop('CLAUDE_CONFIG_DIR')
         child,login=self.claude_envs(config)
         self.assertNotIn('CLAUDE_CONFIG_DIR',child); self.assertNotIn('CLAUDE_CONFIG_DIR',login)
-        self.assertEqual(child,p.untrusted_env({**self.env,'FAKE_ROOT':self.env['FAKE_ROOT']},'default','claude'))
+        self.assertEqual(child,{**p.untrusted_env({**self.env,'FAKE_ROOT':self.env['FAKE_ROOT']},'default','claude'),
+                                'CLAUDE_CODE_DISABLE_AUTO_MEMORY':'1'})
         # An empty override is no override, as for the other BUREAU_ overrides.
         child,_=self.claude_envs(config,BUREAU_CLAUDE_CONFIG_DIR='')
         self.assertNotIn('CLAUDE_CONFIG_DIR',child)
