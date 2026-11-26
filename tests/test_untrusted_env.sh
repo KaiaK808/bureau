@@ -383,7 +383,7 @@ codex_run() {
     sed -i.bak -e "s/env=untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner, options.get('untrusted_git_credentials', 'off'))/env=None/" \
       -e "s/child_env = untrusted_env(os.environ, options.get('untrusted_env', 'default'), runner, options.get('untrusted_git_credentials', 'off'))/child_env = dict(os.environ)/" \
       "$SCRIPTS_DIR/bureau-provider.py"
-    { [ "$(grep -c 'env=None' "$SCRIPTS_DIR/bureau-provider.py")" = 1 ] \
+    { [ "$(grep -c 'env=claude_env(options, env=None)' "$SCRIPTS_DIR/bureau-provider.py")" = 1 ] \
       && [ "$(grep -c 'child_env = dict(os.environ)' "$SCRIPTS_DIR/bureau-provider.py")" = 1 ]; } \
       || fail "5 control: could not restore the inherited environment in the adapter copy"; }
   mkdir -p "$PR1_MARKS/agent-bin"
