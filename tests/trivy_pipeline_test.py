@@ -31,6 +31,7 @@ config=dict(qa=dict(trivy=dict(enabled=True,mode='blocking',cache_dir=str(instal
 if case=='off':config={}
 if case=='disabled':config['qa']['trivy']['enabled']=False
 if case=='advisory':config['qa']['trivy']['mode']='advisory'
+if case.startswith('charter-'):config=dict(agents=dict(merge_charter=dict(enabled=case=='charter-enabled')))
 (repo/'.bureau.json').write_text(json.dumps(config))
 def git(*args):return subprocess.check_output(['git','-C',str(repo),*args],text=True).strip()
 (repo/'requirements.txt').write_text('safe==1.0\n');git('add','requirements.txt');git('commit','-qm','test: safe head');git('push','-q','origin','test-branch')
@@ -95,6 +96,7 @@ COLLECT=r'''
 import json,os,pathlib,re
 repo=pathlib.Path(__import__('sys').argv[1]);gh=pathlib.Path(os.environ['PR2_GH'])
 value=dict(code=os.environ['LAST_RC'],stdout=os.environ['LAST_STDOUT'],stderr=os.environ['LAST_STDERR'],merged=(gh/'merge_calls.log').exists(),
+           charter_state=(repo/'.git/bureau/charter').exists(),
            receipts=[json.loads(p.read_text()) for p in (repo/'.git/bureau/scans/trivy').glob('*/*/receipt.json')],
            scanned=json.loads((repo/'scanner-inputs.json').read_text()),hook_ran=(gh/'scan-hook-ran').exists(),
            hook_log=(repo/'concurrent-update.py.log').read_text() if (repo/'concurrent-update.py.log').exists() else '',
@@ -126,7 +128,7 @@ class MergeTests(unittest.TestCase):
                     self.assertEqual(p.returncode,0,p.stdout+p.stderr)
                     value=json.loads(result.read_text());results.append(value)
                     concurrent=name.endswith(('during-scan','after-gates','during-final-fetch','during-gates'))
-                    expected='0' if name in ('exact','off','disabled','advisory','negative-merge-guard') else '2' if concurrent and not name.startswith('ci-') else '25'
+                    expected='0' if name in ('exact','off','disabled','advisory','negative-merge-guard','charter-disabled','charter-enabled') else '2' if concurrent and not name.startswith('ci-') else '25'
                     if name=='retarget-after-gates': expected='20'
                     self.assertEqual(value['code'],expected,value['stdout']+'\n'+value['stderr']+'\n'+value['hook_log'])
                     self.assertEqual(value['merged'],expected=='0',value)
@@ -178,8 +180,15 @@ class MergeTests(unittest.TestCase):
         self.cases(('base-during-gates','base-after-gates'))
 
     def test_disabled_and_advisory_match_frozen_call_baseline(self):
+        # Shared with Semgrep: exactly one local charter lookup, no new gh calls.
         golden=json.loads((ROOT/'tests/fixtures/semgrep-disabled-merge.json').read_text())
         for value in self.cases(('off','disabled','advisory')):self.assertEqual({k:value[k] for k in golden},golden)
+
+    def test_not_enrolled_charter_git_gh_calls_match_baseline_for_both_flags(self):
+        golden=json.loads((ROOT/'tests/fixtures/semgrep-disabled-merge.json').read_text())
+        for value in self.cases(('charter-disabled','charter-enabled')):
+            self.assertEqual({key:value[key] for key in golden},golden)
+            self.assertFalse(value['charter_state'])
 
     def test_negative_control_removed_merge_guard_merges_unsafe_head(self):
         # A changed head without remeasurement is merged by the legacy gate.
