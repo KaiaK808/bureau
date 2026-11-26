@@ -99,8 +99,8 @@ test_marker_empty_body.sh	1	1
 test_merge_body.sh	1	1
 # Charter foundation driver: unmeasured, provisional hosted estimates.
 test_merge_charter.sh	60	120
-# Queue/exception driver: unmeasured, provisional hosted estimates.
-test_merge_charter_queue.sh	90	180
+# Queue/exception driver: measured 26.11.2026, about 500s on a hosted Linux shard and 660s alone on macOS (slower under full-suite load).
+test_merge_charter_queue.sh	600	900
 test_merge_dry_run_label.sh	1	2
 test_merge_gate_switches.sh	75	193
 test_merge_mode.sh	28	58
