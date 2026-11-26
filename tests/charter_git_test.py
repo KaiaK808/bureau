@@ -494,6 +494,9 @@ def prepare_pipeline(repo, case, mutation=''):
         external = repo.parent / (repo.name + '-config')
         external.mkdir()
         shutil.copy(repo / '.bureau.json', external / '.bureau.json')
+        # The merge stage reads .env next to the selected configuration.
+        if (repo / '.env').exists():
+            shutil.copy(repo / '.env', external / '.env')
     if case == 'bare':
         bare = repo / 'bare.git'
         git(repo, 'clone', '--bare', '--no-hardlinks', '--', str(repo), str(bare))
