@@ -9,7 +9,7 @@ Review comments must carry the exact issue heading and an unambiguous reserved h
 
 An upgrade that refreshes installed assets has two steps: update the **Bureau source skill**, then resync its assets into **each adopting repository**. Updating the source clone alone leaves installed scripts and commands unchanged. `/bureau-init --update` edits configuration; it does not upgrade installed assets.
 
-This guide upgrades installations from the official [KaiaK808/bureau](https://github.com/KaiaK808/bureau) source: legacy untagged installations, v2.0.0 installations, the v3 release candidates, v3.0.0, v3.0.1, v3.0.2, the v3.1 release candidates, v3.1.0, the v3.2 release candidate, v3.2.0, v3.2.1, the v3.3 release candidates, v3.3.0, v3.4.0, v3.4.1, v3.5.0, v3.5.1, v3.6.0, v3.7.0, v3.8.0 and v3.9.0 to **Bureau v3.9.2**, dated 2026-11-24, published on 2026-11-24 as the latest [GitHub Release](https://github.com/KaiaK808/bureau/releases/tag/v3.9.2). The commands below require the selected release's source skill. See the [v3.9.2 release notes](release-notes.md), the previous stable [v3.9.0 release](https://github.com/KaiaK808/bureau/releases/tag/v3.9.0) and its [release notes](release-notes-v3.9.0.md), the earlier [v3.8.0 release](https://github.com/KaiaK808/bureau/releases/tag/v3.8.0) and its [release notes](release-notes-v3.8.0.md), the earlier [v3.7.0 release](https://github.com/KaiaK808/bureau/releases/tag/v3.7.0) and its [release notes](release-notes-v3.7.0.md), the earlier [v3.6.0 release](https://github.com/KaiaK808/bureau/releases/tag/v3.6.0) and its [release notes](release-notes-v3.6.0.md), the earlier [v3.5.1 release](https://github.com/KaiaK808/bureau/releases/tag/v3.5.1) and its [release notes](release-notes-v3.5.1.md), the earlier [v3.5.0 release](https://github.com/KaiaK808/bureau/releases/tag/v3.5.0) and its [release notes](release-notes-v3.5.0.md), the earlier [v3.4.1 release](https://github.com/KaiaK808/bureau/releases/tag/v3.4.1) and its [release notes](release-notes-v3.4.1.md), the earlier [v3.4.0 release](https://github.com/KaiaK808/bureau/releases/tag/v3.4.0) and its [release notes](release-notes-v3.4.0.md), the [v3.3.0 release](https://github.com/KaiaK808/bureau/releases/tag/v3.3.0) and its [release notes](release-notes-v3.3.0.md) (the candidates: [v3.3.0-rc.2](release-notes-v3.3.0-rc.2.md), [v3.3.0-rc.1](release-notes-v3.3.0-rc.1.md)), the [v3.2.1 release](https://github.com/KaiaK808/bureau/releases/tag/v3.2.1) and its [release notes](release-notes-v3.2.1.md), the [v3.2.0 release](https://github.com/KaiaK808/bureau/releases/tag/v3.2.0) and its [release notes](release-notes-v3.2.0.md) (the candidate: [v3.2.0-rc.1](release-notes-v3.2.0-rc.1.md)), the [v3.1.0 release](https://github.com/KaiaK808/bureau/releases/tag/v3.1.0) and its [release notes](release-notes-v3.1.0.md) (the candidates: [v3.1.0-rc.2](release-notes-v3.1.0-rc.2.md), [v3.1.0-rc.1](release-notes-v3.1.0-rc.1.md)), the [v3.0.2 release](https://github.com/KaiaK808/bureau/releases/tag/v3.0.2) and its [release notes](release-notes-v3.0.2.md), the [v3.0.1 release notes](release-notes-v3.0.1.md), the [v3.0.0 release notes](release-notes-v3.0.0.md) (the candidates: [v3.0.0-rc.2](release-notes-v3.0.0-rc.2.md), [v3.0.0-rc.1](release-notes-v3.0.0-rc.1.md)), the previous major [v2.0.0 release](https://github.com/KaiaK808/bureau/releases/tag/v2.0.0) and its [release notes](release-notes-v2.0.0.md), the [changelog](../CHANGELOG.md) and the [release process](releases.md). A Bureau major version marks operational changes (v2.0.0: explicit worker ownership; v3: the exit-code contract, see [Upgrade to v3](#upgrade-to-v3)); it does not require configuration schema v2. v3.1 through v3.4 keep that contract; v3.5 adds quiet waits 28/29 and v3.7 adds human holds 30/31, requiring coordinated consumers; see [Upgrade to v3.1](#upgrade-to-v31), [Upgrade to v3.2](#upgrade-to-v32), [Upgrade to v3.3](#upgrade-to-v33), [Upgrade to v3.4](#upgrade-to-v34), [Upgrade to v3.4.1](#upgrade-to-v341), [Upgrade to v3.5](#upgrade-to-v35), [Upgrade to v3.5.1](#upgrade-to-v351), [Upgrade to v3.6](#upgrade-to-v36), [Upgrade to v3.7](#upgrade-to-v37), [Upgrade to v3.8](#upgrade-to-v38), [Upgrade to v3.9](#upgrade-to-v39) and [Upgrade to v3.9.2](#upgrade-to-v392).
+This guide upgrades installations from the official [KaiaK808/bureau](https://github.com/KaiaK808/bureau) source: legacy untagged installations, v2.0.0 installations, the v3 release candidates, v3.0.0, v3.0.1, v3.0.2, the v3.1 release candidates, v3.1.0, the v3.2 release candidate, v3.2.0, v3.2.1, the v3.3 release candidates, v3.3.0, v3.4.0, v3.4.1, v3.5.0, v3.5.1, v3.6.0, v3.7.0, v3.8.0, v3.9.0 and v3.9.2 to **Bureau v3.10.0**, planned for 2026-12-01, in release preparation. Tagging and publication remain separate maintainer operations. The commands below require the selected release's source skill. See the [v3.10.0 release notes](release-notes.md), the previous stable [v3.9.2 release](https://github.com/KaiaK808/bureau/releases/tag/v3.9.2) and its [release notes](release-notes-v3.9.2.md), the earlier [v3.9.0 release](https://github.com/KaiaK808/bureau/releases/tag/v3.9.0) and its [release notes](release-notes-v3.9.0.md), the earlier [v3.8.0 release](https://github.com/KaiaK808/bureau/releases/tag/v3.8.0) and its [release notes](release-notes-v3.8.0.md), the earlier [v3.7.0 release](https://github.com/KaiaK808/bureau/releases/tag/v3.7.0) and its [release notes](release-notes-v3.7.0.md), the earlier [v3.6.0 release](https://github.com/KaiaK808/bureau/releases/tag/v3.6.0) and its [release notes](release-notes-v3.6.0.md), the earlier [v3.5.1 release](https://github.com/KaiaK808/bureau/releases/tag/v3.5.1) and its [release notes](release-notes-v3.5.1.md), the earlier [v3.5.0 release](https://github.com/KaiaK808/bureau/releases/tag/v3.5.0) and its [release notes](release-notes-v3.5.0.md), the earlier [v3.4.1 release](https://github.com/KaiaK808/bureau/releases/tag/v3.4.1) and its [release notes](release-notes-v3.4.1.md), the earlier [v3.4.0 release](https://github.com/KaiaK808/bureau/releases/tag/v3.4.0) and its [release notes](release-notes-v3.4.0.md), the [v3.3.0 release](https://github.com/KaiaK808/bureau/releases/tag/v3.3.0) and its [release notes](release-notes-v3.3.0.md) (the candidates: [v3.3.0-rc.2](release-notes-v3.3.0-rc.2.md), [v3.3.0-rc.1](release-notes-v3.3.0-rc.1.md)), the [v3.2.1 release](https://github.com/KaiaK808/bureau/releases/tag/v3.2.1) and its [release notes](release-notes-v3.2.1.md), the [v3.2.0 release](https://github.com/KaiaK808/bureau/releases/tag/v3.2.0) and its [release notes](release-notes-v3.2.0.md) (the candidate: [v3.2.0-rc.1](release-notes-v3.2.0-rc.1.md)), the [v3.1.0 release](https://github.com/KaiaK808/bureau/releases/tag/v3.1.0) and its [release notes](release-notes-v3.1.0.md) (the candidates: [v3.1.0-rc.2](release-notes-v3.1.0-rc.2.md), [v3.1.0-rc.1](release-notes-v3.1.0-rc.1.md)), the [v3.0.2 release](https://github.com/KaiaK808/bureau/releases/tag/v3.0.2) and its [release notes](release-notes-v3.0.2.md), the [v3.0.1 release notes](release-notes-v3.0.1.md), the [v3.0.0 release notes](release-notes-v3.0.0.md) (the candidates: [v3.0.0-rc.2](release-notes-v3.0.0-rc.2.md), [v3.0.0-rc.1](release-notes-v3.0.0-rc.1.md)), the previous major [v2.0.0 release](https://github.com/KaiaK808/bureau/releases/tag/v2.0.0) and its [release notes](release-notes-v2.0.0.md), the [changelog](../CHANGELOG.md) and the [release process](releases.md). A Bureau major version marks operational changes (v2.0.0: explicit worker ownership; v3: the exit-code contract, see [Upgrade to v3](#upgrade-to-v3)); it does not require configuration schema v2. v3.1 through v3.4 keep that contract; v3.5 adds quiet waits 28/29 and v3.7 adds human holds 30/31, requiring coordinated consumers; see [Upgrade to v3.1](#upgrade-to-v31), [Upgrade to v3.2](#upgrade-to-v32), [Upgrade to v3.3](#upgrade-to-v33), [Upgrade to v3.4](#upgrade-to-v34), [Upgrade to v3.4.1](#upgrade-to-v341), [Upgrade to v3.5](#upgrade-to-v35), [Upgrade to v3.5.1](#upgrade-to-v351), [Upgrade to v3.6](#upgrade-to-v36), [Upgrade to v3.7](#upgrade-to-v37), [Upgrade to v3.8](#upgrade-to-v38), [Upgrade to v3.9](#upgrade-to-v39), [Upgrade to v3.9.2](#upgrade-to-v392) and [Upgrade from v3.9.2](#upgrade-from-v392).
 
 ## Implementation decision holds
 
@@ -59,10 +59,10 @@ git -C "$BUREAU_SOURCE" rev-parse HEAD
 
 For a Codex-only install, the entry point may be `~/.agents/skills/bureau-init` or a configured skill directory. Follow its link to the actual source clone. Record the previous commit and branch/tag privately for rollback; `describe` alone may name a nearby tag instead of the installed commit.
 
-Confirm that `origin` identifies the official `KaiaK808/bureau` repository (HTTPS or SSH). Preserve local source changes before continuing; do not reset the skill clone. Use a clean checkout to select the published release's exact tag (`v3.9.2` for this release, `v3.9.0` for the previous stable release, `v3.8.0`, `v3.7.0`, `v3.6.0`, `v3.5.1`, `v3.5.0`, `v3.4.1`, `v3.4.0`, `v3.3.0`, `v3.2.1`, `v3.2.0`, `v3.1.0`, `v3.0.2`, `v3.0.1`, `v3.0.0` or `v2.0.0` for an earlier one):
+Confirm that `origin` identifies the official `KaiaK808/bureau` repository (HTTPS or SSH). Preserve local source changes before continuing; do not reset the skill clone. Use a clean checkout to select the published release's exact tag (`v3.10.0` once published for this release, `v3.9.2` for the previous stable release, `v3.9.0`, `v3.8.0`, `v3.7.0`, `v3.6.0`, `v3.5.1`, `v3.5.0`, `v3.4.1`, `v3.4.0`, `v3.3.0`, `v3.2.1`, `v3.2.0`, `v3.1.0`, `v3.0.2`, `v3.0.1`, `v3.0.0` or `v2.0.0` for an earlier one):
 
 ```sh
-BUREAU_RELEASE=v3.9.2 # or v3.9.0, v3.8.0, v3.7.0, v3.6.0, v3.5.1, v3.5.0, v3.4.1, v3.4.0, v3.3.0, v3.2.1, v3.2.0, v3.1.0, v3.0.2, v3.0.1, v3.0.0, v2.0.0
+BUREAU_RELEASE=v3.10.0 # once published, or v3.9.2, v3.9.0, v3.8.0, v3.7.0, v3.6.0, v3.5.1, v3.5.0, v3.4.1, v3.4.0, v3.3.0, v3.2.1, v3.2.0, v3.1.0, v3.0.2, v3.0.1, v3.0.0, v2.0.0
 git -C "$BUREAU_SOURCE" fetch origin tag "$BUREAU_RELEASE" &&
 git -C "$BUREAU_SOURCE" switch --detach "refs/tags/$BUREAU_RELEASE" &&
 git -C "$BUREAU_SOURCE" rev-parse HEAD
@@ -72,9 +72,180 @@ Stop if fetching fails, especially if an existing local tag conflicts with the r
 
 An intentionally `main`-tracking installation can instead use `git pull --ff-only` when its checkout is clean and its upstream is the official `origin/main`. This follows ongoing development rather than pinning a release. If the source is an archive-origin checkout, an unrelated history or a plain copied directory, keep it intact and install a separate official clone from the [installation guide](../README.md#install); review how the loaded skill entry point should move before replacing any link. Do not merge unrelated histories or change the old checkout's remote as an upgrade shortcut.
 
+## Upgrade from v3.9.2
+
+**v3.10.0**, planned for **2026-12-01**, is a minor release on v3.9.2 in release preparation. Use these steps once the release is published. Configuration schema versions 1 and 2, Spec Kit 1.2.2, the v3 exit vocabulary and current-workspace prepare/finish protocol remain. See the [release notes](release-notes.md) for change-level validation limits.
+
+### Drain, select the source and resync
+
+1. Stop new dispatch and inspect owners from the adopting repository root:
+
+   ```sh
+   python3 -B scripts/bureau-runtime.py pause
+   python3 -B scripts/bureau-runtime.py status
+   git worktree list
+   ```
+
+   Let active stages finish, then stop the existing launcher, scheduler, shepherds, queue loops, dispatchers and supervisors through their normal stop controls. For the standard tmux launcher, identify its session with `tmux list-sessions`, then run `tmux kill-session -t "$BUREAU_SESSION"` after setting that variable to the installation's session. A stopped launcher does not prove all workers have exited; inspect runtime status again. Preserve interrupted leases and process holds rather than deleting them.
+
+2. Follow [source selection](#select-the-source-release): record the previous commit, select published `v3.10.0` in the actual source skill and refresh discovery. Follow the [inventory and private backup recipe](#before-changing-an-adopting-repository), including `.bureau-install.json`, `.gitignore`, customized assets, user instructions, Spec Kit assets/constitution, local commits and shared runtime records. Compare installed-script drift before applying upstream files; retain local incident fixes in the coherent upgraded set.
+
+3. **Before scripts resync or restart**, publish valid `agents.merge_publishers` in the actual default branch's sanitized `.bureau.json` through the normal reviewed human publication process. Preserve other required policy and remove credentials and machine-specific settings; keep secrets in the external secrets file. Use a dedicated App when possible, substituting its real slug for this example:
+
+   ```json
+   {"agents":{"merge_publishers":["app:bureau-reviewer"]}}
+   ```
+
+   A human publisher uses `user:review-publisher`; Actions uses `app:github-actions`. Set the matching typed identity in the sanitized file, review its diff and publish it before continuing. Run `gh api user --jq .login` under the review publisher's credentials to identify a human login; App publishers must use the App's slug. See [trusted merge publishers](#trusted-merge-publishers). Missing/invalid policy holds automatic merges with 25. Manual mode warns on absence and rejects present invalid policy. Shared identities trust everyone using that principal. Stop the merger before emergency revocation because policy is pinned per run.
+
+4. Preview the **complete scripts scope** from each adopting repository root, with its existing installed target (`claude`, `codex` or `both`):
+
+   ```sh
+   BUREAU_TARGET=claude
+   python3 -B "$BUREAU_SOURCE/scripts/bureau_install.py" assets \
+     --repo "$PWD" --target "$BUREAU_TARGET" --scope scripts
+   ```
+
+   Review conflicts against the private backup. For each approved replacement, add a path-specific `--overwrite`, such as `--overwrite scripts/merge-pipeline.sh`, and preview again. Preserve intentional drift and resolve all remaining conflicts before applying the same approved options:
+
+   ```sh
+   python3 -B "$BUREAU_SOURCE/scripts/bureau_install.py" assets \
+     --repo "$PWD" --target "$BUREAU_TARGET" --scope scripts --apply
+   ```
+
+   Include `bureau-charter.py`, `bureau-env.sh`, `bureau-merge-review.py`, `bureau-secrets.py`, the review parser/pipeline, provider/doctor, dispatcher/runtime, process helper and wrapper as one set. Mixed secret helper/parser formats remain blocking not-measured results. This release requires no interfaces, CI or workflows resync from v3.9.2; `--update` changes configuration only. Restart every driver on this complete set after the remaining steps.
+
+### Review defaults and optional configuration
+
+The committed-secret review floor is always active when review runs, including approval reuse. No scanner binary, database, Trivy setup or enable switch is required. Inspect synthetic credential fixtures and use narrowly reviewed base exceptions if needed; a branch-only exception cannot suppress itself. Create or edit the pinned base's `.bureau/secret-exceptions.json` through normal human review using this format, replacing selectors, owner, reason and expiry with approved values:
+
+```json
+[{"id":"aws-access-key-id","file":"fixtures/credentials.txt","owner":"security-team","reason":"Approved synthetic fixture","expires":"2027-01-01"}]
+```
+
+Use a future ISO date or timezone-aware timestamp; expired or malformed exceptions do not grant a pass. See [committed secrets](configuration.md#committed-secrets) for bounds and locator resolution. The scan covers added committed physical lines, not intermediate commits, decoded content or all possible secrets. Findings and unmeasured scans prevent approval; BLOCK and review caps remain in force.
+
+Every background Claude child now forces `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, including when the parent sets 0; interactive sessions outside Bureau remain unchanged. Doctor lists inherited user MCP/plugin names and reports unreadable files, without persisting drift. Existing `agents.providers.claude.config_dir` or overriding `BUREAU_CLAUDE_CONFIG_DIR` can select an optional lean profile. To use one, create an operator-owned directory and authenticate it separately:
+
+```sh
+BUREAU_CLAUDE_CONFIG_DIR="$HOME/.bureau-claude"
+mkdir -p "$BUREAU_CLAUDE_CONFIG_DIR"
+CLAUDE_CONFIG_DIR="$BUREAU_CLAUDE_CONFIG_DIR" claude
+export BUREAU_CLAUDE_CONFIG_DIR
+python3 -B scripts/bureau-provider.py --stage implement --describe
+```
+
+Keep the same export in the trusted launch environment, or set `agents.providers.claude.config_dir` to that existing absolute directory (or a `~/` path) in `.bureau.json`. Environment selection wins. The configured profile needs its own login and silences the inheritance warning; leaving it unset retains inheritance with auto-memory disabled. Provider description reports selection without a model call. See [profile resolution and inventory limits](provider-runtime.md#claude-configuration-directory).
+
+The new `repo.test_wrapper` stays disabled when absent or `[]`. `repo.test_wrapper_start_timeout_seconds` defaults to 21600 and must be finite, greater than 0 and at most 86400 even when disabled. After scripts resync, a future wrapper declaration would be a literal argv array beginning with an absolute executable outside tested checkouts, for example `["/opt/bureau/bin/test-slot", "--project", "sample"]`. **Stage routing remains dormant**: configuring this primitive changes no current launch, timer, build key or evidence format. Leave both keys absent for current stage behavior, and run doctor below to inspect any existing declaration without invoking it or acquiring a slot.
+
+No new runtime dependency is required. Keep Bash 3.2+, Python 3.9+, git and jq, Node 18+ for the shared scheduler, and authenticated `gh` for background GitHub stages. Optional charter activation uses the existing GitHub and Linear access; the secret scanner and acceptance validator use only local Git/Python standard-library capabilities. No scanner pin or configuration schema migration is introduced.
+
+### Optional merge charter enrollment
+
+`agents.merge_charter` is new and opt-in. An absent or disabled declaration does not enroll. An unenrolled merge still performs exactly one local Git common-directory read, with hooks off and inherited `GIT_*` overrides removed only for that call, without additional service calls. Run merges from a work tree; repair failed lookups or inaccessible enrollment before retrying. Existing enrollment remains active across resync and cannot be disabled by changing a checkout flag.
+
+To opt in, edit a sanitized default-branch `.bureau.json` while retaining `agents.merge_publishers` and other required policy, configure a local Merge state for human handoff, and publish the reviewed policy through normal human review. A label queue and exception example is:
+
+```json
+{
+  "agents": {
+    "merge_publishers": ["app:bureau-reviewer"],
+    "merge_charter": {
+      "enabled": true,
+      "approved_queue": {"label": "approved-for-merge"},
+      "exceptions": [{"class": "security", "paths": ["auth/**"], "labels": ["security-sensitive"]}],
+      "suite": null,
+      "red_main": null,
+      "report": false
+    }
+  }
+}
+```
+
+Replace the queue object with `{"cycle_id":"12345678-1234-1234-1234-123456789abc"}` using a real Linear cycle UUID for cycle selection, or `null` for no queue requirement. Review exception classes and path/label selectors with their owners; `exceptions: []` retains the mandatory policy-change exception. See [strict schema and selectors](configuration.md#merge-charter-foundation). Suite, red-main and report fields are declarations only; receipts, reports, main-CI latches and concurrency are not implemented.
+
+From the adopting repository with trusted installed scripts, authenticated `gh` and a matching origin, a maintainer explicitly enrolls after publication. Replace `owner/repository` with the actual GitHub repository:
+
+```sh
+python3 -I -B scripts/bureau-charter.py --repo . --github owner/repository enroll
+python3 -I -B scripts/bureau-charter.py --repo . --github owner/repository policy
+python3 -I -B scripts/bureau-charter.py --repo . status
+```
+
+Enrollment pins and validates actual default-branch policy and writes private shared-Git state; linked worktrees share it, separate clones require their own enrollment. After an intentional policy update, repeat `enroll` to acknowledge its digest. Replace obsolete `status --local` callers with `status`, or pass a Git-resolved common directory explicitly:
+
+```sh
+BUREAU_COMMON=$(python3 -I -B scripts/bureau-charter.py --repo . merge-common-dir) &&
+python3 -I -B scripts/bureau-charter.py --repo . status --common-dir "$BUREAU_COMMON"
+```
+
+For enrolled merge worktrees, inspect and restore full ancestry before retrying classification:
+
+```sh
+git rev-parse --is-shallow-repository
+# Only when the preceding result is true:
+git fetch --unshallow origin
+```
+
+Run this from the relevant worktree and verify both target and head histories are available; failed fetches, missing objects or ambiguous ancestry remain a human hold. Publish queue/exception policy on the default branch before dispatch; create the named Linear label or choose the real cycle, then apply that approval to eligible tickets in Linear. Missing approval waits with 2. Exceptions, `.bureau.json` edits and indeterminate classification take priority with 25 and need human inspection/merge. Final target movement retries with 2, independently of scanner and base-freshness toggles; the final read and merge remain separate GitHub operations.
+
+### Optional offline tools and local suite wrappers
+
+Acceptance contracts require no adopter action unless the standalone CLI is wanted; the scripts resync already installs it. Place optional `acceptance.json` beside the feature's `spec.md` and `tasks.md`, then run:
+
+```sh
+python3 -B scripts/bureau-acceptance-contract.py validate acceptance.json --spec spec.md --tasks tasks.md
+```
+
+Use the [format and synthetic examples](../references/acceptance-contracts.md) to author inputs. No stage enforcement, verifier execution or enablement key exists. A well formed declaration does not prove completeness or product acceptance.
+
+The local suite orchestrator is repository-only: hosted CI and installed runtime assets need no change. A maintainer adapting a local wrapper must keep exclusive suite/worktree admission until receipt publication, start from a clean source checkout, choose a fresh run tag and external output plus stable state/project identity, then use this recipe in the shared test slot:
+
+```sh
+SUITE_OUTPUT="$HOME/bureau-suite-results/v3100"
+SUITE_STATE="$HOME/.local/state/bureau/suites/bureau"
+python3 -B tests/run_suite.py --out "$SUITE_OUTPUT" --tag v3100 --project bureau --state-dir "$SUITE_STATE"
+```
+
+This command is for the maintainer's scheduled validation, not a prerequisite to editing release docs. The orchestrator refuses hosted-CI/shard/manifest variables even when empty. Validate `suite-v3100-result.json` against the expected SHA, schema, tag/project, complete selections/attempts, cleanup and terminal state before accepting green. Consume validated `proposals/*.json` in the stable state directory; after handling a proposal, use `python3 -B tests/run_suite.py --state-dir "$SUITE_STATE" --project bureau --resolve-proposal ID` with its real ID. See the [complete receipt/proposal contract](../tests/README.md#local-full-suite-and-serial-reruns). Recovered green is an observed file-level flake, not a cause; hosted CI and direct `tests/run.sh` never retry. Detached processes and persistent fixtures remain outside tracking.
+
+Security/reporting documentation and the v3.9.2 publication record need only the source update above, with no adopter configuration or resync for those documentation changes themselves. Dispatcher settlement and process diagnostics need the complete scripts resync and dispatcher/runtime-wrapper restart, with no store/data migration. The two `BUREAU_TEST_*` timeout overrides are test-only; leave them unset in production.
+
+### Diagnose, restart and resume dispatch
+
+Run diagnostics in the same trusted environment that will launch workers; use app mode instead for an app-only installation:
+
+```sh
+python3 -B scripts/bureau-doctor.py --mode background
+# App-only alternative:
+python3 -B scripts/bureau-doctor.py --mode app
+python3 -B scripts/bureau-runtime.py status
+```
+
+Resolve invalid publisher/charter policy, inaccessible state, inherited-profile warnings as appropriate and any interrupted-run holds. Do not reset unregistered or user-owned worktrees. After confirming old drivers have stopped and the complete asset set is installed, restart the installation's original launcher/scheduler. For the standard background launcher, use:
+
+```sh
+bash scripts/start-agents.sh
+python3 -B scripts/bureau-runtime.py unpause
+python3 -B scripts/bureau-runtime.py status
+```
+
+For an app-only installation, resume its existing automation instead of starting background agents, and run `unpause` if the upgrade paused dispatch. Qualify a representative ticket through the intended path before leaving dispatch unattended. Full release suites, live provider behavior and adopting-installation qualification remain maintainer work.
+
+**From earlier versions.** Apply [Upgrade to v3.9.2](#upgrade-to-v392) and its cumulative steps first, then this upgrade.
+
+**Rollback to v3.9.2.** Pause dispatch, stop all drivers and preserve later work and shared evidence. If enrolled, inspect and privately preserve the enrollment record, then explicitly unenroll with the trusted new helper before restoring a runtime without charter enforcement:
+
+```sh
+python3 -I -B scripts/bureau-charter.py --repo . unenroll
+```
+
+Follow [restore the pre-upgrade installation](#restore-the-pre-upgrade-installation) to select the recorded previous source commit and restore the complete v3.9.2 asset/configuration/installer set from the private backup. Reconcile local commits and holds before restart. Keep runtime/scanner records; never delete leases as a rollback shortcut. Rollback does not undo commits, pushes, comments, labels or state moves.
+
 ## Upgrade to v3.9.2
 
-**v3.9.2**, dated **2026-11-24**, is a patch release on v3.9.0, published on **2026-11-24** as the latest [GitHub Release](https://github.com/KaiaK808/bureau/releases/tag/v3.9.2). Its [release notes](release-notes.md) cover the merged changes, configuration, validation and limitations. Configuration schema versions, keys and defaults, the v3 exit vocabulary, Spec Kit 1.2.2 and the current-workspace prepare/finish protocol remain.
+**v3.9.2**, dated **2026-11-24**, is a patch release on v3.9.0, published on **2026-11-24** as a [GitHub Release](https://github.com/KaiaK808/bureau/releases/tag/v3.9.2). Its [release notes](release-notes-v3.9.2.md) cover the merged changes, configuration, validation and limitations. Configuration schema versions, keys and defaults, the v3 exit vocabulary, Spec Kit 1.2.2 and the current-workspace prepare/finish protocol remain.
 
 ### From v3.9.0
 

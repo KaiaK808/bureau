@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="bureau-source-sha256" content="784954c49eb07747d06428d934617912c7b66c7fad32f056d16e29875c1bfa12">
+<title>release-notes-v3.9.2 · Bureau</title>
+<link rel="stylesheet" href="assets/colors_and_type.css">
+<link rel="stylesheet" href="assets/docs.css">
+<style>pre{overflow:auto}img{max-width:100%;height:auto}table{display:block;overflow:auto}.bhb-main{min-width:0}code{overflow-wrap:anywhere}</style>
+</head>
+<body>
+<header class="bhb-topbar"><a class="wordmark" href="index.html">BUREAU <span class="accent">/</span> FIELD MANUAL</a><div class="meta"><a href="https://github.com/KaiaK808/bureau">SOURCE</a></div></header>
+<div class="bhb-shell">
+<aside class="bhb-sidebar"><div class="group-label">App and background workflows</div><nav>
+<a href="index.html">Quickstart</a><a href="configuration.html">Configuration</a><a href="provider-runtime.html">Providers</a><a href="stage-protocol.html">Stage protocol</a><a href="operator-cheatsheet.html">Operator guide</a><a href="exit-codes.html">Exit codes</a><a href="recipes.html">Recipes</a><a href="troubleshooting.html">Troubleshooting</a><a href="migration.html">Upgrade and rollback</a><a href="releases.html">Releases</a><a href="codex-acceptance.html">Acceptance record</a><a href="token-efficiency.html">Optional efficiency settings</a>
+</nav></aside>
+<main class="bhb-main"><h1
+id="bureau-v392--decision-answers-merge-approval-binding-and-trivy-parsing">Bureau
+v3.9.2 — Decision answers, merge approval binding and Trivy parsing</h1>
+<p><strong>Published release · 2026-11-24 · source tag
+<code>v3.9.2</code>.</strong> The <a
+href="https://github.com/KaiaK808/bureau/releases/tag/v3.9.2">GitHub
+Release</a>, "Bureau v3.9.2 — Decision answers, merge approval binding
+and Trivy parsing", is published as latest. Annotated tag
+<code>v3.9.2</code> (tag object <code>ccc3a09</code>) points at merge
+commit <code>8b342bc</code> of <a
+href="https://github.com/KaiaK808/bureau/pull/172">#172</a>, merged on
+2026-11-24. v3.9.2 is a patch release on <a
+href="release-notes-v3.9.0.html">v3.9.0</a>.</p>
+<p>The release includes <a
+href="https://github.com/KaiaK808/bureau/pull/165">#165</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/166">#166</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/167">#167</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/168">#168</a> and <a
+href="https://github.com/KaiaK808/bureau/pull/169">#169</a> in
+first-parent merge order. All changes are merged. The <a
+href="../../CHANGELOG.md#392---2026-11-24">changelog</a> collects the four
+release fragments.</p>
+<h2 id="what-changed-since-v390">What changed since v3.9.0</h2>
+<h3 id="exact-answers-to-implementation-decision-holds">Exact answers to
+implementation decision holds</h3>
+<p>For humans answering implementation questions, this changes what
+counts as an answer: only a later Linear reply starting with the exact
+<code>Answer: &lt;hold-id&gt;</code> line, followed by a nonblank body,
+answers the hold. Earlier prose and completion footers cannot release a
+new hold. Every matching decision and its questions reach implementation
+through retries and QA rework. CRLF and CR replies preserve their body,
+and decision waits release on the next poll or restart.</p>
+<p>Admission covers dispatcher-launched Shepherd and rejects failed or
+empty startup route reads before ownership or labels. Dispatcher
+reconciliation retries read-only admission failures without Linear
+mutations. Ticks and read/move handlers preserve exit 24. Admission,
+overlap preflight and preparation share complete paginated
+canonical-branch resolution across Shepherd, dispatcher, queue and
+direct workers. Hold questions and app summaries lose private metadata
+before the runtime adds the ID and copyable instructions. A time cap
+before the first pass still labels and summarizes the halt.</p>
+<h3
+id="merge-approvals-bound-to-the-reviewed-head-and-target-branch">Merge
+approvals bound to the reviewed head and target branch</h3>
+<p>Both automatic merge routes bind <code>APPROVE</code> and
+<code>AUTO_APPROVE</code> to the reviewed head and target branch on both
+gate passes. The gate still selects the newest PR comment containing the
+<code>Code Review v2</code> heading through
+<code>gh pr view --json comments</code>. Target branch names may contain
+backticks, and the target SHA may advance. Each pass checks base
+freshness against the same PR snapshot used for the approval binding.
+Bureau authenticates the newest visible review in complete gate
+snapshots and atomically pins the head.</p>
+<p>Bureau prepares the merge message before the final checks,
+unconditionally re-reads the approved target, checks ticket
+authorization immediately before merge, and checks merged state, merge
+commit and target afterward. A wrong target or an outcome that remains
+uncertain logs an error, posts a Linear comment and holds with
+<code>needs-human</code> and exit 25. An uncertain result gets one fresh
+reconciliation read; rollback and automatic merge retry are excluded
+from that response.</p>
+<p>A stale approval returns to Build Review with exit 20 and a
+<code>refreshed</code> report even if earlier gate comments cannot be
+read. Shepherd uses <code>agents.max_review_rounds</code> as a separate
+stale-handoff limit per run, counted after the move to Build Review is
+confirmed. Human holds take effect immediately during confirmation; a
+move still invisible after one bounded polling budget returns quiet
+retry 2. Stale approvals preserve the dispatcher's base-refresh
+allowance.</p>
+<p>The inline route reviews and cleans up against the PR's advertised
+head, including same-named fork branches, force-pushes and deleted or
+pruned branches. A failed cleanup fetch uses the pinned review base and
+returns quiet retry 2. The acceptance brief credits a verdict only to
+its separately recorded reviewed head, and Shepherd preserves post-merge
+reconciliation reports.</p>
+<p>Target validation stays observational. GitHub has no expected-base
+merge option, so a retarget after the final read can still change the
+destination. The post-merge check detects that outcome; destination
+selection remains subject to that race.</p>
+<h3
+id="narrower-trivy-inline-ignore-stripping-and-yarn-parsing">Narrower
+Trivy inline-ignore stripping and Yarn parsing</h3>
+<p>For repositories using Trivy QA, Bureau strips ignore comments only
+in explicitly recognised per-file shapes with fully classified prefixes.
+Every other marker line stays byte-identical and reduces coverage with
+<code>inline ignore format not recognised</code>. YAML node properties,
+block scalars and flow collections, HCL interpolation and heredocs,
+Bicep multi-line strings and other unrecognised constructs also preserve
+all later marker lines. Dockerfiles retain every marker from the first
+<code>&lt;&lt;</code> through end of file without parsing delimiters.
+Ordinary supported comments, string and data bytes, whitespace and
+LF/CRLF handling are preserved.</p>
+<p>Yarn plain values now use an explicit character and leading-form
+allow-list for tool-written tokens, compact ranges, protocol references,
+URLs, hashes and checksums, booleans, cache keys, bin paths and platform
+conditions. Unsupported leading forms, <code>: </code> and
+<code> #</code> reduce coverage with
+<code>lockfile format not recognised</code>. Quoted values and
+recognised Yarn v1/Berry metadata keep their existing handling. Parser
+and neutralization identities change, so earlier receipts are remeasured
+once.</p>
+<h3 id="v390-publication-record">v3.9.0 publication record</h3>
+<p>The source-only record captures the published tag and merge commit,
+GitHub Release, release review rounds, both gate suites, CI results
+passing on the first attempt without reruns and the tested-tree
+comparison. See the unchanged <a href="release-notes-v3.9.0.html">v3.9.0
+release notes</a>.</p>
+<h2 id="new-files">New files</h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Installation and purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>templates/scripts/bureau-hold-context.py</code></td>
+<td>Complete scripts resync together with interfaces for implementation
+decision context.</td>
+</tr>
+<tr>
+<td><code>tests/hold_answers_test.py</code>,
+<code>tests/test_hold_answers.sh</code>,
+<code>tests/test_inline_merge_regressions.sh</code></td>
+<td>Repository-only regression entry points.</td>
+</tr>
+<tr>
+<td><code>docs/release-notes-v3.9.0.md</code></td>
+<td>Unchanged archive of the previous release notes.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="configuration-and-exit-code-changes">Configuration and exit-code
+changes</h2>
+<p>Configuration keys, defaults, commands and the v3 exit vocabulary
+stay unchanged. Semgrep and Trivy retain their existing opt-in settings.
+The answer rule and approval binding apply when their respective runtime
+paths run.</p>
+<table>
+<thead>
+<tr>
+<th>Behaviour</th>
+<th>Action / result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Implementation decision answers</td>
+<td>Reissue open holds with fresh IDs and obtain later replies beginning
+with the exact <code>Answer: &lt;hold-id&gt;</code> line and a nonblank
+body. Completed holds stay as they are.</td>
+</tr>
+<tr>
+<td>Older approvals without binding lines</td>
+<td>One fresh review is required.</td>
+</tr>
+<tr>
+<td>Review evidence</td>
+<td>Resync evidence writers and readers together. Older readers do not
+understand the new optional <code>reviewed_head</code> round field;
+legacy records still use matching receipts.</td>
+</tr>
+<tr>
+<td>Trivy receipts</td>
+<td>Earlier receipts are remeasured once because parser and
+neutralization identities change.</td>
+</tr>
+</tbody>
+</table>
+<p>A stale approval uses existing exit 20 and returns to Build Review. A
+wrong-target or still-uncertain merge outcome holds with exit 25. A
+definitive blocker such as a merge conflict also returns 25 when the
+base name is missing; a failed read with only undecided blockers returns
+2. See <a href="exit-codes.html">exit codes</a>.</p>
+<h2 id="upgrade-an-existing-installation">Upgrade an existing
+installation</h2>
+<p><strong>From v3.9.0.</strong> Drain old drivers and stop every
+shepherd, queue loop, dispatcher and supervisor. Preserve unfinished
+work, local commits, customized assets, user instructions, Spec Kit
+assets and constitution, and shared runtime records. Compare installed
+drift and reconcile local incident fixes. Record the previous source
+commit and save the <a
+href="migration.html#before-changing-an-adopting-repository">pre-upgrade
+inventory and private backup</a>, including
+<code>.bureau-install.json</code> and <code>.gitignore</code>. Select
+the published <code>v3.9.2</code> tag and refresh discovery.</p>
+<p>Use the <a href="migration.html#from-v390">v3.9.2 preview and apply
+commands</a> in each adopting repository with its existing target
+selection. Resync the <strong>complete scripts scope together with
+interfaces</strong>, including evidence writers and readers. Resolve
+conflicts before applying. <code>--update</code> edits configuration
+only.</p>
+<p>Before re-enabling dispatch, reissue every open implementation hold
+with a fresh ID and its still-open questions, including tickets whose
+label was already removed. Keep each ticket held and ask humans to
+repost earlier decisions as later replies beginning with the exact
+<code>Answer: &lt;hold-id&gt;</code> line and a nonblank body. Completed
+holds stay as they are. Follow the <a
+href="migration.html#implementation-decision-holds">Bash hold-reissue
+recipe and retry rule</a>. Obtain one fresh review for older approvals
+without the binding lines. Expect earlier Trivy receipts to be
+remeasured once.</p>
+<p>Run <code>python3 scripts/bureau-doctor.py --mode background</code>
+for a background installation or
+<code>python3 scripts/bureau-doctor.py --mode app</code> for an app-only
+installation and reconcile holds. Restart all drivers together. If
+dispatch was paused for the upgrade, run
+<code>python3 scripts/bureau-runtime.py unpause</code> after restart and
+hold reissue. Qualify a representative ticket before leaving dispatch
+unattended. Live adopter qualification remains pending.</p>
+<p><strong>From earlier versions.</strong> Apply the cumulative steps
+through <a href="migration.html#upgrade-to-v39">v3.9.0</a> first, then
+this upgrade. The v3.9.0 publication record itself needs only a source
+checkout update.</p>
+<h2 id="compatibility-and-rollback">Compatibility and rollback</h2>
+<p>Configuration schema versions 1 and 2, Bash 3.2+, Python 3.9+, Node
+18+ for the shared scheduler, Spec Kit 1.2.2 and the current-workspace
+prepare/finish protocol apply. Scanner platform prerequisites remain as
+documented in the <a
+href="release-notes-v3.9.0.html#compatibility-and-rollback">v3.9.0
+compatibility record</a>. Writers and readers of review evidence need a
+coordinated resync because of the optional <code>reviewed_head</code>
+round field; legacy records still use matching receipts.</p>
+<p>For rollback, stop drivers and reconcile unfinished writers, local
+commits and holds. Follow the <a
+href="migration.html#restore-the-pre-upgrade-installation">restore
+procedure</a> to restore the complete v3.9.0 asset set, compatible
+configuration and installer records from the private backup. Retain
+runtime and scanner records for inspection. Prior commits, pushes,
+comments, labels and state moves persist through rollback.</p>
+<h2 id="validation">Validation</h2>
+<p>The merged content baseline is main <code>5b0c279</code>. The merged
+changes follow first-parent merge order.</p>
+<table>
+<thead>
+<tr>
+<th>PR</th>
+<th>Merge commit</th>
+<th>Change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/KaiaK808/bureau/pull/165">#165</a></td>
+<td><code>b49eb97</code></td>
+<td>Narrower Trivy ignore-comment stripping and Yarn plain-value
+parsing</td>
+</tr>
+<tr>
+<td><a href="https://github.com/KaiaK808/bureau/pull/166">#166</a></td>
+<td><code>888f92a</code></td>
+<td>Repository-only shard-weight rows for two scanner test files</td>
+</tr>
+<tr>
+<td><a href="https://github.com/KaiaK808/bureau/pull/167">#167</a></td>
+<td><code>f1caef0</code></td>
+<td>v3.9.0 publication record</td>
+</tr>
+<tr>
+<td><a href="https://github.com/KaiaK808/bureau/pull/168">#168</a></td>
+<td><code>f82ef56</code></td>
+<td>Exact implementation hold answers and decision context through
+retries</td>
+</tr>
+<tr>
+<td><a href="https://github.com/KaiaK808/bureau/pull/169">#169</a></td>
+<td><code>5b0c279</code></td>
+<td>Merge approval binding, stale handoffs and reviewed-head
+attribution</td>
+</tr>
+</tbody>
+</table>
+<p>The fragments record local hold-answer fixtures with fake Linear and
+providers. Merge and review validation uses focused offline tests with
+fake GitHub responses and private reverted copies, including worker and
+Shepherd retries, final-read withdrawal and acceptance attribution. Live
+GitHub behaviour remains unverified offline.</p>
+<p>Trivy validation records offline parser and pipeline regressions,
+fail-before checks against the previous revision, realistic Yarn
+v1/Berry locks including CRLF, Python compilation and changelog
+validation. Live scanner and adopter qualification are excluded. The
+v3.9.0 publication facts are maintainer-supplied. See the <a
+href="../../CHANGELOG.md#392---2026-11-24">fragment validation in the
+changelog</a>.</p>
+<p>The maintainer-supplied release review, both gate suites, release CI
+and final candidate/tag tree comparison are recorded below. The release
+PR changed documentation only: <code>templates/</code>,
+<code>tests/</code> and <code>scripts/</code> are tree-identical to
+<code>5b0c279</code>. No manual live injection sample was run for
+v3.9.2, and adopter qualification remains pending.</p>
+<table>
+<thead>
+<tr>
+<th>Release check</th>
+<th>Result / reference</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Independent release review</td>
+<td>Codex, read-only, three rounds on the release PR. Round 1 returned
+an approval without evidence and is not counted as a check. Round 2
+found one P2: the hold-reissue upgrade step had no runnable procedure,
+fixed in <code>6be88f5</code>. Round 3 approved <code>6be88f5</code>
+with file and line evidence for every check.</td>
+</tr>
+<tr>
+<td>macOS gate suite and tested ref</td>
+<td><code>5b0c279</code>, two shards: 198 of 198 on the first pass, no
+reruns (2026-11-24).</td>
+</tr>
+<tr>
+<td>Remote gate suite and tested ref</td>
+<td><code>openclaw-01</code>, exactly <code>5b0c279</code>, two shards:
+198 of 198 on the first pass, no reruns (2026-11-24).</td>
+</tr>
+<tr>
+<td>Release CI jobs, runs and results</td>
+<td><a href="https://github.com/KaiaK808/bureau/pull/172">#172</a> at
+<code>6be88f5</code>: pull-request <a
+href="https://github.com/KaiaK808/bureau/actions/runs/45410048890">run
+45410048890</a> and release-branch push <a
+href="https://github.com/KaiaK808/bureau/actions/runs/45410033730">run
+45410033730</a>, all jobs passed on the first attempt. The main push <a
+href="https://github.com/KaiaK808/bureau/actions/runs/45436105597">run
+45436105597</a> on <code>8b342bc</code> was cancelled by the next push
+to main (<a
+href="https://github.com/KaiaK808/bureau/pull/170">#170</a>). Main on
+the following commit <code>a7c66d8</code>: <a
+href="https://github.com/KaiaK808/bureau/actions/runs/45436229543">run
+45436229543</a>, also cancelled by the next push to main (<a
+href="https://github.com/KaiaK808/bureau/pull/171">#171</a>); the tag
+run below covers the same commit as the release merge. Tag
+<code>v3.9.2</code>: <a
+href="https://github.com/KaiaK808/bureau/actions/runs/45436172742">run
+45436172742</a>, passed on the first attempt.</td>
+</tr>
+<tr>
+<td>Final candidate/tag tested-tree comparison</td>
+<td><code>python3 scripts/release_verify.py 5b0c279 v3.9.2</code>
+passed: <code>templates/</code>, <code>tests/</code> and
+<code>scripts/</code> are tree-identical between the tested candidate
+and the tag. The reviewed release candidate <code>6be88f5</code> and the
+tag's commit <code>8b342bc</code> have the identical tree
+(<code>c0c2ed57</code>).</td>
+</tr>
+<tr>
+<td>Manual live injection sample and adopter qualification</td>
+<td>Manual live injection sample: not run for v3.9.2. Adopter
+qualification: none recorded yet; one adopting installation is scheduled
+to resync later.</td>
+</tr>
+</tbody>
+</table>
+<p>See <a href="releases.html#verify-the-tested-release-trees">release
+tree verification</a> for the comparison procedure. The manual live
+injection sample remains a separate release-checklist item.</p>
+<h2 id="known-limitations">Known limitations</h2>
+<ul>
+<li>Target validation is observational. A retarget after the final read
+can still change the merge destination; the post-merge check detects it.
+GitHub provides no expected-base merge option.</li>
+<li>Live GitHub behaviour, the Linear editor round-trip, live scanner
+behaviour and adopting-repository qualification remain unverified by the
+offline validation recorded in the fragments.</li>
+<li>Trivy preserves unrecognised inline-ignore shapes and reports
+reduced coverage. The conservative Dockerfile rule retains every marker
+from the first <code>&lt;&lt;</code> through end of file; unsupported
+Yarn plain values also reduce coverage.</li>
+<li>The dispatcher shutdown test can fail intermittently because the
+run's leases are marked interrupted a few milliseconds after the
+dispatcher exits. This path predates this release and remains unchanged
+in v3.9.2.</li>
+<li>No manual live injection sample was run for v3.9.2. No adopter
+qualification is recorded yet; one adopting installation is scheduled to
+resync later.</li>
+</ul></main>
+</div>
+</body>
+</html>
