@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="0a11d3fe16cf58308478f7c895e5b75745def14ddbd54d6585a4a4dd5f08714c">
+<meta name="bureau-source-sha256" content="7c30c9a728c6310663adb23b7a92da3b842dbe2c73f830fa103ce3b406b1214f">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -270,19 +270,18 @@ backup recipe</a>, including <code>.bureau-install.json</code>,
 assets/constitution, local commits and shared runtime records. Compare
 installed-script drift before applying upstream files; retain local
 incident fixes in the coherent upgraded set.</p></li>
-<li><p><strong>Before scripts resync or restart</strong>, publish valid
-<code>agents.merge_publishers</code> in the actual default branch's
-sanitized <code>.bureau.json</code> through the normal reviewed human
-publication process. Preserve other required policy and remove
-credentials and machine-specific settings; keep secrets in the external
-secrets file. Use a dedicated App when possible, substituting its real
-slug for this example:</p>
-<div class="sourceCode" id="cb5"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">&quot;agents&quot;</span><span class="fu">:{</span><span class="dt">&quot;merge_publishers&quot;</span><span class="fu">:</span><span class="ot">[</span><span class="st">&quot;app:bureau-reviewer&quot;</span><span class="ot">]</span><span class="fu">}}</span></span></code></pre></div>
-<p>A human publisher uses <code>user:review-publisher</code>; Actions
-uses <code>app:github-actions</code>. Set the matching typed identity in
-the sanitized file, review its diff and publish it before continuing.
-Run <code>gh api user --jq .login</code> under the review publisher's
+<li><p><strong>Before scripts resync or restart</strong>, follow <a
+href="#publish-sanitized-default-branch-policy">Publish sanitized
+default-branch policy</a> to back up the local configuration, explicitly
+stage only the sanitized <code>.bureau.json</code>, obtain human
+review/merge and verify the committed policy. The reader requires this
+default-branch file; changing the normally ignored local configuration
+alone is insufficient.</p>
+<p>Prefer a dedicated App and its real slug, such as
+<code>app:bureau-reviewer</code>. A human publisher uses
+<code>user:review-publisher</code>; Actions uses
+<code>app:github-actions</code>. Run
+<code>gh api user --jq .login</code> under the review publisher's
 credentials to identify a human login; App publishers must use the App's
 slug. See <a href="#trusted-merge-publishers">trusted merge
 publishers</a>. Missing/invalid policy holds automatic merges with 25.
@@ -292,16 +291,16 @@ emergency revocation because policy is pinned per run.</p></li>
 <li><p>Preview the <strong>complete scripts scope</strong> from each
 adopting repository root, with its existing installed target
 (<code>claude</code>, <code>codex</code> or <code>both</code>):</p>
-<div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_TARGET</span><span class="op">=</span>claude</span>
-<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-B</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
-<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> <span class="st">&quot;</span><span class="va">$BUREAU_TARGET</span><span class="st">&quot;</span> <span class="at">--scope</span> scripts</span></code></pre></div>
+<div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_TARGET</span><span class="op">=</span>claude</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-B</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> <span class="st">&quot;</span><span class="va">$BUREAU_TARGET</span><span class="st">&quot;</span> <span class="at">--scope</span> scripts</span></code></pre></div>
 <p>Review conflicts against the private backup. For each approved
 replacement, add a path-specific <code>--overwrite</code>, such as
 <code>--overwrite scripts/merge-pipeline.sh</code>, and preview again.
 Preserve intentional drift and resolve all remaining conflicts before
 applying the same approved options:</p>
-<div class="sourceCode" id="cb7"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-B</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
-<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> <span class="st">&quot;</span><span class="va">$BUREAU_TARGET</span><span class="st">&quot;</span> <span class="at">--scope</span> scripts <span class="at">--apply</span></span></code></pre></div>
+<div class="sourceCode" id="cb6"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-B</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> <span class="st">&quot;</span><span class="va">$BUREAU_TARGET</span><span class="st">&quot;</span> <span class="at">--scope</span> scripts <span class="at">--apply</span></span></code></pre></div>
 <p>Include <code>bureau-charter.py</code>, <code>bureau-env.sh</code>,
 <code>bureau-merge-review.py</code>, <code>bureau-secrets.py</code>, the
 review parser/pipeline, provider/doctor, dispatcher/runtime, process
@@ -311,6 +310,82 @@ or workflows resync from v3.9.2; <code>--update</code> changes
 configuration only. Restart every driver on this complete set after the
 remaining steps.</p></li>
 </ol>
+<h3 id="publish-sanitized-default-branch-policy">Publish sanitized
+default-branch policy</h3>
+<p>Run from the adopting repository root with dispatch stopped and
+authenticated <code>gh</code>. Use the selected, trusted
+<code>BUREAU_SOURCE</code> from <a
+href="#select-the-source-release">source selection</a>; its template
+reader is available before scripts resync. Replace
+<code>owner/repository</code> with the GitHub repository that
+<code>origin</code> actually identifies, and confirm that with
+<code>git remote -v</code>. Run each block only after the preceding
+block succeeds; stop on any error. Keep the variables in the same
+shell.</p>
+<p>Back up the local <code>.bureau.json</code> privately
+<strong>before</strong> publication. Create a separate worktree from the
+actual default branch so the local configuration, branch and index
+remain intact. Use an unused publication branch name if this one already
+exists:</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_ADOPTER</span><span class="op">=</span><span class="va">$(</span><span class="fu">git</span> rev-parse <span class="at">--show-toplevel</span><span class="va">)</span> <span class="kw">&amp;&amp;</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_GITHUB</span><span class="op">=</span>owner/repository <span class="kw">&amp;&amp;</span></span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_DEFAULT</span><span class="op">=</span><span class="va">$(</span><span class="ex">gh</span> api <span class="st">&quot;repos/</span><span class="va">$BUREAU_GITHUB</span><span class="st">&quot;</span> <span class="at">--jq</span> .default_branch<span class="va">)</span> <span class="kw">&amp;&amp;</span></span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_POLICY_DIR</span><span class="op">=</span><span class="va">$(</span><span class="bu">umask</span> 077 <span class="kw">&amp;&amp;</span> <span class="fu">mktemp</span> <span class="at">-d</span> <span class="st">&quot;</span><span class="va">${TMPDIR</span><span class="op">:-</span>/tmp<span class="va">}</span><span class="st">/bureau-policy.XXXXXX&quot;</span><span class="va">)</span> <span class="kw">&amp;&amp;</span></span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a><span class="fu">cp</span> <span class="at">-p</span> <span class="st">&quot;</span><span class="va">$BUREAU_ADOPTER</span><span class="st">/.bureau.json&quot;</span> <span class="st">&quot;</span><span class="va">$BUREAU_POLICY_DIR</span><span class="st">/local.bureau.json&quot;</span> <span class="kw">&amp;&amp;</span></span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> fetch origin <span class="st">&quot;</span><span class="va">$BUREAU_DEFAULT</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> worktree add <span class="at">-b</span> bureau/publish-merge-policy <span class="st">&quot;</span><span class="va">$BUREAU_POLICY_DIR</span><span class="st">/worktree&quot;</span> <span class="st">&quot;origin/</span><span class="va">$BUREAU_DEFAULT</span><span class="st">&quot;</span></span></code></pre></div>
+<p>Write only the sanitized policy keys needed by the readers; never
+copy the local backup into the publication worktree. Inspect any
+existing committed policy first:</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> <span class="bu">[</span> <span class="ot">-f</span> <span class="st">&quot;</span><span class="va">$BUREAU_POLICY_DIR</span><span class="st">/worktree/.bureau.json&quot;</span> <span class="bu">]</span><span class="kw">;</span> <span class="cf">then</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">cat</span> <span class="st">&quot;</span><span class="va">$BUREAU_POLICY_DIR</span><span class="st">/worktree/.bureau.json&quot;</span></span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="cf">fi</span></span></code></pre></div>
+<p>Replace the example publisher with the real typed identity. If policy
+is already committed, retain its other required, reviewed policy keys in
+the JSON below, including any <code>agents.merge_charter</code> and
+<code>agents.merge_approvers</code>. For charter publication, use the <a
+href="#optional-merge-charter-enrollment">charter example</a> instead,
+retaining <code>agents.merge_publishers</code>. Exclude credentials,
+local repository paths and machine-specific settings; keep secrets in
+the external secrets file.</p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span> <span class="op">&gt;</span> <span class="st">&quot;</span><span class="va">$BUREAU_POLICY_DIR</span><span class="st">/worktree/.bureau.json&quot;</span> <span class="op">&lt;&lt;&#39;JSON&#39;</span></span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="st">{&quot;agents&quot;:{&quot;merge_publishers&quot;:[&quot;app:bureau-reviewer&quot;]}}</span></span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="op">JSON</span></span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_POLICY_DIR</span><span class="st">/worktree&quot;</span> add <span class="at">-f</span> <span class="at">--</span> .bureau.json <span class="kw">&amp;&amp;</span></span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_POLICY_DIR</span><span class="st">/worktree&quot;</span> diff <span class="at">--cached</span> <span class="at">--check</span> <span class="kw">&amp;&amp;</span></span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_POLICY_DIR</span><span class="st">/worktree&quot;</span> diff <span class="at">--cached</span> <span class="at">--</span> .bureau.json</span></code></pre></div>
+<p>The explicit <code>git add -f -- .bureau.json</code> stages that one
+file even when ignored. Inspect the complete staged diff for secrets and
+unintended policy removal before committing. Then publish a PR for human
+review:</p>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_POLICY_DIR</span><span class="st">/worktree&quot;</span> commit <span class="at">-m</span> <span class="st">&quot;chore: publish trusted merge policy&quot;</span> <span class="kw">&amp;&amp;</span></span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_POLICY_DIR</span><span class="st">/worktree&quot;</span> push <span class="at">-u</span> origin bureau/publish-merge-policy <span class="kw">&amp;&amp;</span></span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a><span class="ex">gh</span> pr create <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$BUREAU_GITHUB</span><span class="st">&quot;</span> <span class="at">--base</span> <span class="st">&quot;</span><span class="va">$BUREAU_DEFAULT</span><span class="st">&quot;</span> <span class="at">--head</span> bureau/publish-merge-policy <span class="dt">\</span></span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--title</span> <span class="st">&quot;Publish trusted merge policy&quot;</span> <span class="at">--body</span> <span class="st">&quot;Publish sanitized default-branch policy for human review and merge before Bureau resync.&quot;</span></span></code></pre></div>
+<p>A human must review and merge this PR into the actual default branch;
+do not route the policy change through automatic merge. After that
+merge, verify the remote file and run the trusted reader's read-only
+policy check <strong>before resync</strong>:</p>
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_DEFAULT</span><span class="op">=</span><span class="va">$(</span><span class="ex">gh</span> api <span class="st">&quot;repos/</span><span class="va">$BUREAU_GITHUB</span><span class="st">&quot;</span> <span class="at">--jq</span> .default_branch<span class="va">)</span> <span class="kw">&amp;&amp;</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_ADOPTER</span><span class="st">&quot;</span> fetch origin <span class="st">&quot;</span><span class="va">$BUREAU_DEFAULT</span><span class="st">&quot;</span> <span class="kw">&amp;&amp;</span></span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_ADOPTER</span><span class="st">&quot;</span> show <span class="st">&quot;origin/</span><span class="va">$BUREAU_DEFAULT</span><span class="st">:.bureau.json&quot;</span> <span class="kw">&amp;&amp;</span></span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_PUBLISHER_POLICY</span><span class="op">=</span><span class="va">$(</span><span class="ex">python3</span> <span class="at">-B</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/templates/scripts/bureau-merge-review.py&quot;</span> policy <span class="st">&quot;</span><span class="va">$BUREAU_GITHUB</span><span class="st">&quot;</span><span class="va">)</span> <span class="kw">&amp;&amp;</span></span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a><span class="bu">printf</span> <span class="st">&#39;%s\n&#39;</span> <span class="st">&quot;</span><span class="va">$BUREAU_PUBLISHER_POLICY</span><span class="st">&quot;</span> <span class="kw">|</span> <span class="ex">jq</span> <span class="at">-e</span> <span class="dt">\</span></span>
+<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">--arg</span> expected <span class="st">&quot;</span><span class="va">$(</span><span class="fu">git</span> <span class="at">-C</span> <span class="st">&quot;</span><span class="va">$BUREAU_ADOPTER</span><span class="st">&quot;</span> rev-parse <span class="st">&quot;origin/</span><span class="va">$BUREAU_DEFAULT</span><span class="st">&quot;</span><span class="va">)</span><span class="st">&quot;</span> <span class="dt">\</span></span>
+<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a>  <span class="st">&#39;.kind == &quot;ok&quot; and .commit == $expected and (.entries | length &gt; 0)&#39;</span></span></code></pre></div>
+<p>Require <code>true</code> and a successful exit from <code>jq</code>;
+inspect the committed publisher identities against the approved diff.
+The reader can exit successfully with a <code>policy</code> or
+<code>read</code> error result, so exit status alone is insufficient. If
+the default branch moved between reads, fetch and verify again. The
+read-only check accepts publisher policy; charter validation and
+enrollment remain the separate steps below. Retain the private backup
+through the upgrade; the original local configuration was never
+replaced. Return to the <a
+href="#drain-select-the-source-and-resync">scripts resync step</a> only
+after verification succeeds.</p>
 <h3 id="review-defaults-and-optional-configuration">Review defaults and
 optional configuration</h3>
 <p>The committed-secret review floor is always active when review runs,
@@ -321,8 +396,8 @@ cannot suppress itself. Create or edit the pinned base's
 <code>.bureau/secret-exceptions.json</code> through normal human review
 using this format, replacing selectors, owner, reason and expiry with
 approved values:</p>
-<div class="sourceCode" id="cb8"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ot">[</span><span class="fu">{</span><span class="dt">&quot;id&quot;</span><span class="fu">:</span><span class="st">&quot;aws-access-key-id&quot;</span><span class="fu">,</span><span class="dt">&quot;file&quot;</span><span class="fu">:</span><span class="st">&quot;fixtures/credentials.txt&quot;</span><span class="fu">,</span><span class="dt">&quot;owner&quot;</span><span class="fu">:</span><span class="st">&quot;security-team&quot;</span><span class="fu">,</span><span class="dt">&quot;reason&quot;</span><span class="fu">:</span><span class="st">&quot;Approved synthetic fixture&quot;</span><span class="fu">,</span><span class="dt">&quot;expires&quot;</span><span class="fu">:</span><span class="st">&quot;2027-01-01&quot;</span><span class="fu">}</span><span class="ot">]</span></span></code></pre></div>
+<div class="sourceCode" id="cb12"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="ot">[</span><span class="fu">{</span><span class="dt">&quot;id&quot;</span><span class="fu">:</span><span class="st">&quot;aws-access-key-id&quot;</span><span class="fu">,</span><span class="dt">&quot;file&quot;</span><span class="fu">:</span><span class="st">&quot;fixtures/credentials.txt&quot;</span><span class="fu">,</span><span class="dt">&quot;owner&quot;</span><span class="fu">:</span><span class="st">&quot;security-team&quot;</span><span class="fu">,</span><span class="dt">&quot;reason&quot;</span><span class="fu">:</span><span class="st">&quot;Approved synthetic fixture&quot;</span><span class="fu">,</span><span class="dt">&quot;expires&quot;</span><span class="fu">:</span><span class="st">&quot;2027-01-01&quot;</span><span class="fu">}</span><span class="ot">]</span></span></code></pre></div>
 <p>Use a future ISO date or timezone-aware timestamp; expired or
 malformed exceptions do not grant a pass. See <a
 href="configuration.html#committed-secrets">committed secrets</a> for
@@ -339,11 +414,12 @@ files, without persisting drift. Existing
 <code>BUREAU_CLAUDE_CONFIG_DIR</code> can select an optional lean
 profile. To use one, create an operator-owned directory and authenticate
 it separately:</p>
-<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_CLAUDE_CONFIG_DIR</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.bureau-claude&quot;</span></span>
-<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> <span class="st">&quot;</span><span class="va">$BUREAU_CLAUDE_CONFIG_DIR</span><span class="st">&quot;</span></span>
-<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="va">CLAUDE_CONFIG_DIR</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$BUREAU_CLAUDE_CONFIG_DIR</span><span class="st">&quot;</span> <span class="ex">claude</span></span>
-<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="bu">export</span> <span class="va">BUREAU_CLAUDE_CONFIG_DIR</span></span>
-<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-B</span> scripts/bureau-provider.py <span class="at">--stage</span> implement <span class="at">--describe</span></span></code></pre></div>
+<div class="sourceCode" id="cb13"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_CLAUDE_CONFIG_DIR</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.bureau-claude&quot;</span></span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> <span class="st">&quot;</span><span class="va">$BUREAU_CLAUDE_CONFIG_DIR</span><span class="st">&quot;</span></span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a><span class="va">CLAUDE_CONFIG_DIR</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$BUREAU_CLAUDE_CONFIG_DIR</span><span class="st">&quot;</span> <span class="ex">claude</span></span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a><span class="bu">export</span> <span class="va">BUREAU_CLAUDE_CONFIG_DIR</span></span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-B</span> scripts/bureau-provider.py <span class="at">--stage</span> implement <span class="at">--describe</span></span></code></pre></div>
 <p>Keep the same export in the trusted launch environment, or set
 <code>agents.providers.claude.config_dir</code> to that existing
 absolute directory (or a <code>~/</code> path) in
@@ -382,25 +458,27 @@ without additional service calls. Run merges from a work tree; repair
 failed lookups or inaccessible enrollment before retrying. Existing
 enrollment remains active across resync and cannot be disabled by
 changing a checkout flag.</p>
-<p>To opt in, edit a sanitized default-branch <code>.bureau.json</code>
-while retaining <code>agents.merge_publishers</code> and other required
-policy, configure a local Merge state for human handoff, and publish the
-reviewed policy through normal human review. A label queue and exception
-example is:</p>
-<div class="sourceCode" id="cb10"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
-<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;merge_publishers&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;app:bureau-reviewer&quot;</span><span class="ot">]</span><span class="fu">,</span></span>
-<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;merge_charter&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
-<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span></span>
-<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;approved_queue&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;label&quot;</span><span class="fu">:</span> <span class="st">&quot;approved-for-merge&quot;</span><span class="fu">},</span></span>
-<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;exceptions&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="fu">{</span><span class="dt">&quot;class&quot;</span><span class="fu">:</span> <span class="st">&quot;security&quot;</span><span class="fu">,</span> <span class="dt">&quot;paths&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;auth/**&quot;</span><span class="ot">]</span><span class="fu">,</span> <span class="dt">&quot;labels&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;security-sensitive&quot;</span><span class="ot">]</span><span class="fu">}</span><span class="ot">]</span><span class="fu">,</span></span>
-<span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;suite&quot;</span><span class="fu">:</span> <span class="kw">null</span><span class="fu">,</span></span>
-<span id="cb10-9"><a href="#cb10-9" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;red_main&quot;</span><span class="fu">:</span> <span class="kw">null</span><span class="fu">,</span></span>
-<span id="cb10-10"><a href="#cb10-10" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;report&quot;</span><span class="fu">:</span> <span class="kw">false</span></span>
-<span id="cb10-11"><a href="#cb10-11" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
-<span id="cb10-12"><a href="#cb10-12" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
-<span id="cb10-13"><a href="#cb10-13" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>To opt in, follow the same <a
+href="#publish-sanitized-default-branch-policy">sanitized policy
+publication recipe</a>, using the JSON below while retaining the real
+<code>agents.merge_publishers</code> and other required policy. Complete
+its backup, explicit staging, human review/merge and default-branch
+verification before resync or enrollment. Configure a local Merge state
+for human handoff. A label queue and exception example is:</p>
+<div class="sourceCode" id="cb14"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;agents&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;merge_publishers&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;app:bureau-reviewer&quot;</span><span class="ot">]</span><span class="fu">,</span></span>
+<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;merge_charter&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span></span>
+<span id="cb14-6"><a href="#cb14-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;approved_queue&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;label&quot;</span><span class="fu">:</span> <span class="st">&quot;approved-for-merge&quot;</span><span class="fu">},</span></span>
+<span id="cb14-7"><a href="#cb14-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;exceptions&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="fu">{</span><span class="dt">&quot;class&quot;</span><span class="fu">:</span> <span class="st">&quot;security&quot;</span><span class="fu">,</span> <span class="dt">&quot;paths&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;auth/**&quot;</span><span class="ot">]</span><span class="fu">,</span> <span class="dt">&quot;labels&quot;</span><span class="fu">:</span> <span class="ot">[</span><span class="st">&quot;security-sensitive&quot;</span><span class="ot">]</span><span class="fu">}</span><span class="ot">]</span><span class="fu">,</span></span>
+<span id="cb14-8"><a href="#cb14-8" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;suite&quot;</span><span class="fu">:</span> <span class="kw">null</span><span class="fu">,</span></span>
+<span id="cb14-9"><a href="#cb14-9" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;red_main&quot;</span><span class="fu">:</span> <span class="kw">null</span><span class="fu">,</span></span>
+<span id="cb14-10"><a href="#cb14-10" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;report&quot;</span><span class="fu">:</span> <span class="kw">false</span></span>
+<span id="cb14-11"><a href="#cb14-11" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb14-12"><a href="#cb14-12" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb14-13"><a href="#cb14-13" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
 <p>Replace the queue object with
 <code>{"cycle_id":"12345678-1234-1234-1234-123456789abc"}</code> using a
 real Linear cycle UUID for cycle selection, or <code>null</code> for no
@@ -415,25 +493,25 @@ implemented.</p>
 authenticated <code>gh</code> and a matching origin, a maintainer
 explicitly enrolls after publication. Replace
 <code>owner/repository</code> with the actual GitHub repository:</p>
-<div class="sourceCode" id="cb11"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-charter.py <span class="at">--repo</span> . <span class="at">--github</span> owner/repository enroll</span>
-<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-charter.py <span class="at">--repo</span> . <span class="at">--github</span> owner/repository policy</span>
-<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-charter.py <span class="at">--repo</span> . status</span></code></pre></div>
+<div class="sourceCode" id="cb15"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-charter.py <span class="at">--repo</span> . <span class="at">--github</span> owner/repository enroll</span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-charter.py <span class="at">--repo</span> . <span class="at">--github</span> owner/repository policy</span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-charter.py <span class="at">--repo</span> . status</span></code></pre></div>
 <p>Enrollment pins and validates actual default-branch policy and writes
 private shared-Git state; linked worktrees share it, separate clones
 require their own enrollment. After an intentional policy update, repeat
 <code>enroll</code> to acknowledge its digest. Replace obsolete
 <code>status --local</code> callers with <code>status</code>, or pass a
 Git-resolved common directory explicitly:</p>
-<div class="sourceCode" id="cb12"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_COMMON</span><span class="op">=</span><span class="va">$(</span><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-charter.py <span class="at">--repo</span> . merge-common-dir<span class="va">)</span> <span class="kw">&amp;&amp;</span></span>
-<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-charter.py <span class="at">--repo</span> . status <span class="at">--common-dir</span> <span class="st">&quot;</span><span class="va">$BUREAU_COMMON</span><span class="st">&quot;</span></span></code></pre></div>
+<div class="sourceCode" id="cb16"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_COMMON</span><span class="op">=</span><span class="va">$(</span><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-charter.py <span class="at">--repo</span> . merge-common-dir<span class="va">)</span> <span class="kw">&amp;&amp;</span></span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-charter.py <span class="at">--repo</span> . status <span class="at">--common-dir</span> <span class="st">&quot;</span><span class="va">$BUREAU_COMMON</span><span class="st">&quot;</span></span></code></pre></div>
 <p>For enrolled merge worktrees, inspect and restore full ancestry
 before retrying classification:</p>
-<div class="sourceCode" id="cb13"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> rev-parse <span class="at">--is-shallow-repository</span></span>
-<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="co"># Only when the preceding result is true:</span></span>
-<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> fetch <span class="at">--unshallow</span> origin</span></code></pre></div>
+<div class="sourceCode" id="cb17"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> rev-parse <span class="at">--is-shallow-repository</span></span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="co"># Only when the preceding result is true:</span></span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> fetch <span class="at">--unshallow</span> origin</span></code></pre></div>
 <p>Run this from the relevant worktree and verify both target and head
 histories are available; failed fetches, missing objects or ambiguous
 ancestry remain a human hold. Publish queue/exception policy on the
@@ -449,9 +527,13 @@ offline tools and local suite wrappers</h3>
 <p>Acceptance contracts require no adopter action unless the standalone
 CLI is wanted; the scripts resync already installs it. Place optional
 <code>acceptance.json</code> beside the feature's <code>spec.md</code>
-and <code>tasks.md</code>, then run:</p>
-<div class="sourceCode" id="cb14"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-B</span> scripts/bureau-acceptance-contract.py validate acceptance.json <span class="at">--spec</span> spec.md <span class="at">--tasks</span> tasks.md</span></code></pre></div>
+and <code>tasks.md</code>. Run from the adopting repository root,
+setting <code>FEATURE_DIR</code> to the feature directory relative to
+that root:</p>
+<div class="sourceCode" id="cb18"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="va">FEATURE_DIR</span><span class="op">=</span>specs/001-example <span class="co"># replace with the actual feature directory</span></span>
+<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-B</span> scripts/bureau-acceptance-contract.py validate <span class="st">&quot;</span><span class="va">$FEATURE_DIR</span><span class="st">/acceptance.json&quot;</span> <span class="dt">\</span></span>
+<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--spec</span> <span class="st">&quot;</span><span class="va">$FEATURE_DIR</span><span class="st">/spec.md&quot;</span> <span class="at">--tasks</span> <span class="st">&quot;</span><span class="va">$FEATURE_DIR</span><span class="st">/tasks.md&quot;</span></span></code></pre></div>
 <p>Use the <a href="../../references/acceptance-contracts.md">format and
 synthetic examples</a> to author inputs. No stage enforcement, verifier
 execution or enablement key exists. A well formed declaration does not
@@ -462,10 +544,10 @@ wrapper must keep exclusive suite/worktree admission until receipt
 publication, start from a clean source checkout, choose a fresh run tag
 and external output plus stable state/project identity, then use this
 recipe in the shared test slot:</p>
-<div class="sourceCode" id="cb15"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="va">SUITE_OUTPUT</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-suite-results/v3100&quot;</span></span>
-<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="va">SUITE_STATE</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.local/state/bureau/suites/bureau&quot;</span></span>
-<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-B</span> tests/run_suite.py <span class="at">--out</span> <span class="st">&quot;</span><span class="va">$SUITE_OUTPUT</span><span class="st">&quot;</span> <span class="at">--tag</span> v3100 <span class="at">--project</span> bureau <span class="at">--state-dir</span> <span class="st">&quot;</span><span class="va">$SUITE_STATE</span><span class="st">&quot;</span></span></code></pre></div>
+<div class="sourceCode" id="cb19"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="va">SUITE_OUTPUT</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/bureau-suite-results/v3100&quot;</span></span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a><span class="va">SUITE_STATE</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.local/state/bureau/suites/bureau&quot;</span></span>
+<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-B</span> tests/run_suite.py <span class="at">--out</span> <span class="st">&quot;</span><span class="va">$SUITE_OUTPUT</span><span class="st">&quot;</span> <span class="at">--tag</span> v3100 <span class="at">--project</span> bureau <span class="at">--state-dir</span> <span class="st">&quot;</span><span class="va">$SUITE_STATE</span><span class="st">&quot;</span></span></code></pre></div>
 <p>This command is for the maintainer's scheduled validation, not a
 prerequisite to editing release docs. The orchestrator refuses
 hosted-CI/shard/manifest variables even when empty. Validate
@@ -491,21 +573,21 @@ them unset in production.</p>
 resume dispatch</h3>
 <p>Run diagnostics in the same trusted environment that will launch
 workers; use app mode instead for an app-only installation:</p>
-<div class="sourceCode" id="cb16"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-B</span> scripts/bureau-doctor.py <span class="at">--mode</span> background</span>
-<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="co"># App-only alternative:</span></span>
-<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-B</span> scripts/bureau-doctor.py <span class="at">--mode</span> app</span>
-<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-B</span> scripts/bureau-runtime.py status</span></code></pre></div>
+<div class="sourceCode" id="cb20"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-B</span> scripts/bureau-doctor.py <span class="at">--mode</span> background</span>
+<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a><span class="co"># App-only alternative:</span></span>
+<span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-B</span> scripts/bureau-doctor.py <span class="at">--mode</span> app</span>
+<span id="cb20-4"><a href="#cb20-4" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-B</span> scripts/bureau-runtime.py status</span></code></pre></div>
 <p>Resolve invalid publisher/charter policy, inaccessible state,
 inherited-profile warnings as appropriate and any interrupted-run holds.
 Do not reset unregistered or user-owned worktrees. After confirming old
 drivers have stopped and the complete asset set is installed, restart
 the installation's original launcher/scheduler. For the standard
 background launcher, use:</p>
-<div class="sourceCode" id="cb17"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/start-agents.sh</span>
-<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-B</span> scripts/bureau-runtime.py unpause</span>
-<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-B</span> scripts/bureau-runtime.py status</span></code></pre></div>
+<div class="sourceCode" id="cb21"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> scripts/start-agents.sh</span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-B</span> scripts/bureau-runtime.py unpause</span>
+<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-B</span> scripts/bureau-runtime.py status</span></code></pre></div>
 <p>For an app-only installation, resume its existing automation instead
 of starting background agents, and run <code>unpause</code> if the
 upgrade paused dispatch. Qualify a representative ticket through the
@@ -520,8 +602,8 @@ and preserve later work and shared evidence. If enrolled, inspect and
 privately preserve the enrollment record, then explicitly unenroll with
 the trusted new helper before restoring a runtime without charter
 enforcement:</p>
-<div class="sourceCode" id="cb18"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-charter.py <span class="at">--repo</span> . unenroll</span></code></pre></div>
+<div class="sourceCode" id="cb22"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-I</span> <span class="at">-B</span> scripts/bureau-charter.py <span class="at">--repo</span> . unenroll</span></code></pre></div>
 <p>Follow <a href="#restore-the-pre-upgrade-installation">restore the
 pre-upgrade installation</a> to select the recorded previous source
 commit and restore the complete v3.9.2 asset/configuration/installer set
@@ -556,19 +638,19 @@ backup steps</a>, including <code>.bureau-install.json</code> and
 together with interfaces</strong> from each adopting repository root.
 Set <code>BUREAU_TARGET</code> to the target already installed:
 <code>claude</code>, <code>codex</code> or <code>both</code>.</p>
-<div class="sourceCode" id="cb19"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_TARGET</span><span class="op">=</span>claude</span>
-<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
-<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> <span class="st">&quot;</span><span class="va">$BUREAU_TARGET</span><span class="st">&quot;</span> <span class="at">--scope</span> scripts <span class="at">--scope</span> interfaces</span></code></pre></div>
+<div class="sourceCode" id="cb23"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_TARGET</span><span class="op">=</span>claude</span>
+<span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
+<span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> <span class="st">&quot;</span><span class="va">$BUREAU_TARGET</span><span class="st">&quot;</span> <span class="at">--scope</span> scripts <span class="at">--scope</span> interfaces</span></code></pre></div>
 <p>Review every conflict and preserve customizations. For each approved
 replacement, add a path-specific option such as
 <code>--overwrite scripts/merge-pipeline.sh</code> and preview again.
 Apply once there are no unresolved conflicts, including the same
 approved <code>--overwrite</code> options on apply.
 <code>--update</code> edits configuration only.</p>
-<div class="sourceCode" id="cb20"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
-<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> <span class="st">&quot;</span><span class="va">$BUREAU_TARGET</span><span class="st">&quot;</span> <span class="at">--scope</span> scripts <span class="at">--scope</span> interfaces <span class="at">--apply</span></span></code></pre></div></li>
+<div class="sourceCode" id="cb24"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
+<span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> <span class="st">&quot;</span><span class="va">$BUREAU_TARGET</span><span class="st">&quot;</span> <span class="at">--scope</span> scripts <span class="at">--scope</span> interfaces <span class="at">--apply</span></span></code></pre></div></li>
 <li><p>Resync evidence writers and readers together. Older readers do
 not understand the new optional <code>reviewed_head</code> round field;
 legacy records still use matching receipts. Older approvals without the
@@ -636,10 +718,10 @@ backup steps</a> and use this preview for the <strong>complete scripts
 scope</strong>. Run it from the root of each adopting repository, with
 <code>BUREAU_TARGET</code> set to the target already installed:
 <code>claude</code>, <code>codex</code> or <code>both</code>.</p>
-<div class="sourceCode" id="cb21"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_TARGET</span><span class="op">=</span>claude</span>
-<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
-<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> <span class="st">&quot;</span><span class="va">$BUREAU_TARGET</span><span class="st">&quot;</span> <span class="at">--scope</span> scripts</span></code></pre></div>
+<div class="sourceCode" id="cb25"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a><span class="va">BUREAU_TARGET</span><span class="op">=</span>claude</span>
+<span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
+<span id="cb25-3"><a href="#cb25-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> <span class="st">&quot;</span><span class="va">$BUREAU_TARGET</span><span class="st">&quot;</span> <span class="at">--scope</span> scripts</span></code></pre></div>
 <p>Include <code>.bureau-install.json</code> and <code>.gitignore</code>
 in the private backup. Review each conflict and preserve customizations.
 For each approved replacement, add a path-specific option such as
@@ -647,9 +729,9 @@ For each approved replacement, add a path-specific option such as
 scripts-only preview again. Apply once the preview has no unresolved
 conflicts. Include the same <code>--overwrite</code> options on
 apply.</p>
-<div class="sourceCode" id="cb22"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
-<span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> <span class="st">&quot;</span><span class="va">$BUREAU_TARGET</span><span class="st">&quot;</span> <span class="at">--scope</span> scripts <span class="at">--apply</span></span></code></pre></div></li>
+<div class="sourceCode" id="cb26"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
+<span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> <span class="st">&quot;</span><span class="va">$BUREAU_TARGET</span><span class="st">&quot;</span> <span class="at">--scope</span> scripts <span class="at">--apply</span></span></code></pre></div></li>
 <li><p>Remove <code>qa.trivy.image_archive_command</code> from existing
 configurations, including entries set to <code>null</code>. Runtime and
 doctor reject the key even when Trivy is disabled. Semgrep and Trivy
@@ -761,9 +843,9 @@ decision script, workflow and policy to the default branch. Require
 <code>bureau/human-approval</code> in branch protection. The scope is
 separate from existing default scopes; preview, then apply using the
 actual loaded source skill root:</p>
-<div class="sourceCode" id="cb24"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--scope</span> approval</span>
-<span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--scope</span> approval <span class="at">--apply</span></span></code></pre></div>
+<div class="sourceCode" id="cb28"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--scope</span> approval</span>
+<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--scope</span> approval <span class="at">--apply</span></span></code></pre></div>
 <p>The approval status is an exact-commit accident guard. Only created
 comments trigger it; edited comments do not count, a new push has no
 status, and refused commands leave statuses untouched. Doctor does not
@@ -2389,10 +2471,10 @@ native hook-name mapping and the helper guidance below.</p>
 branch, including numeric feature branches, <code>codex/*</code> and
 detached checkouts, resolve the issue's exact approved spec folder and
 always pass both variables:</p>
-<div class="sourceCode" id="cb32"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="va">SPECIFY_FEATURE</span><span class="op">=</span>NNN-approved-feature <span class="dt">\</span></span>
-<span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a><span class="va">SPECIFY_FEATURE_DIRECTORY</span><span class="op">=</span>specs/NNN-approved-feature <span class="dt">\</span></span>
-<span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> .specify/scripts/bash/check-prerequisites.sh <span class="at">--json</span> <span class="at">--paths-only</span></span></code></pre></div>
+<div class="sourceCode" id="cb36"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a><span class="va">SPECIFY_FEATURE</span><span class="op">=</span>NNN-approved-feature <span class="dt">\</span></span>
+<span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a><span class="va">SPECIFY_FEATURE_DIRECTORY</span><span class="op">=</span>specs/NNN-approved-feature <span class="dt">\</span></span>
+<span id="cb36-3"><a href="#cb36-3" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> .specify/scripts/bash/check-prerequisites.sh <span class="at">--json</span> <span class="at">--paths-only</span></span></code></pre></div>
 <p>Replace both example values with the real approved feature and
 configured specs path. Use the same pair for every helper that consumes
 an existing feature. Fresh worktrees lack the ignored
@@ -2464,9 +2546,9 @@ href="stage-protocol.html">ownership/recovery protocol</a>.</li>
 conflicts</h2>
 <p>Run the helper from the refreshed source, with the adopting
 repository as the current directory:</p>
-<div class="sourceCode" id="cb33"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
-<span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> both <span class="at">--scope</span> interfaces <span class="at">--scope</span> scripts</span></code></pre></div>
+<div class="sourceCode" id="cb37"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
+<span id="cb37-2"><a href="#cb37-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> both <span class="at">--scope</span> interfaces <span class="at">--scope</span> scripts</span></code></pre></div>
 <p>Preview writes nothing. Exit code <code>3</code> means at least one
 asset conflict. Even with <code>--apply</code>, <strong>one unresolved
 conflict prevents every file in that asset batch from being
@@ -2505,11 +2587,11 @@ unpacked archive or a copy inside another repository, is recorded as
 repository's commit is never used. A preview or an apply stopped by a
 conflict writes no source. The manifest stays at version <code>1</code>:
 installers without source recording still read it.</p>
-<div class="sourceCode" id="cb34"><pre
-class="sourceCode json"><code class="sourceCode json"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;sources&quot;</span><span class="er">:</span> <span class="fu">{</span></span>
-<span id="cb34-2"><a href="#cb34-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;scripts&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;git&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;tag&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.1.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;describe&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.1.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;commit&quot;</span><span class="fu">:</span> <span class="st">&quot;&lt;40-character SHA&gt;&quot;</span><span class="fu">,</span> <span class="dt">&quot;dirty&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">}</span></span>
-<span id="cb34-3"><a href="#cb34-3" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span><span class="er">,</span></span>
-<span id="cb34-4"><a href="#cb34-4" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;sources_files_sha256&quot;</span><span class="er">:</span> <span class="st">&quot;&lt;sha256 of the files map&gt;&quot;</span></span></code></pre></div>
+<div class="sourceCode" id="cb38"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;sources&quot;</span><span class="er">:</span> <span class="fu">{</span></span>
+<span id="cb38-2"><a href="#cb38-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;scripts&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;git&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span> <span class="dt">&quot;tag&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.1.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;describe&quot;</span><span class="fu">:</span> <span class="st">&quot;v3.1.0&quot;</span><span class="fu">,</span> <span class="dt">&quot;commit&quot;</span><span class="fu">:</span> <span class="st">&quot;&lt;40-character SHA&gt;&quot;</span><span class="fu">,</span> <span class="dt">&quot;dirty&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">}</span></span>
+<span id="cb38-3"><a href="#cb38-3" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span><span class="er">,</span></span>
+<span id="cb38-4"><a href="#cb38-4" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;sources_files_sha256&quot;</span><span class="er">:</span> <span class="st">&quot;&lt;sha256 of the files map&gt;&quot;</span></span></code></pre></div>
 <table>
 <thead>
 <tr>
@@ -2572,11 +2654,11 @@ do not describe an incomplete scripts upgrade as a working new
 runtime.</li>
 </ul>
 <p>Example for a single reviewed script replacement:</p>
-<div class="sourceCode" id="cb35"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
-<span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> both <span class="at">--scope</span> interfaces <span class="at">--scope</span> scripts <span class="dt">\</span></span>
-<span id="cb35-3"><a href="#cb35-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--overwrite</span> scripts/qa-pipeline.sh</span>
-<span id="cb35-4"><a href="#cb35-4" aria-hidden="true" tabindex="-1"></a><span class="co"># After reviewing this preview, repeat the same command with --apply.</span></span></code></pre></div>
+<div class="sourceCode" id="cb39"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb39-1"><a href="#cb39-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> assets <span class="dt">\</span></span>
+<span id="cb39-2"><a href="#cb39-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--target</span> both <span class="at">--scope</span> interfaces <span class="at">--scope</span> scripts <span class="dt">\</span></span>
+<span id="cb39-3"><a href="#cb39-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--overwrite</span> scripts/qa-pipeline.sh</span>
+<span id="cb39-4"><a href="#cb39-4" aria-hidden="true" tabindex="-1"></a><span class="co"># After reviewing this preview, repeat the same command with --apply.</span></span></code></pre></div>
 <p>Other conflicts still block that example. Repeat
 <code>--overwrite</code> only for each reviewed path in the selected
 scope. There is no blanket force, skip-conflicts or automatic merge
@@ -2608,9 +2690,9 @@ migration</h2>
 <code>.bureau.json</code> or <code>.env</code>. Configuration version
 <code>2</code> is a schema version, not a Bureau release number. To
 adopt it, preview and then apply:</p>
-<div class="sourceCode" id="cb36"><pre
-class="sourceCode sh"><code class="sourceCode bash"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> migrate <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span></span>
-<span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> migrate <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--apply</span></span></code></pre></div>
+<div class="sourceCode" id="cb40"><pre
+class="sourceCode sh"><code class="sourceCode bash"><span id="cb40-1"><a href="#cb40-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> migrate <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span></span>
+<span id="cb40-2"><a href="#cb40-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="st">&quot;</span><span class="va">$BUREAU_SOURCE</span><span class="st">/scripts/bureau_install.py&quot;</span> migrate <span class="at">--repo</span> <span class="st">&quot;</span><span class="va">$PWD</span><span class="st">&quot;</span> <span class="at">--apply</span></span></code></pre></div>
 <p>Migration retains existing IDs, labels, models, switches and
 extension keys. It makes the existing Claude runner default explicit
 when absent and adds <code>agents.model_compatibility: "v1"</code> when

@@ -90,13 +90,9 @@ An intentionally `main`-tracking installation can instead use `git pull --ff-onl
 
 2. Follow [source selection](#select-the-source-release): record the previous commit, select published `v3.10.0` in the actual source skill and refresh discovery. Follow the [inventory and private backup recipe](#before-changing-an-adopting-repository), including `.bureau-install.json`, `.gitignore`, customized assets, user instructions, Spec Kit assets/constitution, local commits and shared runtime records. Compare installed-script drift before applying upstream files; retain local incident fixes in the coherent upgraded set.
 
-3. **Before scripts resync or restart**, publish valid `agents.merge_publishers` in the actual default branch's sanitized `.bureau.json` through the normal reviewed human publication process. Preserve other required policy and remove credentials and machine-specific settings; keep secrets in the external secrets file. Use a dedicated App when possible, substituting its real slug for this example:
+3. **Before scripts resync or restart**, follow [Publish sanitized default-branch policy](#publish-sanitized-default-branch-policy) to back up the local configuration, explicitly stage only the sanitized `.bureau.json`, obtain human review/merge and verify the committed policy. The reader requires this default-branch file; changing the normally ignored local configuration alone is insufficient.
 
-   ```json
-   {"agents":{"merge_publishers":["app:bureau-reviewer"]}}
-   ```
-
-   A human publisher uses `user:review-publisher`; Actions uses `app:github-actions`. Set the matching typed identity in the sanitized file, review its diff and publish it before continuing. Run `gh api user --jq .login` under the review publisher's credentials to identify a human login; App publishers must use the App's slug. See [trusted merge publishers](#trusted-merge-publishers). Missing/invalid policy holds automatic merges with 25. Manual mode warns on absence and rejects present invalid policy. Shared identities trust everyone using that principal. Stop the merger before emergency revocation because policy is pinned per run.
+   Prefer a dedicated App and its real slug, such as `app:bureau-reviewer`. A human publisher uses `user:review-publisher`; Actions uses `app:github-actions`. Run `gh api user --jq .login` under the review publisher's credentials to identify a human login; App publishers must use the App's slug. See [trusted merge publishers](#trusted-merge-publishers). Missing/invalid policy holds automatic merges with 25. Manual mode warns on absence and rejects present invalid policy. Shared identities trust everyone using that principal. Stop the merger before emergency revocation because policy is pinned per run.
 
 4. Preview the **complete scripts scope** from each adopting repository root, with its existing installed target (`claude`, `codex` or `both`):
 
@@ -114,6 +110,64 @@ An intentionally `main`-tracking installation can instead use `git pull --ff-onl
    ```
 
    Include `bureau-charter.py`, `bureau-env.sh`, `bureau-merge-review.py`, `bureau-secrets.py`, the review parser/pipeline, provider/doctor, dispatcher/runtime, process helper and wrapper as one set. Mixed secret helper/parser formats remain blocking not-measured results. This release requires no interfaces, CI or workflows resync from v3.9.2; `--update` changes configuration only. Restart every driver on this complete set after the remaining steps.
+
+### Publish sanitized default-branch policy
+
+Run from the adopting repository root with dispatch stopped and authenticated `gh`. Use the selected, trusted `BUREAU_SOURCE` from [source selection](#select-the-source-release); its template reader is available before scripts resync. Replace `owner/repository` with the GitHub repository that `origin` actually identifies, and confirm that with `git remote -v`. Run each block only after the preceding block succeeds; stop on any error. Keep the variables in the same shell.
+
+Back up the local `.bureau.json` privately **before** publication. Create a separate worktree from the actual default branch so the local configuration, branch and index remain intact. Use an unused publication branch name if this one already exists:
+
+```sh
+BUREAU_ADOPTER=$(git rev-parse --show-toplevel) &&
+BUREAU_GITHUB=owner/repository &&
+BUREAU_DEFAULT=$(gh api "repos/$BUREAU_GITHUB" --jq .default_branch) &&
+BUREAU_POLICY_DIR=$(umask 077 && mktemp -d "${TMPDIR:-/tmp}/bureau-policy.XXXXXX") &&
+cp -p "$BUREAU_ADOPTER/.bureau.json" "$BUREAU_POLICY_DIR/local.bureau.json" &&
+git fetch origin "$BUREAU_DEFAULT" &&
+git worktree add -b bureau/publish-merge-policy "$BUREAU_POLICY_DIR/worktree" "origin/$BUREAU_DEFAULT"
+```
+
+Write only the sanitized policy keys needed by the readers; never copy the local backup into the publication worktree. Inspect any existing committed policy first:
+
+```sh
+if [ -f "$BUREAU_POLICY_DIR/worktree/.bureau.json" ]; then
+  cat "$BUREAU_POLICY_DIR/worktree/.bureau.json"
+fi
+```
+
+Replace the example publisher with the real typed identity. If policy is already committed, retain its other required, reviewed policy keys in the JSON below, including any `agents.merge_charter` and `agents.merge_approvers`. For charter publication, use the [charter example](#optional-merge-charter-enrollment) instead, retaining `agents.merge_publishers`. Exclude credentials, local repository paths and machine-specific settings; keep secrets in the external secrets file.
+
+```sh
+cat > "$BUREAU_POLICY_DIR/worktree/.bureau.json" <<'JSON'
+{"agents":{"merge_publishers":["app:bureau-reviewer"]}}
+JSON
+git -C "$BUREAU_POLICY_DIR/worktree" add -f -- .bureau.json &&
+git -C "$BUREAU_POLICY_DIR/worktree" diff --cached --check &&
+git -C "$BUREAU_POLICY_DIR/worktree" diff --cached -- .bureau.json
+```
+
+The explicit `git add -f -- .bureau.json` stages that one file even when ignored. Inspect the complete staged diff for secrets and unintended policy removal before committing. Then publish a PR for human review:
+
+```sh
+git -C "$BUREAU_POLICY_DIR/worktree" commit -m "chore: publish trusted merge policy" &&
+git -C "$BUREAU_POLICY_DIR/worktree" push -u origin bureau/publish-merge-policy &&
+gh pr create --repo "$BUREAU_GITHUB" --base "$BUREAU_DEFAULT" --head bureau/publish-merge-policy \
+  --title "Publish trusted merge policy" --body "Publish sanitized default-branch policy for human review and merge before Bureau resync."
+```
+
+A human must review and merge this PR into the actual default branch; do not route the policy change through automatic merge. After that merge, verify the remote file and run the trusted reader's read-only policy check **before resync**:
+
+```sh
+BUREAU_DEFAULT=$(gh api "repos/$BUREAU_GITHUB" --jq .default_branch) &&
+git -C "$BUREAU_ADOPTER" fetch origin "$BUREAU_DEFAULT" &&
+git -C "$BUREAU_ADOPTER" show "origin/$BUREAU_DEFAULT:.bureau.json" &&
+BUREAU_PUBLISHER_POLICY=$(python3 -B "$BUREAU_SOURCE/templates/scripts/bureau-merge-review.py" policy "$BUREAU_GITHUB") &&
+printf '%s\n' "$BUREAU_PUBLISHER_POLICY" | jq -e \
+  --arg expected "$(git -C "$BUREAU_ADOPTER" rev-parse "origin/$BUREAU_DEFAULT")" \
+  '.kind == "ok" and .commit == $expected and (.entries | length > 0)'
+```
+
+Require `true` and a successful exit from `jq`; inspect the committed publisher identities against the approved diff. The reader can exit successfully with a `policy` or `read` error result, so exit status alone is insufficient. If the default branch moved between reads, fetch and verify again. The read-only check accepts publisher policy; charter validation and enrollment remain the separate steps below. Retain the private backup through the upgrade; the original local configuration was never replaced. Return to the [scripts resync step](#drain-select-the-source-and-resync) only after verification succeeds.
 
 ### Review defaults and optional configuration
 
@@ -145,7 +199,7 @@ No new runtime dependency is required. Keep Bash 3.2+, Python 3.9+, git and jq, 
 
 `agents.merge_charter` is new and opt-in. An absent or disabled declaration does not enroll. An unenrolled merge still performs exactly one local Git common-directory read, with hooks off and inherited `GIT_*` overrides removed only for that call, without additional service calls. Run merges from a work tree; repair failed lookups or inaccessible enrollment before retrying. Existing enrollment remains active across resync and cannot be disabled by changing a checkout flag.
 
-To opt in, edit a sanitized default-branch `.bureau.json` while retaining `agents.merge_publishers` and other required policy, configure a local Merge state for human handoff, and publish the reviewed policy through normal human review. A label queue and exception example is:
+To opt in, follow the same [sanitized policy publication recipe](#publish-sanitized-default-branch-policy), using the JSON below while retaining the real `agents.merge_publishers` and other required policy. Complete its backup, explicit staging, human review/merge and default-branch verification before resync or enrollment. Configure a local Merge state for human handoff. A label queue and exception example is:
 
 ```json
 {
@@ -192,10 +246,12 @@ Run this from the relevant worktree and verify both target and head histories ar
 
 ### Optional offline tools and local suite wrappers
 
-Acceptance contracts require no adopter action unless the standalone CLI is wanted; the scripts resync already installs it. Place optional `acceptance.json` beside the feature's `spec.md` and `tasks.md`, then run:
+Acceptance contracts require no adopter action unless the standalone CLI is wanted; the scripts resync already installs it. Place optional `acceptance.json` beside the feature's `spec.md` and `tasks.md`. Run from the adopting repository root, setting `FEATURE_DIR` to the feature directory relative to that root:
 
 ```sh
-python3 -B scripts/bureau-acceptance-contract.py validate acceptance.json --spec spec.md --tasks tasks.md
+FEATURE_DIR=specs/001-example # replace with the actual feature directory
+python3 -B scripts/bureau-acceptance-contract.py validate "$FEATURE_DIR/acceptance.json" \
+  --spec "$FEATURE_DIR/spec.md" --tasks "$FEATURE_DIR/tasks.md"
 ```
 
 Use the [format and synthetic examples](../references/acceptance-contracts.md) to author inputs. No stage enforcement, verifier execution or enablement key exists. A well formed declaration does not prove completeness or product acceptance.
