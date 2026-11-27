@@ -337,9 +337,10 @@ jq -e --arg sha "$SUITE_SHA" --arg tag "$SUITE_TAG" --arg project "$SUITE_PROJEC
       (.deadline | type == "number" and . > 0 and floor == .) and
       (.elapsed_seconds | type == "number" and . >= 0 and isfinite) and
       (.log | type == "string" and length > 0))) and
-  ((.proposal_ids // []) | type == "array" and all(.[]; type == "string" and test("^[a-f0-9]{32}$"))) and
-  ((.proposal_ids // []) | length) == ((.proposal_ids // []) | unique | length) and
-  (if ($failed | length) > 0 then has("proposal_ids") else (has("proposal_ids") | not) end)
+  (if ($failed | length) > 0
+   then (.proposal_ids | type == "array" and all(.[]; type == "string" and test("^[a-f0-9]{32}$")) and
+     length == (unique | length))
+   else (has("proposal_ids") | not) end)
 ' "$SUITE_RECEIPT" > /dev/null
 
 # Check every outbox record before consuming or acknowledging any proposal.

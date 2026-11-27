@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="17277f079d8af0aecbf222c7cf17851d21913862271d2710c4898503d2dd5235">
+<meta name="bureau-source-sha256" content="fd94aa6fa579d900b955854b7143d6e2214c46ba14679519290294f92c5ad216">
 <title>migration · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -634,39 +634,40 @@ class="sourceCode sh"><code class="sourceCode bash"><span id="cb21-1"><a href="#
 <span id="cb21-40"><a href="#cb21-40" aria-hidden="true" tabindex="-1"></a><span class="st">      (.deadline | type == &quot;number&quot; and . &gt; 0 and floor == .) and</span></span>
 <span id="cb21-41"><a href="#cb21-41" aria-hidden="true" tabindex="-1"></a><span class="st">      (.elapsed_seconds | type == &quot;number&quot; and . &gt;= 0 and isfinite) and</span></span>
 <span id="cb21-42"><a href="#cb21-42" aria-hidden="true" tabindex="-1"></a><span class="st">      (.log | type == &quot;string&quot; and length &gt; 0))) and</span></span>
-<span id="cb21-43"><a href="#cb21-43" aria-hidden="true" tabindex="-1"></a><span class="st">  ((.proposal_ids // []) | type == &quot;array&quot; and all(.[]; type == &quot;string&quot; and test(&quot;^[a-f0-9]{32}$&quot;))) and</span></span>
-<span id="cb21-44"><a href="#cb21-44" aria-hidden="true" tabindex="-1"></a><span class="st">  ((.proposal_ids // []) | length) == ((.proposal_ids // []) | unique | length) and</span></span>
-<span id="cb21-45"><a href="#cb21-45" aria-hidden="true" tabindex="-1"></a><span class="st">  (if ($failed | length) &gt; 0 then has(&quot;proposal_ids&quot;) else (has(&quot;proposal_ids&quot;) | not) end)</span></span>
-<span id="cb21-46"><a href="#cb21-46" aria-hidden="true" tabindex="-1"></a><span class="st">&#39; &quot;$SUITE_RECEIPT&quot; &gt; /dev/null</span></span>
-<span id="cb21-47"><a href="#cb21-47" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb21-48"><a href="#cb21-48" aria-hidden="true" tabindex="-1"></a><span class="st"># Check every outbox record before consuming or acknowledging any proposal.</span></span>
-<span id="cb21-49"><a href="#cb21-49" aria-hidden="true" tabindex="-1"></a><span class="st">for proposal in &quot;$SUITE_STATE&quot;/proposals/*.json; do</span></span>
-<span id="cb21-50"><a href="#cb21-50" aria-hidden="true" tabindex="-1"></a><span class="st">  [ -f &quot;$proposal&quot; ] || continue</span></span>
-<span id="cb21-51"><a href="#cb21-51" aria-hidden="true" tabindex="-1"></a><span class="st">  id=${proposal##*/}</span></span>
-<span id="cb21-52"><a href="#cb21-52" aria-hidden="true" tabindex="-1"></a><span class="st">  id=${id%.json}</span></span>
-<span id="cb21-53"><a href="#cb21-53" aria-hidden="true" tabindex="-1"></a><span class="st">  jq -e --arg id &quot;$id&quot; &#39;</span></span>
-<span id="cb21-54"><a href="#cb21-54" aria-hidden="true" tabindex="-1"></a><span class="st">    def timestamp: type == &quot;string&quot; and</span></span>
-<span id="cb21-55"><a href="#cb21-55" aria-hidden="true" tabindex="-1"></a><span class="st">      (sub(&quot;\\.[0-9]+&quot;; &quot;&quot;) | sub(&quot;\\+00:00$&quot;; &quot;Z&quot;) | fromdateiso8601 | type == &quot;number&quot;);</span></span>
-<span id="cb21-56"><a href="#cb21-56" aria-hidden="true" tabindex="-1"></a><span class="st">    .id == $id and (.id | test(&quot;^[a-f0-9]{32}$&quot;)) and</span></span>
-<span id="cb21-57"><a href="#cb21-57" aria-hidden="true" tabindex="-1"></a><span class="st">    (.file | type == &quot;string&quot; and length &gt; 0) and</span></span>
-<span id="cb21-58"><a href="#cb21-58" aria-hidden="true" tabindex="-1"></a><span class="st">    (.status == &quot;open&quot; or .status == &quot;resolved&quot;) and</span></span>
-<span id="cb21-59"><a href="#cb21-59" aria-hidden="true" tabindex="-1"></a><span class="st">    all(.shas, .run_tags; type == &quot;array&quot; and length &gt; 0 and all(.[]; type == &quot;string&quot; and length &gt; 0)) and</span></span>
-<span id="cb21-60"><a href="#cb21-60" aria-hidden="true" tabindex="-1"></a><span class="st">    (.created_at | timestamp) and</span></span>
-<span id="cb21-61"><a href="#cb21-61" aria-hidden="true" tabindex="-1"></a><span class="st">    (if .status == &quot;open&quot; then (has(&quot;resolved_at&quot;) | not) else (.resolved_at | timestamp) end)</span></span>
-<span id="cb21-62"><a href="#cb21-62" aria-hidden="true" tabindex="-1"></a><span class="st">  &#39; &quot;$proposal&quot; &gt; /dev/null</span></span>
-<span id="cb21-63"><a href="#cb21-63" aria-hidden="true" tabindex="-1"></a><span class="st">done</span></span>
-<span id="cb21-64"><a href="#cb21-64" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb21-65"><a href="#cb21-65" aria-hidden="true" tabindex="-1"></a><span class="st"># Every receipt reference must exist and identify a recovered file.</span></span>
-<span id="cb21-66"><a href="#cb21-66" aria-hidden="true" tabindex="-1"></a><span class="st">for id in $(jq -r &#39;.proposal_ids // [] | .[]&#39; &quot;$SUITE_RECEIPT&quot;); do</span></span>
-<span id="cb21-67"><a href="#cb21-67" aria-hidden="true" tabindex="-1"></a><span class="st">  jq -e --slurpfile receipt &quot;$SUITE_RECEIPT&quot; --arg id &quot;$id&quot; &#39;</span></span>
-<span id="cb21-68"><a href="#cb21-68" aria-hidden="true" tabindex="-1"></a><span class="st">    .id == $id and (.file as $f | $receipt[0].recovered | has($f))</span></span>
-<span id="cb21-69"><a href="#cb21-69" aria-hidden="true" tabindex="-1"></a><span class="st">  &#39; &quot;$SUITE_STATE/proposals/$id.json&quot; &gt; /dev/null</span></span>
-<span id="cb21-70"><a href="#cb21-70" aria-hidden="true" tabindex="-1"></a><span class="st">done</span></span>
-<span id="cb21-71"><a href="#cb21-71" aria-hidden="true" tabindex="-1"></a><span class="st">[ &quot;$SUITE_SHA&quot; = &quot;$(git rev-parse HEAD)&quot; ]</span></span>
-<span id="cb21-72"><a href="#cb21-72" aria-hidden="true" tabindex="-1"></a><span class="st">SUITE_STATUS=$(git status --porcelain)</span></span>
-<span id="cb21-73"><a href="#cb21-73" aria-hidden="true" tabindex="-1"></a><span class="st">[ -z &quot;$SUITE_STATUS&quot; ]</span></span>
-<span id="cb21-74"><a href="#cb21-74" aria-hidden="true" tabindex="-1"></a><span class="st">printf &#39;%s\n&#39; true</span></span>
-<span id="cb21-75"><a href="#cb21-75" aria-hidden="true" tabindex="-1"></a><span class="op">BASH</span></span></code></pre></div>
+<span id="cb21-43"><a href="#cb21-43" aria-hidden="true" tabindex="-1"></a><span class="st">  (if ($failed | length) &gt; 0</span></span>
+<span id="cb21-44"><a href="#cb21-44" aria-hidden="true" tabindex="-1"></a><span class="st">   then (.proposal_ids | type == &quot;array&quot; and all(.[]; type == &quot;string&quot; and test(&quot;^[a-f0-9]{32}$&quot;)) and</span></span>
+<span id="cb21-45"><a href="#cb21-45" aria-hidden="true" tabindex="-1"></a><span class="st">     length == (unique | length))</span></span>
+<span id="cb21-46"><a href="#cb21-46" aria-hidden="true" tabindex="-1"></a><span class="st">   else (has(&quot;proposal_ids&quot;) | not) end)</span></span>
+<span id="cb21-47"><a href="#cb21-47" aria-hidden="true" tabindex="-1"></a><span class="st">&#39; &quot;$SUITE_RECEIPT&quot; &gt; /dev/null</span></span>
+<span id="cb21-48"><a href="#cb21-48" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb21-49"><a href="#cb21-49" aria-hidden="true" tabindex="-1"></a><span class="st"># Check every outbox record before consuming or acknowledging any proposal.</span></span>
+<span id="cb21-50"><a href="#cb21-50" aria-hidden="true" tabindex="-1"></a><span class="st">for proposal in &quot;$SUITE_STATE&quot;/proposals/*.json; do</span></span>
+<span id="cb21-51"><a href="#cb21-51" aria-hidden="true" tabindex="-1"></a><span class="st">  [ -f &quot;$proposal&quot; ] || continue</span></span>
+<span id="cb21-52"><a href="#cb21-52" aria-hidden="true" tabindex="-1"></a><span class="st">  id=${proposal##*/}</span></span>
+<span id="cb21-53"><a href="#cb21-53" aria-hidden="true" tabindex="-1"></a><span class="st">  id=${id%.json}</span></span>
+<span id="cb21-54"><a href="#cb21-54" aria-hidden="true" tabindex="-1"></a><span class="st">  jq -e --arg id &quot;$id&quot; &#39;</span></span>
+<span id="cb21-55"><a href="#cb21-55" aria-hidden="true" tabindex="-1"></a><span class="st">    def timestamp: type == &quot;string&quot; and</span></span>
+<span id="cb21-56"><a href="#cb21-56" aria-hidden="true" tabindex="-1"></a><span class="st">      (sub(&quot;\\.[0-9]+&quot;; &quot;&quot;) | sub(&quot;\\+00:00$&quot;; &quot;Z&quot;) | fromdateiso8601 | type == &quot;number&quot;);</span></span>
+<span id="cb21-57"><a href="#cb21-57" aria-hidden="true" tabindex="-1"></a><span class="st">    .id == $id and (.id | test(&quot;^[a-f0-9]{32}$&quot;)) and</span></span>
+<span id="cb21-58"><a href="#cb21-58" aria-hidden="true" tabindex="-1"></a><span class="st">    (.file | type == &quot;string&quot; and length &gt; 0) and</span></span>
+<span id="cb21-59"><a href="#cb21-59" aria-hidden="true" tabindex="-1"></a><span class="st">    (.status == &quot;open&quot; or .status == &quot;resolved&quot;) and</span></span>
+<span id="cb21-60"><a href="#cb21-60" aria-hidden="true" tabindex="-1"></a><span class="st">    all(.shas, .run_tags; type == &quot;array&quot; and length &gt; 0 and all(.[]; type == &quot;string&quot; and length &gt; 0)) and</span></span>
+<span id="cb21-61"><a href="#cb21-61" aria-hidden="true" tabindex="-1"></a><span class="st">    (.created_at | timestamp) and</span></span>
+<span id="cb21-62"><a href="#cb21-62" aria-hidden="true" tabindex="-1"></a><span class="st">    (if .status == &quot;open&quot; then (has(&quot;resolved_at&quot;) | not) else (.resolved_at | timestamp) end)</span></span>
+<span id="cb21-63"><a href="#cb21-63" aria-hidden="true" tabindex="-1"></a><span class="st">  &#39; &quot;$proposal&quot; &gt; /dev/null</span></span>
+<span id="cb21-64"><a href="#cb21-64" aria-hidden="true" tabindex="-1"></a><span class="st">done</span></span>
+<span id="cb21-65"><a href="#cb21-65" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb21-66"><a href="#cb21-66" aria-hidden="true" tabindex="-1"></a><span class="st"># Every receipt reference must exist and identify a recovered file.</span></span>
+<span id="cb21-67"><a href="#cb21-67" aria-hidden="true" tabindex="-1"></a><span class="st">for id in $(jq -r &#39;.proposal_ids // [] | .[]&#39; &quot;$SUITE_RECEIPT&quot;); do</span></span>
+<span id="cb21-68"><a href="#cb21-68" aria-hidden="true" tabindex="-1"></a><span class="st">  jq -e --slurpfile receipt &quot;$SUITE_RECEIPT&quot; --arg id &quot;$id&quot; &#39;</span></span>
+<span id="cb21-69"><a href="#cb21-69" aria-hidden="true" tabindex="-1"></a><span class="st">    .id == $id and (.file as $f | $receipt[0].recovered | has($f))</span></span>
+<span id="cb21-70"><a href="#cb21-70" aria-hidden="true" tabindex="-1"></a><span class="st">  &#39; &quot;$SUITE_STATE/proposals/$id.json&quot; &gt; /dev/null</span></span>
+<span id="cb21-71"><a href="#cb21-71" aria-hidden="true" tabindex="-1"></a><span class="st">done</span></span>
+<span id="cb21-72"><a href="#cb21-72" aria-hidden="true" tabindex="-1"></a><span class="st">[ &quot;$SUITE_SHA&quot; = &quot;$(git rev-parse HEAD)&quot; ]</span></span>
+<span id="cb21-73"><a href="#cb21-73" aria-hidden="true" tabindex="-1"></a><span class="st">SUITE_STATUS=$(git status --porcelain)</span></span>
+<span id="cb21-74"><a href="#cb21-74" aria-hidden="true" tabindex="-1"></a><span class="st">[ -z &quot;$SUITE_STATUS&quot; ]</span></span>
+<span id="cb21-75"><a href="#cb21-75" aria-hidden="true" tabindex="-1"></a><span class="st">printf &#39;%s\n&#39; true</span></span>
+<span id="cb21-76"><a href="#cb21-76" aria-hidden="true" tabindex="-1"></a><span class="op">BASH</span></span></code></pre></div>
 <p>Accept local green <strong>only when the entire verifier prints
 <code>true</code> and exits 0</strong>, as well as the suite command
 exiting 0. Missing, invalid, failed or cancelled receipts never qualify.
