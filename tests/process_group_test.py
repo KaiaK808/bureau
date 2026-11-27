@@ -911,6 +911,57 @@ bureau_untrusted_env() {
         with patch.object(r.subprocess, 'check_output', return_value='unreadable row\n'):
             with self.assertRaises(r.pg.TerminationUncertain): inspect({123456})
 
+    def test_inspection_timeout_override_is_validated_and_bounded(self):
+        inspect = self.inspectors[r.pg]
+        cases = [(None, 2), ('', 2), ('1', 1), ('30', 30), ('600', 600),
+                 ('0', 2), ('-1', 2), ('601', 2), ('1.5', 2), ('nan', 2),
+                 ('inf', 2), (' 30', 2), ('30\n', 2), ('9' * 5000, 2), ('\u00b2', 2)]
+        for raw, expected in cases:
+            with self.subTest(raw=raw[:20] if raw is not None else None), patch.dict(os.environ):
+                os.environ.pop('BUREAU_TEST_PROCESS_INSPECT_SECONDS', None)
+                if raw is not None: os.environ['BUREAU_TEST_PROCESS_INSPECT_SECONDS'] = raw
+                with patch.object(r.subprocess, 'check_output', return_value='123456 S+\n') as ps:
+                    self.assertEqual(inspect({123456}), {123456})
+                ps.assert_called_once_with(['/bin/ps', '-axo', 'pgid=,stat='], text=True,
+                                           stderr=subprocess.DEVNULL, timeout=expected)
+
+    def test_inspection_timeout_reports_cause_without_process_output(self):
+        failure = subprocess.TimeoutExpired('ps', 30, output='PRIVATE_PROCESS_OUTPUT')
+        with patch.dict(os.environ, {'BUREAU_TEST_PROCESS_INSPECT_SECONDS': '30'}), \
+                patch.object(r.subprocess, 'check_output', side_effect=failure):
+            with self.assertRaises(r.pg.TerminationUncertain) as uncertain:
+                self.inspectors[r.pg]({123456})
+        self.assertEqual(str(uncertain.exception), 'Cannot confirm process groups stopped; '
+                         'process-state inspection unavailable: timeout after 30 s')
+        self.assertIs(uncertain.exception.__cause__, failure)
+
+    def test_inspection_bad_row_reports_cause_without_process_output(self):
+        for output in ('PRIVATE_PROCESS_OUTPUT\n', '123456 S PRIVATE_PROCESS_OUTPUT\n', '123456 ?\n'):
+            with self.subTest(output=output), patch.object(r.subprocess, 'check_output', return_value=output):
+                with self.assertRaises(r.pg.TerminationUncertain) as uncertain:
+                    self.inspectors[r.pg]({123456})
+            self.assertEqual(str(uncertain.exception), 'Cannot confirm process groups stopped; '
+                             'process-state inspection unavailable: unparsable process-state row')
+            self.assertIsInstance(uncertain.exception.__cause__, ValueError)
+
+    def test_inspection_os_error_reports_errno_without_process_output(self):
+        failure = PermissionError(errno.EACCES, 'PRIVATE_PROCESS_OUTPUT')
+        with patch.object(r.subprocess, 'check_output', side_effect=failure):
+            with self.assertRaises(r.pg.TerminationUncertain) as uncertain:
+                self.inspectors[r.pg]({123456})
+        self.assertEqual(str(uncertain.exception), 'Cannot confirm process groups stopped; '
+                         f'process-state inspection unavailable: OS error (errno {errno.EACCES})')
+        self.assertIs(uncertain.exception.__cause__, failure)
+
+    def test_inspection_command_failure_reports_cause_without_process_output(self):
+        failure = subprocess.CalledProcessError(1, 'ps', output='PRIVATE_PROCESS_OUTPUT')
+        with patch.object(r.subprocess, 'check_output', side_effect=failure):
+            with self.assertRaises(r.pg.TerminationUncertain) as uncertain:
+                self.inspectors[r.pg]({123456})
+        self.assertEqual(str(uncertain.exception), 'Cannot confirm process groups stopped; '
+                         'process-state inspection unavailable: ps command failed')
+        self.assertIs(uncertain.exception.__cause__, failure)
+
 
 class NativeProcessGroupTests(unittest.TestCase):
     def test_native_zombie_eperm_clears_after_reaping(self):
