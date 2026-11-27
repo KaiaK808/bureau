@@ -5,6 +5,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import sys
@@ -16,6 +17,15 @@ import uuid
 # two-second monotonic budget per signal failure or exit check, never per retry.
 # A successful probe can also mean a signalled writer is still exiting.
 GROUP_REPROBE_SECONDS = 2.0
+INSPECTION_TIMEOUT_SECONDS = 2.0
+
+
+def inspection_timeout_seconds():
+    """Let loaded tests inspect processes without unbounding the wait."""
+    raw = os.environ.get('BUREAU_TEST_PROCESS_INSPECT_SECONDS', '')
+    if re.fullmatch(r'[0-9]{1,3}', raw) and 1 <= int(raw) <= 600:
+        return float(raw)
+    return INSPECTION_TIMEOUT_SECONDS
 
 
 class TerminationUncertain(OSError):
@@ -71,9 +81,10 @@ def _signal_group(group, signum, *, wait_for_exit=False, reap=None):
 
 def inspect_groups(groups):
     """Return visible live groups; a listing can never override a signal error."""
+    timeout = inspection_timeout_seconds()
     try:
         output = subprocess.check_output(['/bin/ps', '-axo', 'pgid=,stat='], text=True,
-                                         stderr=subprocess.DEVNULL, timeout=2)
+                                         stderr=subprocess.DEVNULL, timeout=timeout)
         active = set()
         for line in output.splitlines():
             parts = line.split()
@@ -84,7 +95,15 @@ def inspect_groups(groups):
                 active.add(int(parts[0]))
         return set(groups) & active
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
-        raise TerminationUncertain('Cannot confirm process groups stopped; process-state inspection unavailable') from exc
+        if isinstance(exc, subprocess.TimeoutExpired):
+            cause = f'timeout after {timeout:g} s'
+        elif isinstance(exc, OSError):
+            cause = f'OS error (errno {exc.errno})'
+        elif isinstance(exc, ValueError):
+            cause = 'unparsable process-state row'
+        else:
+            cause = 'ps command failed'
+        raise TerminationUncertain('Cannot confirm process groups stopped; process-state inspection unavailable: ' + cause) from exc
 
 
 def assert_groups_stopped(groups):

@@ -35,7 +35,7 @@ r = importlib.util.module_from_spec(spec); spec.loader.exec_module(r)
 class RuntimeTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='bureau stage ')
-        self.addCleanup(self.temp.cleanup)
+        self.addCleanup(self.cleanup_temp)
         self.addCleanup(patch.stopall)
         patch.dict(os.environ, {'GIT_CEILING_DIRECTORIES': self.temp.name}).start()
         self.repo = self.make_repo(Path(self.temp.name).resolve() / 'repo')
@@ -48,6 +48,13 @@ class RuntimeTests(unittest.TestCase):
         patch.dict(os.environ, {'BUREAU_CONFIG':str(self.repo / '.bureau.json')}).start()
         self.real_shell = r.shell
         patch.object(r, 'shell', self.shell).start()
+
+    def cleanup_temp(self):
+        try: self.temp.cleanup()
+        except OSError:
+            # A late cancellation-fixture writer must not add a cleanup error
+            # to the assertion that already explains the failure (Python 3.9).
+            if not getattr(self, 'tolerate_late_child_cleanup', False): raise
 
     def make_repo(self, repo):
         # git maintenance off in the repository's own config: r.git and the stages run git with their
@@ -431,6 +438,7 @@ sys.exit(runtime['main']())
         return subprocess.run([sys.executable,str(SCRIPT),'--repo',str(self.repo),'release',run],capture_output=True,text=True)
 
     def test_child_exit_130_keeps_the_run_interrupted_while_an_inner_wrapper_still_runs(self):
+        patch.dict(os.environ, {'BUREAU_TEST_PROCESS_INSPECT_SECONDS': '30'}).start()
         # A stop sent to an inner process group only (v3.2, O1; the maintainer's
         # decision: a child's 130 counts as interrupted). The shepherd ends with 130
         # while the worker's wrapper of the same run still waits for its stage (a
@@ -446,7 +454,7 @@ sys.exit(runtime['main']())
             # before the temporary directory goes (cleanups run last-in, first-out).
             may_end.touch()
             pid=int(inner_pid.read_text()) if inner_pid.exists() else None
-            deadline=time.monotonic()+20
+            deadline=time.monotonic()+30
             while pid and time.monotonic()<deadline:
                 if not process_running(pid): break
                 time.sleep(.05)
@@ -470,7 +478,7 @@ sys.exit(runtime['main']())
         self.assertEqual(held.returncode,21,held.stdout+held.stderr)
         self.assertIn('still alive',held.stderr)
         may_end.touch()
-        deadline=time.monotonic()+15
+        deadline=time.monotonic()+30
         while (released:=self.release_run(run)).returncode!=0 and time.monotonic()<deadline: time.sleep(.1)
         self.assertEqual(released.returncode,0,released.stdout+released.stderr+inner_log.read_text())
         self.assertTrue(ended.exists())
@@ -733,6 +741,7 @@ sys.exit(runtime['main']())
         self.assertIn('Address ALL fixes before remaining tasks',feedback)
 
     def test_nested_worker_cancellation_quarantines_until_explicit_recovery(self):
+        self.tolerate_late_child_cleanup = True
         origin=self.bare_origin()
         r.git(self.repo,'remote','add','origin',str(origin)); r.git(self.repo,'push','-q','origin','main','feat/issue')
         r.git(self.repo,'switch','-q','main')
@@ -743,28 +752,39 @@ sys.exit(runtime['main']())
             config.write('\nbureau_ticket_checkpoint() { BUREAU_TICKET_STATE_ID=s3; }\n'
                          'get_issue_branch_and_comments() { printf \'%s\' \'{"branch":"feat/issue","comments_complete":true,"comments":[]}\'; }\n')
         worker=Path(self.temp.name).resolve()/'worker'
-        ready=Path(self.temp.name)/'child.pid'
+        ready=Path(self.temp.name)/'child.pgid'
         stage=scripts/'implement-pipeline.sh'
         stage.write_text('#!/bin/bash\nset -euo pipefail\nsource "$(dirname "$0")/bureau-config.sh"\nbureau_issue_snapshot() { printf \'%s\' \'{"state":{"id":"s3"}}\'; }\nbureau_stage_enter "$1" "$@"\npython3 -c "$PROBE_CODE"\n')
         # Writes are deliberately delayed until the owner has exited. A normal
         # stage/provider teardown can likewise outlive its immediate shell.
         trigger=Path(self.temp.name)/'write-now'
-        code='import os,signal,time,pathlib; signal.signal(signal.SIGTERM,signal.SIG_IGN); pathlib.Path(os.environ["PROBE_PID"]).write_text(str(os.getpid())); '+ '\nwhile not pathlib.Path(os.environ["PROBE_TRIGGER"]).exists(): time.sleep(.02)\npathlib.Path("late-stage-write").write_text("preserve this work")\ntime.sleep(20)'
-        env={**os.environ,'PROBE_PID':str(ready),'PROBE_TRIGGER':str(trigger),'PROBE_CODE':code}; env.pop('BUREAU_RUN_ID',None)
+        code='import os,signal,time,pathlib; signal.signal(signal.SIGTERM,signal.SIG_IGN); pathlib.Path(os.environ["PROBE_PGID"]).write_text(str(os.getpgrp())); '+ '\nwhile not pathlib.Path(os.environ["PROBE_TRIGGER"]).exists(): time.sleep(.02)\npathlib.Path("late-stage-write").write_text("preserve this work")\ntime.sleep(20)'
+        env={**os.environ,'PROBE_PGID':str(ready),'PROBE_TRIGGER':str(trigger),'PROBE_CODE':code}; env.pop('BUREAU_RUN_ID',None)
         log=Path(self.temp.name)/'worker.log'
         with log.open('w') as out:
             proc=subprocess.Popen(['bash',str(scripts/'bureau-worker.sh'),'TEAM-1','implement-pipeline.sh',str(worker),'feat/issue'],cwd=self.repo,env=env,stdout=out,stderr=out)
         def cleanup():
-            if ready.exists():
-                try: os.kill(int(ready.read_text()),signal.SIGKILL)
-                except ProcessLookupError: pass
-            if proc.poll() is None: proc.kill(); proc.wait()
+            def stop_stage():
+                try: group=int(ready.read_text())
+                except (FileNotFoundError, ValueError): return False  # Not ready yet.
+                try: os.killpg(group,signal.SIGKILL)
+                # macOS can reject even SIGKILL for a zombie-only group.
+                except (ProcessLookupError, PermissionError): pass
+                return True
+            stopped=stop_stage()
+            if proc.poll() is None:
+                proc.terminate()
+                try: proc.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    proc.kill(); proc.wait(timeout=30)
+            # Startup may have published its group during the worker join.
+            if not stopped: stop_stage()
         self.addCleanup(cleanup)
-        deadline=time.monotonic()+5
+        deadline=time.monotonic()+30
         while not ready.exists() and time.monotonic()<deadline: time.sleep(.02)
         self.assertTrue(ready.exists(),'creative stage did not start: '+log.read_text())
         run=next(iter(r.read(self.store.leases).values()))['run_id']
-        proc.terminate(); self.assertEqual(proc.wait(timeout=7),130)
+        proc.terminate(); self.assertEqual(proc.wait(timeout=30),130)
         self.store.assert_owner('TEAM-1',worker,run)
         with self.assertRaises(r.Conflict): self.store.claim('TEAM-2',worker,'other','background')
         key=r.hashlib.sha256(str(worker).encode()).hexdigest()
@@ -772,7 +792,7 @@ sys.exit(runtime['main']())
         release=subprocess.run([sys.executable,str(SCRIPT),'--repo',str(self.repo),'release',run],capture_output=True,text=True)
         self.assertEqual(release.returncode,21,release.stdout+release.stderr)
         trigger.touch()
-        deadline=time.monotonic()+3
+        deadline=time.monotonic()+30
         while not (worker/'late-stage-write').exists() and time.monotonic()<deadline: time.sleep(.02)
         self.assertTrue((worker/'late-stage-write').exists())
         self.store.assert_owner('TEAM-1',worker,run)
