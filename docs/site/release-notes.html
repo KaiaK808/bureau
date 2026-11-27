@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="f166827a8b5eb39bc6cdd6f76b840bd4969e78bb8cf031a293ba14388881f2ec">
+<meta name="bureau-source-sha256" content="84aa2e4b6577b025938bda1eca5df988e8783c8dc11e6aea34321f76df2e5c74">
 <title>release-notes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -82,9 +82,9 @@ operations.</p>
 <p>Doctor reports queue mode and exception classes. <code>suite</code>,
 <code>red_main</code> and <code>report</code> are validated declarations
 only: suite receipts, merge reports, main-CI latches and concurrency
-enforcement are outside this release. The queue and exception gates
-extend the earlier foundation fragment; they are active for enrolled
-repositories in the final combined release. See <a
+enforcement are outside this release. The #178 foundation excluded
+queue/selector gates; #181 activates queue and exception enforcement for
+enrolled repositories in v3.10.0. See <a
 href="configuration.html#merge-charter-foundation">merge charter
 configuration</a>.</p>
 <h3 id="inherited-claude-profile-checks-and-auto-memory-off">Inherited

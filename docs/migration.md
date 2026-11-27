@@ -115,14 +115,25 @@ An intentionally `main`-tracking installation can instead use `git pull --ff-onl
 
 Run from the adopting repository root with dispatch stopped and authenticated `gh`. Use the selected, trusted `BUREAU_SOURCE` from [source selection](#select-the-source-release); its template reader is available before scripts resync. Replace `owner/repository` with the GitHub repository that `origin` actually identifies, and confirm that with `git remote -v`. Run each block only after the preceding block succeeds; stop on any error. Keep the variables in the same shell.
 
-Back up the local `.bureau.json` privately **before** publication. Create a separate worktree from the actual default branch so the local configuration, branch and index remain intact. Use an unused publication branch name if this one already exists:
+Back up the resolved local configuration privately **before** publication. Doctor uses `runtime.config_for(runtime.root_for(repo))`: an existing `BUREAU_CONFIG` override wins, then the worktree's `.bureau.json`, then `.bureau.json` beside the shared Git directory. Use the selected source's resolver in the same adopting repository root and environment that will run doctor. Create a separate worktree from the actual default branch so the local configuration, branch and index remain intact. Use an unused publication branch name if this one already exists:
 
 ```sh
 BUREAU_ADOPTER=$(git rev-parse --show-toplevel) &&
+BUREAU_LOCAL_CONFIG=$(python3 -B - "$BUREAU_SOURCE" "$BUREAU_ADOPTER" <<'PYTHON'
+import importlib.util
+from pathlib import Path
+import sys
+path = Path(sys.argv[1]) / 'templates/scripts/bureau-runtime.py'
+spec = importlib.util.spec_from_file_location('bureau_runtime', path)
+runtime = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(runtime)
+print(runtime.config_for(runtime.root_for(sys.argv[2])).resolve())
+PYTHON
+) &&
 BUREAU_GITHUB=owner/repository &&
 BUREAU_DEFAULT=$(gh api "repos/$BUREAU_GITHUB" --jq .default_branch) &&
 BUREAU_POLICY_DIR=$(umask 077 && mktemp -d "${TMPDIR:-/tmp}/bureau-policy.XXXXXX") &&
-cp -p "$BUREAU_ADOPTER/.bureau.json" "$BUREAU_POLICY_DIR/local.bureau.json" &&
+cp -p "$BUREAU_LOCAL_CONFIG" "$BUREAU_POLICY_DIR/local.bureau.json" &&
 git fetch origin "$BUREAU_DEFAULT" &&
 git worktree add -b bureau/publish-merge-policy "$BUREAU_POLICY_DIR/worktree" "origin/$BUREAU_DEFAULT"
 ```
@@ -167,7 +178,20 @@ printf '%s\n' "$BUREAU_PUBLISHER_POLICY" | jq -e \
   '.kind == "ok" and .commit == $expected and (.entries | length > 0)'
 ```
 
-Require `true` and a successful exit from `jq`; inspect the committed publisher identities against the approved diff. The reader can exit successfully with a `policy` or `read` error result, so exit status alone is insufficient. If the default branch moved between reads, fetch and verify again. The read-only check accepts publisher policy; charter validation and enrollment remain the separate steps below. Retain the private backup through the upgrade; the original local configuration was never replaced. Return to the [scripts resync step](#drain-select-the-source-and-resync) only after verification succeeds.
+Require `true` and a successful exit from `jq`; inspect the committed publisher identities against the approved diff. The reader can exit successfully with a `policy` or `read` error result, so exit status alone is insufficient. If the default branch moved between reads, fetch and verify again. The read-only check accepts publisher policy; charter validation and enrollment remain the separate steps below. Next update the **resolved local configuration** that doctor reads, before resync and diagnostics. Keep the same shell, repository root and environment so `$BUREAU_LOCAL_CONFIG` still selects the file backed up above:
+
+```sh
+BUREAU_LOCAL_TMP=$(umask 077 && mktemp "$(dirname "$BUREAU_LOCAL_CONFIG")/.bureau-publishers.XXXXXX") &&
+jq -e --argjson policy "$BUREAU_PUBLISHER_POLICY" \
+  'if $policy.kind == "ok" and ($policy.entries | type == "array" and length > 0)
+   then .agents.merge_publishers = $policy.entries
+   else error("Publisher policy has not passed verification") end' \
+  "$BUREAU_LOCAL_CONFIG" > "$BUREAU_LOCAL_TMP" &&
+mv -- "$BUREAU_LOCAL_TMP" "$BUREAU_LOCAL_CONFIG" &&
+jq .agents.merge_publishers "$BUREAU_LOCAL_CONFIG"
+```
+
+This copies the approved entries into the local configuration, preserving every other setting. Retain the resolved-file backup through the upgrade. On failure, stop and remove only the unused `$BUREAU_LOCAL_TMP` if it was created; do not replace the configuration with partial output. Return to the [scripts resync step](#drain-select-the-source-and-resync) only after remote verification and this local update succeed.
 
 ### Review defaults and optional configuration
 
@@ -261,10 +285,102 @@ The local suite orchestrator is repository-only: hosted CI and installed runtime
 ```sh
 SUITE_OUTPUT="$HOME/bureau-suite-results/v3100"
 SUITE_STATE="$HOME/.local/state/bureau/suites/bureau"
-python3 -B tests/run_suite.py --out "$SUITE_OUTPUT" --tag v3100 --project bureau --state-dir "$SUITE_STATE"
+SUITE_TAG=v3100
+SUITE_PROJECT=bureau
+SUITE_SHARDS=2
+python3 -B tests/run_suite.py --out "$SUITE_OUTPUT" --tag "$SUITE_TAG" \
+  --project "$SUITE_PROJECT" --state-dir "$SUITE_STATE" --shards "$SUITE_SHARDS"
 ```
 
-This command is for the maintainer's scheduled validation, not a prerequisite to editing release docs. The orchestrator refuses hosted-CI/shard/manifest variables even when empty. Validate `suite-v3100-result.json` against the expected SHA, schema, tag/project, complete selections/attempts, cleanup and terminal state before accepting green. Consume validated `proposals/*.json` in the stable state directory; after handling a proposal, use `python3 -B tests/run_suite.py --state-dir "$SUITE_STATE" --project bureau --resolve-proposal ID` with its real ID. See the [complete receipt/proposal contract](../tests/README.md#local-full-suite-and-serial-reruns). Recovered green is an observed file-level flake, not a cause; hosted CI and direct `tests/run.sh` never retry. Detached processes and persistent fixtures remain outside tracking.
+These commands are for the maintainer's scheduled validation, not adopter steps or prerequisites to editing release docs. The orchestrator refuses hosted-CI/shard/manifest variables even when empty. After the suite command exits 0, keep exclusive admission and run this read-only verifier from the same clean source repository root, in the same shell. It discovers the full selection without invoking any test driver. Stop on a missing receipt, any error or a nonzero exit:
+
+```sh
+export SUITE_OUTPUT SUITE_STATE SUITE_TAG SUITE_PROJECT SUITE_SHARDS
+bash <<'BASH'
+set -eu
+SUITE_SHA=$(git rev-parse HEAD)
+SUITE_STATUS=$(git status --porcelain)
+[ -z "$SUITE_STATUS" ]
+SUITE_FILES=$(python3 -B - <<'PYTHON'
+import json
+from pathlib import Path
+print(json.dumps(sorted(p.name for p in Path('tests').glob('test_*.sh') if p.is_file())))
+PYTHON
+)
+SUITE_RECEIPT="$SUITE_OUTPUT/suite-$SUITE_TAG-result.json"
+jq -e --arg sha "$SUITE_SHA" --arg tag "$SUITE_TAG" --arg project "$SUITE_PROJECT" \
+  --argjson files "$SUITE_FILES" --argjson shards "$SUITE_SHARDS" '
+  . as $r |
+  [.shards[].files[]] as $selected |
+  [.attempts | to_entries[] | select(.value[0].outcome != "PASS") | .key] | sort as $failed |
+  $r |
+  .schema_version == 1 and .sha == $sha and .tag == $tag and .project == $project and
+  (.state == "passed" or .state == "passed_after_serial_rerun") and
+  ($files | length > 0) and (.shards | length == $shards) and
+  ($selected | sort) == $files and ($selected | unique | length) == ($selected | length) and
+  (.attempts | keys) == $files and .not_attempted == [] and
+  .first_pass_failures == $failed and ($failed | length <= 5) and
+  (.recovered | keys) == $failed and (.rerun_logs | keys) == $failed and
+  .state == (if ($failed | length) == 0 then "passed" else "passed_after_serial_rerun" end) and
+  all(.shards[]; . as $s |
+    (.files | type == "array" and length > 0) and (.log | type == "string" and length > 0) and
+    .exit_code == (if any(.files[]; . as $f | $r.attempts[$f][0].outcome != "PASS") then 1 else 0 end) and
+    all(.files[]; . as $f | $r.attempts[$f][0].log == $s.log)) and
+  all(.attempts | to_entries[]; .key as $f | .value as $a |
+    ($a | type == "array") and $a[0].phase == "parallel" and
+    (if $a[0].outcome == "PASS" then ($a | length) == 1
+     else ($a | length) == 2 and $a[1].phase == "serial" and $a[1].outcome == "PASS" and
+       $a[1].deadline == $a[0].deadline and $a[1].log == $r.rerun_logs[$f] and
+       $r.recovered[$f] == "failed_in_parallel_passed_serially" end) and
+    all($a[]; .file == $f and .cleanup_ok == true and
+      (.outcome == "PASS" or .outcome == "FAIL" or .outcome == "TIMEOUT") and
+      (.deadline | type == "number" and . > 0 and floor == .) and
+      (.elapsed_seconds | type == "number" and . >= 0 and isfinite) and
+      (.log | type == "string" and length > 0))) and
+  ((.proposal_ids // []) | type == "array" and all(.[]; type == "string" and test("^[a-f0-9]{32}$"))) and
+  ((.proposal_ids // []) | length) == ((.proposal_ids // []) | unique | length) and
+  (if ($failed | length) > 0 then has("proposal_ids") else (has("proposal_ids") | not) end)
+' "$SUITE_RECEIPT" > /dev/null
+
+# Check every outbox record before consuming or acknowledging any proposal.
+for proposal in "$SUITE_STATE"/proposals/*.json; do
+  [ -f "$proposal" ] || continue
+  id=${proposal##*/}
+  id=${id%.json}
+  jq -e --arg id "$id" '
+    def timestamp: type == "string" and
+      (sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601 | type == "number");
+    .id == $id and (.id | test("^[a-f0-9]{32}$")) and
+    (.file | type == "string" and length > 0) and
+    (.status == "open" or .status == "resolved") and
+    all(.shas, .run_tags; type == "array" and length > 0 and all(.[]; type == "string" and length > 0)) and
+    (.created_at | timestamp) and
+    (if .status == "open" then (has("resolved_at") | not) else (.resolved_at | timestamp) end)
+  ' "$proposal" > /dev/null
+done
+
+# Every receipt reference must exist and identify a recovered file.
+for id in $(jq -r '.proposal_ids // [] | .[]' "$SUITE_RECEIPT"); do
+  jq -e --slurpfile receipt "$SUITE_RECEIPT" --arg id "$id" '
+    .id == $id and (.file as $f | $receipt[0].recovered | has($f))
+  ' "$SUITE_STATE/proposals/$id.json" > /dev/null
+done
+[ "$SUITE_SHA" = "$(git rev-parse HEAD)" ]
+SUITE_STATUS=$(git status --porcelain)
+[ -z "$SUITE_STATUS" ]
+printf '%s\n' true
+BASH
+```
+
+Accept local green **only when the entire verifier prints `true` and exits 0**, as well as the suite command exiting 0. Missing, invalid, failed or cancelled receipts never qualify. `schema_version` belongs to the suite receipt; proposals have no schema/version, project or cleanup field. Their `shas` and `run_tags` describe a multi-run episode, and an existing open proposal can be reused without adding the current SHA/tag, so do not require current-run identity in those lists. The receipt links proposals via `proposal_ids`. Cleanup evidence is per attempt (`cleanup_ok`), not a suite-wide cleanup field; it does not track detached processes or persistent fixtures. The runner enforces the 3600-expected-second rerun budget; that estimate is not a receipt field.
+
+Only after verification succeeds, inspect and handle each open proposal, then acknowledge it with its real ID:
+
+```sh
+python3 -B tests/run_suite.py --state-dir "$SUITE_STATE" --project "$SUITE_PROJECT" --resolve-proposal ID
+```
+
+See the [complete receipt/proposal contract](../tests/README.md#local-full-suite-and-serial-reruns). Recovered green is an observed file-level flake, not a cause; hosted CI and direct `tests/run.sh` never retry.
 
 Security/reporting documentation and the v3.9.2 publication record need only the source update above, with no adopter configuration or resync for those documentation changes themselves. Dispatcher settlement and process diagnostics need the complete scripts resync and dispatcher/runtime-wrapper restart, with no store/data migration. The two `BUREAU_TEST_*` timeout overrides are test-only; leave them unset in production.
 

@@ -14,7 +14,7 @@ For unenrolled repositories, a merge run adds exactly one local `git rev-parse -
 
 Enrolled policy can require an approved Linear label or cycle and reserve exception classes by committed path or exact ticket label. A missing approval waits with 2; exceptions and indeterminate classification take precedence with 25. Classification covers deleted paths and both rename/copy endpoints, and requires complete non-shallow ancestry. Queue approval and exception labels share a complete ticket snapshot. Both merge routes compare the final live target tip with the classified target SHA, even with scanners or freshness checks off; movement retries with 2. This read precedes the ticket kill-switch checkpoint and the head-pinned merge. GitHub's merge operation has no expected-base option, so target observation and merge remain separate operations.
 
-Doctor reports queue mode and exception classes. `suite`, `red_main` and `report` are validated declarations only: suite receipts, merge reports, main-CI latches and concurrency enforcement are outside this release. The queue and exception gates extend the earlier foundation fragment; they are active for enrolled repositories in the final combined release. See [merge charter configuration](configuration.md#merge-charter-foundation).
+Doctor reports queue mode and exception classes. `suite`, `red_main` and `report` are validated declarations only: suite receipts, merge reports, main-CI latches and concurrency enforcement are outside this release. The #178 foundation excluded queue/selector gates; #181 activates queue and exception enforcement for enrolled repositories in v3.10.0. See [merge charter configuration](configuration.md#merge-charter-foundation).
 
 ### Inherited Claude profile checks and auto-memory off
 
