@@ -136,11 +136,12 @@ class SecretRuleTests(unittest.TestCase):
             self.assertEqual(list(self.m.added_lines(diff, before, after)), expected)
 
     def test_sources_contain_no_complete_fixture_credentials(self):
+        # Fragments are consumed into CHANGELOG.md at release time, so scan both.
         paths = [ROOT / name for name in (
             'templates/scripts/bureau-secrets.py', 'templates/scripts/code-review-pipeline.sh',
             'tests/secret_rules_test.py', 'tests/secret_scan_test.py', 'tests/secret_scan_pipeline_test.py',
             'docs/configuration.md', 'docs/site/configuration.html', 'references/runtime-patterns.md',
-            'changes/unreleased/committed-secret-review-floor.md')]
+            'CHANGELOG.md')] + sorted((ROOT / 'changes/unreleased').glob('*.md'))
         for path in paths:
             for number, line in enumerate(path.read_text().split('\n'), 1):
                 self.assertEqual(self.m.rule_ids(line), [], path.name + ':' + str(number) + ' contains a token-shaped literal')
