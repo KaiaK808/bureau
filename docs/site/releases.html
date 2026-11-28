@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="9f714564f0291f8f3ed83720a0764bdafd297be565e17ae6770b34ef65f5445a">
+<meta name="bureau-source-sha256" content="e71fa0b889cad8d0d42dcd68e424ffb3df21eed88a66232ee527c287397145d9">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -32,8 +32,9 @@ separate maintainer operations. The title is "Bureau v3.10.0 — Merge
 charter, inherited-profile doctor and commit secret scan". The <a
 href="release-notes.html">release notes</a> and <a
 href="../../CHANGELOG.md#3100---2026-12-01">changelog</a> cover the merged
-changes; the notes list all 13 PRs in first-parent order, including the
-test timing update without a fragment.</p>
+changes; the notes list all 14 PRs in first-parent order, including the
+two test-only PRs without a fragment: the test timing update and the
+secret source check fix.</p>
 <p>The release adds opt-in merge-charter enrollment, approved queues and
 human exception classes; doctor checks of inherited Claude profiles with
 auto-memory forced off for stage runs; and an always-on committed-secret
@@ -51,7 +52,7 @@ routing stays dormant. Follow <a
 href="migration.html#upgrade-from-v392">Upgrade from v3.9.2</a> for
 commands, dependencies, restart/dispatch and rollback.</p>
 <h3 id="v3100-validation-record">v3.10.0 validation record</h3>
-<p>The merged content baseline is main <code>6c806cc</code>. Individual
+<p>The merged content baseline is main <code>651cbe3</code>. Individual
 fragments record focused offline checks and isolated maintainer cases,
 with remaining real-Git, shell, platform and live-service checks
 explicitly limited. The release branch's own suites, review, CI and

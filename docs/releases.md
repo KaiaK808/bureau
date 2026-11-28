@@ -4,7 +4,7 @@ Bureau ships a source skill and templates that are copied into adopting reposito
 
 ## Current release status
 
-**Release preparation.** This source tree prepares **Bureau v3.10.0**, planned for **2026-12-01**, a minor release on v3.9.2 with source tag `v3.10.0` once published. Tagging and publication remain separate maintainer operations. The title is "Bureau v3.10.0 — Merge charter, inherited-profile doctor and commit secret scan". The [release notes](release-notes.md) and [changelog](../CHANGELOG.md#3100---2026-12-01) cover the merged changes; the notes list all 13 PRs in first-parent order, including the test timing update without a fragment.
+**Release preparation.** This source tree prepares **Bureau v3.10.0**, planned for **2026-12-01**, a minor release on v3.9.2 with source tag `v3.10.0` once published. Tagging and publication remain separate maintainer operations. The title is "Bureau v3.10.0 — Merge charter, inherited-profile doctor and commit secret scan". The [release notes](release-notes.md) and [changelog](../CHANGELOG.md#3100---2026-12-01) cover the merged changes; the notes list all 14 PRs in first-parent order, including the two test-only PRs without a fragment: the test timing update and the secret source check fix.
 
 The release adds opt-in merge-charter enrollment, approved queues and human exception classes; doctor checks of inherited Claude profiles with auto-memory forced off for stage runs; and an always-on committed-secret review floor. It also adds trusted merge publishers, optional offline acceptance contracts, a dormant test wrapper, local serial suite reruns, dispatcher shutdown settlement, process-control diagnostics and security/publication documentation.
 
@@ -12,7 +12,7 @@ From v3.9.2, once published, drain old drivers, preserve work and shared records
 
 ### v3.10.0 validation record
 
-The merged content baseline is main `6c806cc`. Individual fragments record focused offline checks and isolated maintainer cases, with remaining real-Git, shell, platform and live-service checks explicitly limited. The release branch's own suites, review, CI and tested-tree comparison remain to be run by the maintainer. This preparation changes documentation only; templates, tests and scripts must remain identical to that baseline.
+The merged content baseline is main `651cbe3`. Individual fragments record focused offline checks and isolated maintainer cases, with remaining real-Git, shell, platform and live-service checks explicitly limited. The release branch's own suites, review, CI and tested-tree comparison remain to be run by the maintainer. This preparation changes documentation only; templates, tests and scripts must remain identical to that baseline.
 
 | Release check | Result / reference |
 |---|---|

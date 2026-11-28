@@ -100,7 +100,7 @@ For rollback, stop all drivers and reconcile unfinished writers, local commits a
 
 ## Validation
 
-The merged content baseline is main `6c806cc`. Changes follow first-parent merge order:
+The merged content baseline is main `651cbe3`. Changes follow first-parent merge order:
 
 | PR | Merge commit | Change |
 |---|---|---|
@@ -138,7 +138,7 @@ The release branch's own validation remains to be run by the maintainer:
 | Publication date | TBD |
 | Manual live injection sample and adopter qualification | TBD |
 
-Before publication, record exact refs and results and run [release tree verification](releases.md#verify-the-tested-release-trees). The manual live injection sample remains a separate checklist item. This release preparation changes documentation only; templates, tests and scripts must remain identical to `6c806cc`.
+Before publication, record exact refs and results and run [release tree verification](releases.md#verify-the-tested-release-trees). The manual live injection sample remains a separate checklist item. This release preparation changes documentation only; templates, tests and scripts must remain identical to `651cbe3`.
 
 ## Known limitations
 
