@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="a9cad9d6f00ea36824e80cc557d381b5ee7906ce51cb8b4da3e11cb6c3fe62aa">
+<meta name="bureau-source-sha256" content="2cc89b7197719671182fdd7dd37b6c1c1ba4114b4364fb969de3ba3284b9f2d0">
 <title>releases · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -24,17 +24,110 @@ update and an adopting-repository resync are separate steps, so a
 release must document both the changes and the required operator
 actions.</p>
 <h2 id="current-release-status">Current release status</h2>
-<p>This source tree contains <strong>Bureau v3.9.2</strong>, published
-<strong>2026-11-24</strong>, a patch release on v3.9.0. Annotated tag
+<p><strong>Release preparation.</strong> This source tree prepares
+<strong>Bureau v3.10.0</strong>, planned for
+<strong>2026-11-28</strong>, a minor release on v3.9.2 with source tag
+<code>v3.10.0</code> once published. Tagging and publication remain
+separate maintainer operations. The title is "Bureau v3.10.0 — Merge
+charter, inherited-profile doctor and commit secret scan". The <a
+href="release-notes.html">release notes</a> and <a
+href="../../CHANGELOG.md#3100---2026-11-28">changelog</a> cover the merged
+changes; the notes list all 14 PRs in first-parent order, including the
+two test-only PRs without a fragment: the test timing update and the
+secret source check fix.</p>
+<p>The release adds opt-in merge-charter enrollment, approved queues and
+human exception classes; doctor checks of inherited Claude profiles with
+auto-memory forced off for stage runs; and an always-on committed-secret
+review floor. It also adds trusted merge publishers, optional offline
+acceptance contracts, a dormant test wrapper, local serial suite reruns,
+dispatcher shutdown settlement, process-control diagnostics and
+security/publication documentation.</p>
+<p>From v3.9.2, once published, drain old drivers, preserve work and
+shared records, compare installed drift, publish trusted merge
+publishers on the default branch and resync the complete scripts scope.
+Optional charter gates require sanitized default-branch policy and
+explicit maintainer enrollment. Auto-memory is forced off and
+committed-secret review scanning requires no enable switch; wrapper
+routing stays dormant. Follow <a
+href="migration.html#upgrade-from-v392">Upgrade from v3.9.2</a> for
+commands, dependencies, restart/dispatch and rollback.</p>
+<h3 id="v3100-validation-record">v3.10.0 validation record</h3>
+<p>The merged content baseline is main <code>651cbe3</code>. Individual
+fragments record focused offline checks and isolated maintainer cases,
+with remaining real-Git, shell, platform and live-service checks
+explicitly limited. The release branch's own suites, review, CI and
+tested-tree comparison remain to be run by the maintainer. This
+preparation changes documentation only; templates, tests and scripts
+must remain identical to that baseline.</p>
+<table>
+<thead>
+<tr>
+<th>Release check</th>
+<th>Result / reference</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Independent release review rounds</td>
+<td>TBD</td>
+</tr>
+<tr>
+<td>macOS gate suite and tested ref</td>
+<td>TBD</td>
+</tr>
+<tr>
+<td>Remote gate suite and tested ref</td>
+<td>TBD</td>
+</tr>
+<tr>
+<td>Release PR CI jobs, runs and results</td>
+<td>TBD</td>
+</tr>
+<tr>
+<td>Release-branch and main push CI jobs, runs and results</td>
+<td>TBD</td>
+</tr>
+<tr>
+<td>Tag CI jobs, run and result</td>
+<td>TBD</td>
+</tr>
+<tr>
+<td>Final candidate/tag tested-tree comparison
+(<code>release_verify</code>)</td>
+<td>TBD</td>
+</tr>
+<tr>
+<td>Tag object and merge commit</td>
+<td>TBD</td>
+</tr>
+<tr>
+<td>Publication date</td>
+<td>TBD</td>
+</tr>
+<tr>
+<td>Manual live injection sample and adopter qualification</td>
+<td>TBD</td>
+</tr>
+</tbody>
+</table>
+<p>See <a href="release-notes.html#validation">release validation</a>, <a
+href="release-notes.html#known-limitations">known limitations</a> and the
+<a href="#verify-the-tested-release-trees">release verification
+procedure</a>. Historical v3.9.2 validation below does not validate
+v3.10.0.</p>
+<h2 id="previous-stable-releases">Previous stable releases</h2>
+<h3 id="v392">v3.9.2</h3>
+<p><strong>Bureau v3.9.2</strong>, published
+<strong>2026-11-24</strong>, is a patch release on v3.9.0. Annotated tag
 <code>v3.9.2</code> (tag object <code>ccc3a09</code>) points at merge
 commit <code>8b342bc</code> of <a
 href="https://github.com/KaiaK808/bureau/pull/172">#172</a>, merged on
 2026-11-24. Its <a
 href="https://github.com/KaiaK808/bureau/releases/tag/v3.9.2">GitHub
 Release</a>, "Bureau v3.9.2 — Decision answers, merge approval binding
-and Trivy parsing", is published as latest. The <a
-href="release-notes.html">release notes</a> and <a
-href="../../CHANGELOG.md#392---2026-11-24">changelog</a> cover <a
+and Trivy parsing", remains the latest published release until v3.10.0
+is published. The <a href="release-notes-v3.9.2.html">release notes</a>
+and <a href="../../CHANGELOG.md#392---2026-11-24">changelog</a> cover <a
 href="https://github.com/KaiaK808/bureau/pull/165">#165</a>, <a
 href="https://github.com/KaiaK808/bureau/pull/166">#166</a>, <a
 href="https://github.com/KaiaK808/bureau/pull/167">#167</a>, <a
@@ -132,11 +225,10 @@ to resync later.</td>
 <p>The live-service and deployment qualification limits, observational
 target check and pre-existing intermittent dispatcher shutdown test
 failure are recorded in the <a
-href="release-notes.html#validation">release validation</a> and <a
-href="release-notes.html#known-limitations">known limitations</a>. See the
-<a href="#verify-the-tested-release-trees">release verification
+href="release-notes-v3.9.2.html#validation">release validation</a> and <a
+href="release-notes-v3.9.2.html#known-limitations">known limitations</a>.
+See the <a href="#verify-the-tested-release-trees">release verification
 procedure</a>.</p>
-<h2 id="previous-stable-releases">Previous stable releases</h2>
 <h3 id="v390">v3.9.0</h3>
 <p><strong>Bureau v3.9.0</strong>, published
 <strong>2026-11-21</strong>, is a minor release on v3.8.0. Annotated tag

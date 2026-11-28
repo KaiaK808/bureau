@@ -4,7 +4,36 @@ Bureau ships a source skill and templates that are copied into adopting reposito
 
 ## Current release status
 
-This source tree contains **Bureau v3.9.2**, published **2026-11-24**, a patch release on v3.9.0. Annotated tag `v3.9.2` (tag object `ccc3a09`) points at merge commit `8b342bc` of [#172](https://github.com/KaiaK808/bureau/pull/172), merged on 2026-11-24. Its [GitHub Release](https://github.com/KaiaK808/bureau/releases/tag/v3.9.2), "Bureau v3.9.2 — Decision answers, merge approval binding and Trivy parsing", is published as latest. The [release notes](release-notes.md) and [changelog](../CHANGELOG.md#392---2026-11-24) cover [#165](https://github.com/KaiaK808/bureau/pull/165), [#166](https://github.com/KaiaK808/bureau/pull/166), [#167](https://github.com/KaiaK808/bureau/pull/167), [#168](https://github.com/KaiaK808/bureau/pull/168) and [#169](https://github.com/KaiaK808/bureau/pull/169) in first-parent merge order.
+**Release preparation.** This source tree prepares **Bureau v3.10.0**, planned for **2026-11-28**, a minor release on v3.9.2 with source tag `v3.10.0` once published. Tagging and publication remain separate maintainer operations. The title is "Bureau v3.10.0 — Merge charter, inherited-profile doctor and commit secret scan". The [release notes](release-notes.md) and [changelog](../CHANGELOG.md#3100---2026-11-28) cover the merged changes; the notes list all 14 PRs in first-parent order, including the two test-only PRs without a fragment: the test timing update and the secret source check fix.
+
+The release adds opt-in merge-charter enrollment, approved queues and human exception classes; doctor checks of inherited Claude profiles with auto-memory forced off for stage runs; and an always-on committed-secret review floor. It also adds trusted merge publishers, optional offline acceptance contracts, a dormant test wrapper, local serial suite reruns, dispatcher shutdown settlement, process-control diagnostics and security/publication documentation.
+
+From v3.9.2, once published, drain old drivers, preserve work and shared records, compare installed drift, publish trusted merge publishers on the default branch and resync the complete scripts scope. Optional charter gates require sanitized default-branch policy and explicit maintainer enrollment. Auto-memory is forced off and committed-secret review scanning requires no enable switch; wrapper routing stays dormant. Follow [Upgrade from v3.9.2](migration.md#upgrade-from-v392) for commands, dependencies, restart/dispatch and rollback.
+
+### v3.10.0 validation record
+
+The merged content baseline is main `651cbe3`. Individual fragments record focused offline checks and isolated maintainer cases, with remaining real-Git, shell, platform and live-service checks explicitly limited. The release branch's own suites, review, CI and tested-tree comparison remain to be run by the maintainer. This preparation changes documentation only; templates, tests and scripts must remain identical to that baseline.
+
+| Release check | Result / reference |
+|---|---|
+| Independent release review rounds | TBD |
+| macOS gate suite and tested ref | TBD |
+| Remote gate suite and tested ref | TBD |
+| Release PR CI jobs, runs and results | TBD |
+| Release-branch and main push CI jobs, runs and results | TBD |
+| Tag CI jobs, run and result | TBD |
+| Final candidate/tag tested-tree comparison (`release_verify`) | TBD |
+| Tag object and merge commit | TBD |
+| Publication date | TBD |
+| Manual live injection sample and adopter qualification | TBD |
+
+See [release validation](release-notes.md#validation), [known limitations](release-notes.md#known-limitations) and the [release verification procedure](#verify-the-tested-release-trees). Historical v3.9.2 validation below does not validate v3.10.0.
+
+## Previous stable releases
+
+### v3.9.2
+
+**Bureau v3.9.2**, published **2026-11-24**, is a patch release on v3.9.0. Annotated tag `v3.9.2` (tag object `ccc3a09`) points at merge commit `8b342bc` of [#172](https://github.com/KaiaK808/bureau/pull/172), merged on 2026-11-24. Its [GitHub Release](https://github.com/KaiaK808/bureau/releases/tag/v3.9.2), "Bureau v3.9.2 — Decision answers, merge approval binding and Trivy parsing", remains the latest published release until v3.10.0 is published. The [release notes](release-notes-v3.9.2.md) and [changelog](../CHANGELOG.md#392---2026-11-24) cover [#165](https://github.com/KaiaK808/bureau/pull/165), [#166](https://github.com/KaiaK808/bureau/pull/166), [#167](https://github.com/KaiaK808/bureau/pull/167), [#168](https://github.com/KaiaK808/bureau/pull/168) and [#169](https://github.com/KaiaK808/bureau/pull/169) in first-parent merge order.
 
 The release changes implementation decision answers to require a later reply beginning with the exact `Answer: <hold-id>` line and a nonblank body, binds merge approvals to the reviewed head and target branch, and narrows Trivy ignore-comment stripping and Yarn plain-value parsing. The v3.9.0 publication record is also included. Target validation remains observational.
 
@@ -23,9 +52,7 @@ The merged release content is on main `5b0c279`. The fragments record focused of
 | Final candidate/tag tested-tree comparison | `python3 scripts/release_verify.py 5b0c279 v3.9.2` passed: `templates/`, `tests/` and `scripts/` are tree-identical between the tested candidate and the tag. The reviewed release candidate `6be88f5` and the tag's commit `8b342bc` have the identical tree (`c0c2ed57`). |
 | Manual live injection sample and adopter qualification | Manual live injection sample: not run for v3.9.2. Adopter qualification: none recorded yet; one adopting installation is scheduled to resync later. |
 
-The live-service and deployment qualification limits, observational target check and pre-existing intermittent dispatcher shutdown test failure are recorded in the [release validation](release-notes.md#validation) and [known limitations](release-notes.md#known-limitations). See the [release verification procedure](#verify-the-tested-release-trees).
-
-## Previous stable releases
+The live-service and deployment qualification limits, observational target check and pre-existing intermittent dispatcher shutdown test failure are recorded in the [release validation](release-notes-v3.9.2.md#validation) and [known limitations](release-notes-v3.9.2.md#known-limitations). See the [release verification procedure](#verify-the-tested-release-trees).
 
 ### v3.9.0
 

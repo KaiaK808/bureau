@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bureau-source-sha256" content="784954c49eb07747d06428d934617912c7b66c7fad32f056d16e29875c1bfa12">
+<meta name="bureau-source-sha256" content="330bec2e420872fd86855a9599ec542aeb1be9c11a0c74a5442f34d5dfb48939">
 <title>release-notes · Bureau</title>
 <link rel="stylesheet" href="assets/colors_and_type.css">
 <link rel="stylesheet" href="assets/docs.css">
@@ -16,112 +16,203 @@
 <a href="index.html">Quickstart</a><a href="configuration.html">Configuration</a><a href="provider-runtime.html">Providers</a><a href="stage-protocol.html">Stage protocol</a><a href="operator-cheatsheet.html">Operator guide</a><a href="exit-codes.html">Exit codes</a><a href="recipes.html">Recipes</a><a href="troubleshooting.html">Troubleshooting</a><a href="migration.html">Upgrade and rollback</a><a href="releases.html">Releases</a><a href="codex-acceptance.html">Acceptance record</a><a href="token-efficiency.html">Optional efficiency settings</a>
 </nav></aside>
 <main class="bhb-main"><h1
-id="bureau-v392--decision-answers-merge-approval-binding-and-trivy-parsing">Bureau
-v3.9.2 — Decision answers, merge approval binding and Trivy parsing</h1>
-<p><strong>Published release · 2026-11-24 · source tag
-<code>v3.9.2</code>.</strong> The <a
-href="https://github.com/KaiaK808/bureau/releases/tag/v3.9.2">GitHub
-Release</a>, "Bureau v3.9.2 — Decision answers, merge approval binding
-and Trivy parsing", is published as latest. Annotated tag
-<code>v3.9.2</code> (tag object <code>ccc3a09</code>) points at merge
-commit <code>8b342bc</code> of <a
-href="https://github.com/KaiaK808/bureau/pull/172">#172</a>, merged on
-2026-11-24. v3.9.2 is a patch release on <a
-href="release-notes-v3.9.0.html">v3.9.0</a>.</p>
+id="bureau-v3100--merge-charter-inherited-profile-doctor-and-commit-secret-scan">Bureau
+v3.10.0 — Merge charter, inherited-profile doctor and commit secret
+scan</h1>
+<p><strong>Release preparation · planned 2026-11-28 · source tag
+<code>v3.10.0</code> once published.</strong> v3.10.0 is a minor release
+on <a href="release-notes-v3.9.2.html">v3.9.2</a>. Tagging and publication
+remain separate maintainer operations; this document does not announce a
+published release.</p>
 <p>The release includes <a
-href="https://github.com/KaiaK808/bureau/pull/165">#165</a>, <a
-href="https://github.com/KaiaK808/bureau/pull/166">#166</a>, <a
-href="https://github.com/KaiaK808/bureau/pull/167">#167</a>, <a
-href="https://github.com/KaiaK808/bureau/pull/168">#168</a> and <a
-href="https://github.com/KaiaK808/bureau/pull/169">#169</a> in
-first-parent merge order. All changes are merged. The <a
-href="../../CHANGELOG.md#392---2026-11-24">changelog</a> collects the four
-release fragments.</p>
-<h2 id="what-changed-since-v390">What changed since v3.9.0</h2>
-<h3 id="exact-answers-to-implementation-decision-holds">Exact answers to
-implementation decision holds</h3>
-<p>For humans answering implementation questions, this changes what
-counts as an answer: only a later Linear reply starting with the exact
-<code>Answer: &lt;hold-id&gt;</code> line, followed by a nonblank body,
-answers the hold. Earlier prose and completion footers cannot release a
-new hold. Every matching decision and its questions reach implementation
-through retries and QA rework. CRLF and CR replies preserve their body,
-and decision waits release on the next poll or restart.</p>
-<p>Admission covers dispatcher-launched Shepherd and rejects failed or
-empty startup route reads before ownership or labels. Dispatcher
-reconciliation retries read-only admission failures without Linear
-mutations. Ticks and read/move handlers preserve exit 24. Admission,
-overlap preflight and preparation share complete paginated
-canonical-branch resolution across Shepherd, dispatcher, queue and
-direct workers. Hold questions and app summaries lose private metadata
-before the runtime adds the ID and copyable instructions. A time cap
-before the first pass still labels and summarizes the halt.</p>
+href="https://github.com/KaiaK808/bureau/pull/170">#170</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/171">#171</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/175">#175</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/174">#174</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/173">#173</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/176">#176</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/177">#177</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/179">#179</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/178">#178</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/181">#181</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/180">#180</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/182">#182</a>, <a
+href="https://github.com/KaiaK808/bureau/pull/183">#183</a> and <a
+href="https://github.com/KaiaK808/bureau/pull/185">#185</a> in
+first-parent merge order. All content changes are merged. The <a
+href="../../CHANGELOG.md#3100---2026-11-28">changelog</a> collects all 12
+release fragments; #182 changes only a test timing row and #185 only a
+test source list, so neither has a fragment.</p>
+<h2 id="what-changed-since-v392">What changed since v3.9.2</h2>
 <h3
-id="merge-approvals-bound-to-the-reviewed-head-and-target-branch">Merge
-approvals bound to the reviewed head and target branch</h3>
-<p>Both automatic merge routes bind <code>APPROVE</code> and
-<code>AUTO_APPROVE</code> to the reviewed head and target branch on both
-gate passes. The gate still selects the newest PR comment containing the
-<code>Code Review v2</code> heading through
-<code>gh pr view --json comments</code>. Target branch names may contain
-backticks, and the target SHA may advance. Each pass checks base
-freshness against the same PR snapshot used for the approval binding.
-Bureau authenticates the newest visible review in complete gate
-snapshots and atomically pins the head.</p>
-<p>Bureau prepares the merge message before the final checks,
-unconditionally re-reads the approved target, checks ticket
-authorization immediately before merge, and checks merged state, merge
-commit and target afterward. A wrong target or an outcome that remains
-uncertain logs an error, posts a Linear comment and holds with
-<code>needs-human</code> and exit 25. An uncertain result gets one fresh
-reconciliation read; rollback and automatic merge retry are excluded
-from that response.</p>
-<p>A stale approval returns to Build Review with exit 20 and a
-<code>refreshed</code> report even if earlier gate comments cannot be
-read. Shepherd uses <code>agents.max_review_rounds</code> as a separate
-stale-handoff limit per run, counted after the move to Build Review is
-confirmed. Human holds take effect immediately during confirmation; a
-move still invisible after one bounded polling budget returns quiet
-retry 2. Stale approvals preserve the dispatcher's base-refresh
-allowance.</p>
-<p>The inline route reviews and cleans up against the PR's advertised
-head, including same-named fork branches, force-pushes and deleted or
-pruned branches. A failed cleanup fetch uses the pinned review base and
-returns quiet retry 2. The acceptance brief credits a verdict only to
-its separately recorded reviewed head, and Shepherd preserves post-merge
-reconciliation reports.</p>
-<p>Target validation stays observational. GitHub has no expected-base
-merge option, so a retarget after the final read can still change the
-destination. The post-merge check detects that outcome; destination
-selection remains subject to that race.</p>
+id="merge-charter-trusted-policy-enrollment-queue-and-exceptions">Merge
+charter: trusted policy, enrollment, queue and exceptions</h3>
+<p>The new opt-in <code>agents.merge_charter</code> declares a strictly
+validated merge policy. A maintainer publishes sanitized policy on the
+actual default branch and explicitly enrolls the repository with
+<code>bureau-charter.py enroll</code>. Enrollment lives in the shared
+Git directory, so linked worktrees share it and independent clones do
+not. Installation and resync never enroll. Both merge gate passes use a
+pinned default-branch policy, fetched with hooks and submodule recursion
+disabled; PR-controlled configuration cannot disable enrollment.
+Enrolled policy errors, indeterminate enrollment and PR changes to
+<code>.bureau.json</code> require a human with exit 25. Doctor checks
+declarations, enrollment, locally fetched policy and digest drift
+without creating state or making remote reads.</p>
+<p>For unenrolled repositories, a merge run adds exactly one local
+<code>git rev-parse --is-bare-repository --show-toplevel --git-common-dir</code>
+read from the working directory, with hooks disabled and inherited
+<code>GIT_*</code> overrides removed for that call only. Its unexported
+result is reused through <code>status --common-dir</code> at the initial
+probe and both gate passes. It adds no GitHub CLI or network calls. A
+failed lookup, bare repository or missing work tree blocks with
+<code>charter-policy</code> and 25; run the merge stage from a work tree
+and repair inaccessible enrollment before retrying.</p>
+<p>Enrolled policy can require an approved Linear label or cycle and
+reserve exception classes by committed path or exact ticket label. A
+missing approval waits with 2; exceptions and indeterminate
+classification take precedence with 25. Classification covers deleted
+paths and both rename/copy endpoints, and requires complete non-shallow
+ancestry. Queue approval and exception labels share a complete ticket
+snapshot. Both merge routes compare the final live target tip with the
+classified target SHA, even with scanners or freshness checks off;
+movement retries with 2. This read precedes the ticket kill-switch
+checkpoint and the head-pinned merge. GitHub's merge operation has no
+expected-base option, so target observation and merge remain separate
+operations.</p>
+<p>Doctor reports queue mode and exception classes. <code>suite</code>,
+<code>red_main</code> and <code>report</code> are validated declarations
+only: suite receipts, merge reports, main-CI latches and concurrency
+enforcement are outside this release. The #178 foundation excluded
+queue/selector gates; #181 activates queue and exception enforcement for
+enrolled repositories in v3.10.0. See <a
+href="configuration.html#merge-charter-foundation">merge charter
+configuration</a>.</p>
+<h3 id="inherited-claude-profile-checks-and-auto-memory-off">Inherited
+Claude profile checks and auto-memory off</h3>
+<p>Every background Claude child gets
+<code>CLAUDE_CODE_DISABLE_AUTO_MEMORY=1</code> after environment
+filtering, even if the parent sets it to 0. The guard includes stage
+calls, review helpers, conflict and upstream helpers, login checks, CLI
+capability probes and Headroom launches. Interactive Claude outside
+Bureau is unchanged.</p>
+<p>Doctor warns once about stages inheriting the operator profile and
+lists only user MCP server names and enabled-plugin names, with their
+source-file paths. Missing files mean empty lists; unreadable or invalid
+files produce explicit <code>could not check</code> warnings and unknown
+lists. Project/managed settings and plugin-provided servers are outside
+this inventory. Doctor remains read-only and does not persist a drift
+baseline. A lean <code>agents.providers.claude.config_dir</code> or
+overriding <code>BUREAU_CLAUDE_CONFIG_DIR</code> silences the
+inheritance warning and needs its own login. See <a
+href="provider-runtime.html#claude-configuration-directory">Claude
+configuration directory</a>.</p>
+<h3 id="scan-what-the-agent-commits-as-a-review-floor">Scan what the
+agent commits as a review floor</h3>
+<p>Code review always scans added committed lines between the pinned
+merge base and head for known credential formats and long high-entropy
+secret assignments. It reads Git objects without repository-controlled
+commands, external diff drivers, providers, scanner binaries or
+databases. There is no enable switch or Trivy prerequisite. Open
+findings and unavailable or malformed measurements prevent approval,
+including approval reuse; BLOCK survives and review caps still
+apply.</p>
+<p>Findings mask detected values, paths and rule IDs after the complete
+scan, including later, suppressed and omitted detections. Scanner,
+redaction or locator exceptions discard partial output and return a
+blocking not-measured result without raw diagnostics. Each finding
+carries a pinned head blob ID and a 16-hex path fingerprint for
+resolving redacted paths; incompatible parser formats remain not
+measured. Proven deletions skip path budgets and blob reads. Narrow
+exceptions come only from the pinned base's
+<code>.bureau/secret-exceptions.json</code> and need an owner, reason
+and future expiry. This check does not scan intermediate history,
+decoded content, unchanged lines or commit messages; masking does not
+cover undetected values or arbitrary transformations. See <a
+href="configuration.html#committed-secrets">committed secrets</a>.</p>
+<h3 id="acceptance-contracts-without-enforcement">Acceptance contracts
+without enforcement</h3>
+<p>Optional version 1 declarations map Spec Kit requirement and task
+references to intended checks or human-reserved decisions. A
+standard-library offline CLI validates the closed schema, bounds and
+references; synthetic examples cover both forms. No stage, gate or
+prompt reads the contract and there is no enablement key. A well formed
+declaration proves neither completeness nor verifier existence, success
+or product acceptance. See the <a
+href="../../references/acceptance-contracts.md">format and runnable
+examples</a>.</p>
+<h3 id="trusted-merge-publishers">Trusted merge publishers</h3>
+<p>Automatic merges now count only the newest visible review from a
+typed publisher in default-branch <code>agents.merge_publishers</code>,
+using complete snapshots, strict headers and same-node edit checks for
+every verdict. Missing or invalid policy holds automatic merging with
+25. Doctor warns on absent policy in manual mode and rejects present
+invalid values in either mode. Publication failure stops review
+explicitly with 18; edited reviews need fresh Build Review with 20, and
+incomplete snapshots retry with 2. A dedicated Bureau App is preferred:
+a shared human or Actions principal trusts everyone acting as that
+identity. Deletion of a newer verdict without trace remains
+undetectable. Head and target safeguards remain in force. See <a
+href="migration.html#trusted-merge-publishers">trusted merge
+publishers</a>.</p>
+<h3 id="dormant-shared-test-wrapper">Dormant shared test wrapper</h3>
+<p><code>bureau-test-wrapper.py</code> supplies trusted literal argv
+policy, private child-start/end proof, a queue-aware budget clock,
+cancellation teardown and read-only doctor diagnostics.
+<code>repo.test_wrapper</code> is absent or empty by default, and
+<code>repo.test_wrapper_start_timeout_seconds</code> defaults to 21600
+within (0, 86400]. The primitive rejects checkout-owned symlink
+traversal and distinguishes unavailable authority from invalid policy.
+Existing stage routing is not connected: configuring the wrapper changes
+no current launch, timer, build reuse key or evidence format. See <a
+href="configuration.html">test wrapper configuration</a>.</p>
+<h3 id="local-suite-serial-reruns-and-timing-data">Local suite serial
+reruns and timing data</h3>
+<p>The repository-only <code>tests/run_suite.py</code> waits for every
+shard before rerunning eligible failed files once, serially, within a
+five-file/3600-expected-second budget. Deadlines stay unchanged. Results
+are atomic, and a locked file-level flake ledger feeds a proposal
+outbox. A recovered green means an observed file-level flake, not a
+proven cause. Hosted CI and direct <code>tests/run.sh</code> calls never
+retry. External wrappers must keep exclusive suite/worktree admission,
+use a clean checkout, keep output and stable state outside the worktree,
+validate receipts and consume proposals. Detached processes outside the
+test group and persistent fixtures are not tracked. #182 records the
+measured charter queue driver duration for sharding. See <a
+href="../../tests/README.md#local-full-suite-and-serial-reruns">local
+full-suite operation</a>.</p>
 <h3
-id="narrower-trivy-inline-ignore-stripping-and-yarn-parsing">Narrower
-Trivy inline-ignore stripping and Yarn parsing</h3>
-<p>For repositories using Trivy QA, Bureau strips ignore comments only
-in explicitly recognised per-file shapes with fully classified prefixes.
-Every other marker line stays byte-identical and reduces coverage with
-<code>inline ignore format not recognised</code>. YAML node properties,
-block scalars and flow collections, HCL interpolation and heredocs,
-Bicep multi-line strings and other unrecognised constructs also preserve
-all later marker lines. Dockerfiles retain every marker from the first
-<code>&lt;&lt;</code> through end of file without parsing delimiters.
-Ordinary supported comments, string and data bytes, whitespace and
-LF/CRLF handling are preserved.</p>
-<p>Yarn plain values now use an explicit character and leading-form
-allow-list for tool-written tokens, compact ranges, protocol references,
-URLs, hashes and checksums, booleans, cache keys, bin paths and platform
-conditions. Unsupported leading forms, <code>: </code> and
-<code> #</code> reduce coverage with
-<code>lockfile format not recognised</code>. Quoted values and
-recognised Yarn v1/Berry metadata keep their existing handling. Parser
-and neutralization identities change, so earlier receipts are remeasured
-once.</p>
-<h3 id="v390-publication-record">v3.9.0 publication record</h3>
-<p>The source-only record captures the published tag and merge commit,
-GitHub Release, release review rounds, both gate suites, CI results
-passing on the first attempt without reruns and the tested-tree
-comparison. See the unchanged <a href="release-notes-v3.9.0.html">v3.9.0
-release notes</a>.</p>
+id="dispatcher-shutdown-lease-settlement-and-process-control-limits">Dispatcher
+shutdown lease settlement and process-control limits</h3>
+<p>After joining direct lane children, dispatcher cancellation observes
+its launched runs during one shared five-second settlement wait. It ends
+with settled ownership or a best-effort <code>human_hold</code>
+diagnostic naming each unresolved run and issue. Uncertain leases remain
+retained; unrelated groups are never signalled. Diagnostic write/flush
+failures preserve cancellation exit 130, including at interpreter
+shutdown. Existing nested shutdown grace periods remain unchanged.</p>
+<p>Process-control regressions use bounded 30-second startup, exit and
+recovery waits on loaded runners, and clean up the recorded child group
+before removing temporary files. Production inspection remains
+fail-closed with its two-second timeout; diagnostics add a short cause
+without raw process output.
+<code>BUREAU_TEST_DISPATCH_SETTLE_SECONDS</code> and
+<code>BUREAU_TEST_PROCESS_INSPECT_SECONDS</code> are bounded test-only
+overrides, not operator tuning keys. No configuration or store migration
+is required.</p>
+<h3 id="security-reporting-and-the-v392-publication-record">Security
+reporting and the v3.9.2 publication record</h3>
+<p>The security policy supports the latest published tag, lands fixes on
+main for the next tagged release and directs reports to GitHub private
+vulnerability reporting. Branch examples use generic issue keys. These
+documentation changes need no adopter action.</p>
+<p>The v3.9.2 publication record preserves its tag, merge commit,
+release review rounds, first-pass gate suites, CI history including
+cancelled main runs and the passing tag run, and tested-tree comparison.
+It needs only a source checkout update. See the unchanged <a
+href="release-notes-v3.9.2.html">archived v3.9.2 notes</a> and <a
+href="releases.html#v392-validation-record">validation record</a>; these
+are historical facts, not v3.10.0 validation.</p>
 <h2 id="new-files">New files</h2>
 <table>
 <thead>
@@ -132,123 +223,154 @@ release notes</a>.</p>
 </thead>
 <tbody>
 <tr>
-<td><code>templates/scripts/bureau-hold-context.py</code></td>
-<td>Complete scripts resync together with interfaces for implementation
-decision context.</td>
+<td><code>templates/scripts/bureau-charter.py</code></td>
+<td>Scripts scope; trusted policy, explicit enrollment and merge
+gates.</td>
 </tr>
 <tr>
-<td><code>tests/hold_answers_test.py</code>,
-<code>tests/test_hold_answers.sh</code>,
-<code>tests/test_inline_merge_regressions.sh</code></td>
-<td>Repository-only regression entry points.</td>
+<td><code>templates/scripts/bureau-merge-review.py</code></td>
+<td>Scripts scope; typed publisher and review snapshot validation.</td>
 </tr>
 <tr>
-<td><code>docs/release-notes-v3.9.0.md</code></td>
+<td><code>templates/scripts/bureau-secrets.py</code></td>
+<td>Scripts scope; committed-secret review floor, updated together with
+its parser.</td>
+</tr>
+<tr>
+<td><code>templates/scripts/bureau-test-wrapper.py</code></td>
+<td>Scripts scope; dormant test execution primitive.</td>
+</tr>
+<tr>
+<td><code>templates/scripts/bureau-acceptance-contract.py</code></td>
+<td>Scripts scope; optional standalone declaration validator.</td>
+</tr>
+<tr>
+<td><code>references/acceptance-contracts.md</code>,
+<code>references/acceptance-contract-examples/</code></td>
+<td>Source-only format guide and synthetic examples.</td>
+</tr>
+<tr>
+<td><code>tests/run_suite.py</code>,
+<code>tests/run_suite_test.py</code>, related regression files</td>
+<td>Repository-only suite orchestration and coverage.</td>
+</tr>
+<tr>
+<td><code>docs/release-notes-v3.9.2.md</code></td>
 <td>Unchanged archive of the previous release notes.</td>
 </tr>
 </tbody>
 </table>
 <h2 id="configuration-and-exit-code-changes">Configuration and exit-code
 changes</h2>
-<p>Configuration keys, defaults, commands and the v3 exit vocabulary
-stay unchanged. Semgrep and Trivy retain their existing opt-in settings.
-The answer rule and approval binding apply when their respective runtime
-paths run.</p>
 <table>
 <thead>
 <tr>
-<th>Behaviour</th>
-<th>Action / result</th>
+<th>Setting / behavior</th>
+<th>Default and operator action</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Implementation decision answers</td>
-<td>Reissue open holds with fresh IDs and obtain later replies beginning
-with the exact <code>Answer: &lt;hold-id&gt;</code> line and a nonblank
-body. Completed holds stay as they are.</td>
+<td><code>agents.merge_charter</code></td>
+<td>Absent/off. <code>enabled</code>, <code>approved_queue</code>,
+<code>exceptions</code>, <code>suite</code>, <code>red_main</code>,
+<code>report</code> are strict policy fields. Publish sanitized
+default-branch policy and explicitly enroll to activate gates. Existing
+enrollment stays active.</td>
 </tr>
 <tr>
-<td>Older approvals without binding lines</td>
-<td>One fresh review is required.</td>
+<td><code>agents.merge_publishers</code></td>
+<td>Required valid typed allowlist for automatic merges; publish before
+resync. Absent policy in manual mode warns; invalid present policy
+errors.</td>
 </tr>
 <tr>
-<td>Review evidence</td>
-<td>Resync evidence writers and readers together. Older readers do not
-understand the new optional <code>reviewed_head</code> round field;
-legacy records still use matching receipts.</td>
+<td><code>agents.providers.claude.config_dir</code>,
+<code>BUREAU_CLAUDE_CONFIG_DIR</code></td>
+<td>Existing optional lean-profile controls; environment wins. Separate
+login required.</td>
 </tr>
 <tr>
-<td>Trivy receipts</td>
-<td>Earlier receipts are remeasured once because parser and
-neutralization identities change.</td>
+<td><code>CLAUDE_CODE_DISABLE_AUTO_MEMORY</code></td>
+<td>Forced to 1 in background Claude children, including when the parent
+supplies 0.</td>
+</tr>
+<tr>
+<td>Committed-secret floor</td>
+<td>Always active when review runs; no setup or enable switch. Base-only
+exceptions require review.</td>
+</tr>
+<tr>
+<td><code>repo.test_wrapper</code></td>
+<td>Absent or <code>[]</code>, disabled and dormant; a literal argv
+array cannot activate stage routing.</td>
+</tr>
+<tr>
+<td><code>repo.test_wrapper_start_timeout_seconds</code></td>
+<td>21600; finite number greater than 0 and at most 86400, validated
+even while disabled.</td>
+</tr>
+<tr>
+<td>Acceptance contracts</td>
+<td>Optional offline declarations; no configuration or enforcement
+key.</td>
 </tr>
 </tbody>
 </table>
-<p>A stale approval uses existing exit 20 and returns to Build Review. A
-wrong-target or still-uncertain merge outcome holds with exit 25. A
-definitive blocker such as a merge conflict also returns 25 when the
-base name is missing; a failed read with only undecided blockers returns
-2. See <a href="exit-codes.html">exit codes</a>.</p>
+<p>The configuration schema versions and v3 exit vocabulary remain. New
+charter paths use existing 2 for waits/retries and 25 for human handoff.
+Semgrep, Trivy and existing advisory checks retain their opt-in
+settings. No new runtime dependency is required: Bash 3.2+, Python 3.9+,
+git and jq remain, with Node 18+ for the shared scheduler and
+authenticated <code>gh</code> for background GitHub stages. The local
+suite uses Python standard-library locking on the existing macOS/Linux
+test platforms and the <a
+href="../../tests/README.md#leaf-runner-details">existing harness
+prerequisites</a>.</p>
 <h2 id="upgrade-an-existing-installation">Upgrade an existing
 installation</h2>
-<p><strong>From v3.9.0.</strong> Drain old drivers and stop every
-shepherd, queue loop, dispatcher and supervisor. Preserve unfinished
-work, local commits, customized assets, user instructions, Spec Kit
-assets and constitution, and shared runtime records. Compare installed
-drift and reconcile local incident fixes. Record the previous source
-commit and save the <a
-href="migration.html#before-changing-an-adopting-repository">pre-upgrade
-inventory and private backup</a>, including
-<code>.bureau-install.json</code> and <code>.gitignore</code>. Select
-the published <code>v3.9.2</code> tag and refresh discovery.</p>
-<p>Use the <a href="migration.html#from-v390">v3.9.2 preview and apply
-commands</a> in each adopting repository with its existing target
-selection. Resync the <strong>complete scripts scope together with
-interfaces</strong>, including evidence writers and readers. Resolve
-conflicts before applying. <code>--update</code> edits configuration
-only.</p>
-<p>Before re-enabling dispatch, reissue every open implementation hold
-with a fresh ID and its still-open questions, including tickets whose
-label was already removed. Keep each ticket held and ask humans to
-repost earlier decisions as later replies beginning with the exact
-<code>Answer: &lt;hold-id&gt;</code> line and a nonblank body. Completed
-holds stay as they are. Follow the <a
-href="migration.html#implementation-decision-holds">Bash hold-reissue
-recipe and retry rule</a>. Obtain one fresh review for older approvals
-without the binding lines. Expect earlier Trivy receipts to be
-remeasured once.</p>
-<p>Run <code>python3 scripts/bureau-doctor.py --mode background</code>
-for a background installation or
-<code>python3 scripts/bureau-doctor.py --mode app</code> for an app-only
-installation and reconcile holds. Restart all drivers together. If
-dispatch was paused for the upgrade, run
-<code>python3 scripts/bureau-runtime.py unpause</code> after restart and
-hold reissue. Qualify a representative ticket before leaving dispatch
-unattended. Live adopter qualification remains pending.</p>
+<p><strong>From v3.9.2, once v3.10.0 is published.</strong> Follow <a
+href="migration.html#upgrade-from-v392">Upgrade from v3.9.2</a> for
+runnable source selection, drain/backup, default-branch publisher
+policy, complete scripts preview/apply, optional profile setup, optional
+charter enrollment, history repair, diagnostics and restart/dispatch
+recipes. Compare installed drift before resync; install the
+charter/environment helpers and secret helper/review parser together. No
+interfaces, CI or workflows resync is required by this release.
+<code>--update</code> remains configuration-only.</p>
+<p>Charter enrollment stays opt-in and requires a maintainer command; an
+enabled declaration alone is insufficient. Unenrolled merge runs still
+perform the one local Git read. The committed-secret floor and
+auto-memory guard apply without opt-in once the new scripts run. The
+test wrapper remains dormant. The offline acceptance tool is optional;
+the security/reporting and prior publication documentation need only the
+source update. Local suite wrapper adoption is a separate maintainer
+operation, with no hosted-CI or installed-runtime change.</p>
 <p><strong>From earlier versions.</strong> Apply the cumulative steps
-through <a href="migration.html#upgrade-to-v39">v3.9.0</a> first, then
-this upgrade. The v3.9.0 publication record itself needs only a source
-checkout update.</p>
+through <a href="migration.html#upgrade-to-v392">v3.9.2</a> first, then
+this upgrade. Live adopter qualification remains pending.</p>
 <h2 id="compatibility-and-rollback">Compatibility and rollback</h2>
-<p>Configuration schema versions 1 and 2, Bash 3.2+, Python 3.9+, Node
-18+ for the shared scheduler, Spec Kit 1.2.2 and the current-workspace
-prepare/finish protocol apply. Scanner platform prerequisites remain as
-documented in the <a
+<p>Configuration schema versions 1 and 2, Spec Kit 1.2.2 and the
+current-workspace prepare/finish protocol remain supported. The existing
+scanner platform constraints remain in the <a
 href="release-notes-v3.9.0.html#compatibility-and-rollback">v3.9.0
-compatibility record</a>. Writers and readers of review evidence need a
-coordinated resync because of the optional <code>reviewed_head</code>
-round field; legacy records still use matching receipts.</p>
-<p>For rollback, stop drivers and reconcile unfinished writers, local
-commits and holds. Follow the <a
+compatibility record</a>. The secret scan adds no external scanner
+requirement. Enrolled classification requires full history; corrupt
+nested bare repositories without HEAD remain unsupported worktree
+inputs. Target observation is not atomic with merge.</p>
+<p>For rollback, stop all drivers and reconcile unfinished writers,
+local commits and holds. Follow the <a
 href="migration.html#restore-the-pre-upgrade-installation">restore
-procedure</a> to restore the complete v3.9.0 asset set, compatible
-configuration and installer records from the private backup. Retain
-runtime and scanner records for inspection. Prior commits, pushes,
-comments, labels and state moves persist through rollback.</p>
+procedure</a> to restore the complete v3.9.2 asset set, compatible
+configuration and installer records from the private backup. Explicitly
+unenroll with the trusted new helper before reverting an enrolled
+installation to a runtime without charter enforcement. Retain shared
+runtime, scan and enrollment evidence for inspection; do not delete
+leases to clear a hold. Rollback does not undo commits, pushes,
+comments, labels or state moves.</p>
 <h2 id="validation">Validation</h2>
-<p>The merged content baseline is main <code>5b0c279</code>. The merged
-changes follow first-parent merge order.</p>
+<p>The merged content baseline is main <code>651cbe3</code>. Changes
+follow first-parent merge order:</p>
 <table>
 <thead>
 <tr>
@@ -259,53 +381,97 @@ changes follow first-parent merge order.</p>
 </thead>
 <tbody>
 <tr>
-<td><a href="https://github.com/KaiaK808/bureau/pull/165">#165</a></td>
-<td><code>b49eb97</code></td>
-<td>Narrower Trivy ignore-comment stripping and Yarn plain-value
-parsing</td>
+<td><a href="https://github.com/KaiaK808/bureau/pull/170">#170</a></td>
+<td><code>a7c66d8</code></td>
+<td>Local suite serial file reruns and flake records</td>
 </tr>
 <tr>
-<td><a href="https://github.com/KaiaK808/bureau/pull/166">#166</a></td>
-<td><code>888f92a</code></td>
-<td>Repository-only shard-weight rows for two scanner test files</td>
+<td><a href="https://github.com/KaiaK808/bureau/pull/171">#171</a></td>
+<td><code>16af1d5</code></td>
+<td>Dormant test wrapper primitive</td>
 </tr>
 <tr>
-<td><a href="https://github.com/KaiaK808/bureau/pull/167">#167</a></td>
-<td><code>f1caef0</code></td>
-<td>v3.9.0 publication record</td>
+<td><a href="https://github.com/KaiaK808/bureau/pull/175">#175</a></td>
+<td><code>60ffef8</code></td>
+<td>Trusted review publishers for merge</td>
 </tr>
 <tr>
-<td><a href="https://github.com/KaiaK808/bureau/pull/168">#168</a></td>
-<td><code>f82ef56</code></td>
-<td>Exact implementation hold answers and decision context through
-retries</td>
+<td><a href="https://github.com/KaiaK808/bureau/pull/174">#174</a></td>
+<td><code>584307d</code></td>
+<td>Acceptance-contract declarations and offline validator</td>
 </tr>
 <tr>
-<td><a href="https://github.com/KaiaK808/bureau/pull/169">#169</a></td>
-<td><code>5b0c279</code></td>
-<td>Merge approval binding, stale handoffs and reviewed-head
-attribution</td>
+<td><a href="https://github.com/KaiaK808/bureau/pull/173">#173</a></td>
+<td><code>ba8894b</code></td>
+<td>v3.9.2 publication record</td>
+</tr>
+<tr>
+<td><a href="https://github.com/KaiaK808/bureau/pull/176">#176</a></td>
+<td><code>2036b45</code></td>
+<td>Dispatcher shutdown lease settlement</td>
+</tr>
+<tr>
+<td><a href="https://github.com/KaiaK808/bureau/pull/177">#177</a></td>
+<td><code>ffed1ec</code></td>
+<td>Security policy and generic branch examples</td>
+</tr>
+<tr>
+<td><a href="https://github.com/KaiaK808/bureau/pull/179">#179</a></td>
+<td><code>35ceafb</code></td>
+<td>Committed-secret review floor</td>
+</tr>
+<tr>
+<td><a href="https://github.com/KaiaK808/bureau/pull/178">#178</a></td>
+<td><code>b250952</code></td>
+<td>Merge charter foundation, enrollment and doctor</td>
+</tr>
+<tr>
+<td><a href="https://github.com/KaiaK808/bureau/pull/181">#181</a></td>
+<td><code>b0137d9</code></td>
+<td>Enrolled approved queue and exception classes</td>
+</tr>
+<tr>
+<td><a href="https://github.com/KaiaK808/bureau/pull/180">#180</a></td>
+<td><code>f50a420</code></td>
+<td>Inherited Claude profile doctor and memory guard</td>
+</tr>
+<tr>
+<td><a href="https://github.com/KaiaK808/bureau/pull/182">#182</a></td>
+<td><code>aa4964d</code></td>
+<td>Charter queue test timing row; no fragment</td>
+</tr>
+<tr>
+<td><a href="https://github.com/KaiaK808/bureau/pull/183">#183</a></td>
+<td><code>6c806cc</code></td>
+<td>Process-control test waits and inspection diagnostics</td>
+</tr>
+<tr>
+<td><a href="https://github.com/KaiaK808/bureau/pull/185">#185</a></td>
+<td><code>651cbe3</code></td>
+<td>Secret source check after consumed fragments; no fragment</td>
 </tr>
 </tbody>
 </table>
-<p>The fragments record local hold-answer fixtures with fake Linear and
-providers. Merge and review validation uses focused offline tests with
-fake GitHub responses and private reverted copies, including worker and
-Shepherd retries, final-read withdrawal and acceptance attribution. Live
-GitHub behaviour remains unverified offline.</p>
-<p>Trivy validation records offline parser and pipeline regressions,
-fail-before checks against the previous revision, realistic Yarn
-v1/Berry locks including CRLF, Python compilation and changelog
-validation. Live scanner and adopter qualification are excluded. The
-v3.9.0 publication facts are maintainer-supplied. See the <a
-href="../../CHANGELOG.md#392---2026-11-24">fragment validation in the
-changelog</a>.</p>
-<p>The maintainer-supplied release review, both gate suites, release CI
-and final candidate/tag tree comparison are recorded below. The release
-PR changed documentation only: <code>templates/</code>,
-<code>tests/</code> and <code>scripts/</code> are tree-identical to
-<code>5b0c279</code>. No manual live injection sample was run for
-v3.9.2, and adopter qualification remains pending.</p>
+<p>The fragments record focused offline parser, schema, mocked-object,
+fake-provider and private-fixture checks at their individual revisions.
+Publisher changes include adversarial and mutation controls. Dispatcher
+settlement has maintainer-run isolated shutdown cases and an observed
+failure against the previous runtime. Process-control changes record two
+individual runtime tests, one requiring unrestricted process inspection,
+plus a scratch-only negative control; added bounds and failure
+regressions were not run under that change's execution limit. Security
+reporting records its documentation check under the shared slot.</p>
+<p>Those records do not qualify this combined release. Charter real-Git
+layouts and merge-route fixtures, secret real-Git and shell/pipeline
+regressions, wrapper platform/live-slot integration, real operator
+profiles and provider behavior, host-load behavior and full suites
+remain maintainer checks as detailed in the <a
+href="../../CHANGELOG.md#3100---2026-11-28">fragment validation</a>.
+Historical fragment statements about checks not run describe those
+change revisions. No release suite, live provider or
+adopting-installation validation is claimed here.</p>
+<p>The release branch's own validation remains to be run by the
+maintainer:</p>
 <table>
 <thead>
 <tr>
@@ -315,83 +481,74 @@ v3.9.2, and adopter qualification remains pending.</p>
 </thead>
 <tbody>
 <tr>
-<td>Independent release review</td>
-<td>Codex, read-only, three rounds on the release PR. Round 1 returned
-an approval without evidence and is not counted as a check. Round 2
-found one P2: the hold-reissue upgrade step had no runnable procedure,
-fixed in <code>6be88f5</code>. Round 3 approved <code>6be88f5</code>
-with file and line evidence for every check.</td>
+<td>Independent release review rounds</td>
+<td>TBD</td>
 </tr>
 <tr>
 <td>macOS gate suite and tested ref</td>
-<td><code>5b0c279</code>, two shards: 198 of 198 on the first pass, no
-reruns (2026-11-24).</td>
+<td>TBD</td>
 </tr>
 <tr>
 <td>Remote gate suite and tested ref</td>
-<td><code>openclaw-01</code>, exactly <code>5b0c279</code>, two shards:
-198 of 198 on the first pass, no reruns (2026-11-24).</td>
+<td>TBD</td>
 </tr>
 <tr>
-<td>Release CI jobs, runs and results</td>
-<td><a href="https://github.com/KaiaK808/bureau/pull/172">#172</a> at
-<code>6be88f5</code>: pull-request <a
-href="https://github.com/KaiaK808/bureau/actions/runs/45410048890">run
-45410048890</a> and release-branch push <a
-href="https://github.com/KaiaK808/bureau/actions/runs/45410033730">run
-45410033730</a>, all jobs passed on the first attempt. The main push <a
-href="https://github.com/KaiaK808/bureau/actions/runs/45436105597">run
-45436105597</a> on <code>8b342bc</code> was cancelled by the next push
-to main (<a
-href="https://github.com/KaiaK808/bureau/pull/170">#170</a>). Main on
-the following commit <code>a7c66d8</code>: <a
-href="https://github.com/KaiaK808/bureau/actions/runs/45436229543">run
-45436229543</a>, also cancelled by the next push to main (<a
-href="https://github.com/KaiaK808/bureau/pull/171">#171</a>); the tag
-run below covers the same commit as the release merge. Tag
-<code>v3.9.2</code>: <a
-href="https://github.com/KaiaK808/bureau/actions/runs/45436172742">run
-45436172742</a>, passed on the first attempt.</td>
+<td>Release PR CI jobs, runs and results</td>
+<td>TBD</td>
 </tr>
 <tr>
-<td>Final candidate/tag tested-tree comparison</td>
-<td><code>python3 scripts/release_verify.py 5b0c279 v3.9.2</code>
-passed: <code>templates/</code>, <code>tests/</code> and
-<code>scripts/</code> are tree-identical between the tested candidate
-and the tag. The reviewed release candidate <code>6be88f5</code> and the
-tag's commit <code>8b342bc</code> have the identical tree
-(<code>c0c2ed57</code>).</td>
+<td>Release-branch and main push CI jobs, runs and results</td>
+<td>TBD</td>
+</tr>
+<tr>
+<td>Tag CI jobs, run and result</td>
+<td>TBD</td>
+</tr>
+<tr>
+<td>Final candidate/tag tested-tree comparison
+(<code>release_verify</code>)</td>
+<td>TBD</td>
+</tr>
+<tr>
+<td>Tag object and merge commit</td>
+<td>TBD</td>
+</tr>
+<tr>
+<td>Publication date</td>
+<td>TBD</td>
 </tr>
 <tr>
 <td>Manual live injection sample and adopter qualification</td>
-<td>Manual live injection sample: not run for v3.9.2. Adopter
-qualification: none recorded yet; one adopting installation is scheduled
-to resync later.</td>
+<td>TBD</td>
 </tr>
 </tbody>
 </table>
-<p>See <a href="releases.html#verify-the-tested-release-trees">release
-tree verification</a> for the comparison procedure. The manual live
-injection sample remains a separate release-checklist item.</p>
+<p>Before publication, record exact refs and results and run <a
+href="releases.html#verify-the-tested-release-trees">release tree
+verification</a>. The manual live injection sample remains a separate
+checklist item. This release preparation changes documentation only;
+templates, tests and scripts must remain identical to
+<code>651cbe3</code>.</p>
 <h2 id="known-limitations">Known limitations</h2>
 <ul>
-<li>Target validation is observational. A retarget after the final read
-can still change the merge destination; the post-merge check detects it.
-GitHub provides no expected-base merge option.</li>
-<li>Live GitHub behaviour, the Linear editor round-trip, live scanner
-behaviour and adopting-repository qualification remain unverified by the
-offline validation recorded in the fragments.</li>
-<li>Trivy preserves unrecognised inline-ignore shapes and reports
-reduced coverage. The conservative Dockerfile rule retains every marker
-from the first <code>&lt;&lt;</code> through end of file; unsupported
-Yarn plain values also reduce coverage.</li>
-<li>The dispatcher shutdown test can fail intermittently because the
-run's leases are marked interrupted a few milliseconds after the
-dispatcher exits. This path predates this release and remains unchanged
-in v3.9.2.</li>
-<li>No manual live injection sample was run for v3.9.2. No adopter
-qualification is recorded yet; one adopting installation is scheduled to
-resync later.</li>
+<li>Charter gates are a local accident guard. Manual merges, independent
+clones and deliberate bypass with the same user permissions are outside
+it; final target observation and merge are separate operations.</li>
+<li>Charter suite receipts, reports, red-main latches and concurrency
+enforcement are not implemented. Acceptance contracts validate
+declarations only, and test wrapper stage routing is dormant.</li>
+<li>Shared publisher identities trust everyone acting as that principal,
+and deletion of a newer verdict without trace is undetectable.</li>
+<li>The committed-secret scan covers literal added physical lines within
+its bounds, not complete history or decoded/split secrets; unmeasured
+scans block approval. Masking is limited to detected values and
+specified rule-masked forms.</li>
+<li>Doctor inventories user-profile names only and persists no drift
+baseline. Live profiles/providers, services, scanner behavior and
+adopting installations remain unqualified by these offline records.</li>
+<li>Local serial recovery is an observed file-level flake, not a cause
+diagnosis; external admission and receipt validation remain
+required.</li>
 </ul></main>
 </div>
 </body>
