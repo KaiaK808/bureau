@@ -8,7 +8,7 @@ Refreshing installed assets requires **updating the source skill and resyncing e
 
 Pending changes are recorded in [changes/unreleased/](changes/unreleased/).
 
-## [3.10.0] - 2026-12-01
+## [3.10.0] - 2026-11-28
 
 ### Added
 
